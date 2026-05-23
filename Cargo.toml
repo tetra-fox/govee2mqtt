@@ -2,7 +2,7 @@
 members = ["crates/govee-api"]
 
 [package]
-name = "govee"
+name = "govee2mqtt"
 version = "0.1.0"
 edition = "2021"
 

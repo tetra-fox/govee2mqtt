@@ -14,7 +14,7 @@ RUN adduser \
     "govee"
 
 WORKDIR /work
-COPY docker-target/$TARGETPLATFORM/govee /work
+COPY docker-target/$TARGETPLATFORM/govee2mqtt /work
 
 # Creates an empty /data dir that we can use to copy and chown in the next stage
 WORKDIR /data
@@ -30,7 +30,7 @@ COPY --from=builder /etc/group /etc/group
 
 WORKDIR /app
 
-COPY --from=builder /work/govee /app/govee
+COPY --from=builder /work/govee2mqtt /app/govee2mqtt
 COPY --from=builder --chown=govee:govee /data /data
 COPY assets /app/assets
 
@@ -43,7 +43,7 @@ ENV \
 
 VOLUME /data
 
-CMD ["/app/govee", \
+CMD ["/app/govee2mqtt", \
   "serve", \
   "--govee-iot-key=/data/iot.key", \
   "--govee-iot-cert=/data/iot.cert"]

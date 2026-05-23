@@ -903,7 +903,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
-name = "govee"
+name = "govee-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "chrono",
+ "clap",
+ "data-encoding",
+ "dirs-next",
+ "if-addrs",
+ "k9",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_json_path_to_error",
+ "sqlite-cache",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "govee2mqtt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -934,33 +961,6 @@ dependencies = [
  "tokio",
  "tower-http",
  "uncased",
- "uuid",
-]
-
-[[package]]
-name = "govee-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "chrono",
- "clap",
- "data-encoding",
- "dirs-next",
- "if-addrs",
- "k9",
- "log",
- "once_cell",
- "parking_lot",
- "reqwest",
- "serde",
- "serde_json",
- "serde_json_path_to_error",
- "sqlite-cache",
- "strum",
- "strum_macros",
- "thiserror 2.0.18",
- "tokio",
  "uuid",
 ]
 
