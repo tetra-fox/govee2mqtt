@@ -277,6 +277,12 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // bit of the onOff value, so we can report per-outlet state.
         // <https://github.com/wez/govee2mqtt/issues/65>
         Quirk::device("H5082", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(2),
+        // Single Wi-Fi smart plugs/switches. The platform API returns no
+        // metadata for these, so without a quirk they map to nothing; with one,
+        // they get a synthesized powerSwitch driven over IoT. iot_api_support is
+        // required for control to route over IoT (the only available transport).
+        Quirk::device("H5080", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        Quirk::device("H5083", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
         Quirk::thermometer("H5051")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit)
             .with_platform_humidity_sensor_units(HumidityUnits::RelativePercent),

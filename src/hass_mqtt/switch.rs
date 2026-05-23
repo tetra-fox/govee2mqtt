@@ -149,6 +149,68 @@ impl EntityInstance for OutletSwitch {
     }
 }
 
+/// The single power switch for a plug/switch device (eg: H5080, H5083) that we
+/// know only from a quirk: the platform API returns no metadata for it, so
+/// there is no `powerSwitch` capability to drive `CapabilitySwitch`. We
+/// synthesize the same `powerSwitch` topics from the device identity, routing
+/// control through the existing switch command handler.
+pub struct PowerSwitch {
+    switch: SwitchConfig,
+    device_id: String,
+    state: StateHandle,
+}
+
+impl PowerSwitch {
+    pub fn new(device: &ServiceDevice, state: &StateHandle) -> Self {
+        let id = topic_safe_id(device);
+        let switch = SwitchConfig {
+            base: EntityConfig {
+                availability_topic: availability_topic(),
+                name: Some("Power".to_string()),
+                device_class: Some("outlet"),
+                origin: Origin::default(),
+                device: Device::for_device(device),
+                unique_id: format!("gv2mqtt-{id}-powerSwitch"),
+                entity_category: None,
+                icon: None,
+            },
+            command_topic: format!("gv2mqtt/switch/{id}/command/powerSwitch"),
+            state_topic: switch_instance_state_topic(device, "powerSwitch"),
+        };
+        Self {
+            switch,
+            device_id: device.id.to_string(),
+            state: state.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl EntityInstance for PowerSwitch {
+    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
+        self.switch.publish(state, client).await
+    }
+
+    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+        let device = self
+            .state
+            .device_by_id(&self.device_id)
+            .await
+            .expect("device to exist");
+
+        // Leave the entity unknown until we have a reported state
+        if let Some(device_state) = device.device_state() {
+            client
+                .publish(
+                    &self.switch.state_topic,
+                    if device_state.on { "ON" } else { "OFF" },
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl EntityInstance for CapabilitySwitch {
     async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {

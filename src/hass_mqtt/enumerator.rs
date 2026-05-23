@@ -8,7 +8,7 @@ use crate::hass_mqtt::number::WorkModeNumber;
 use crate::hass_mqtt::scene::SceneConfig;
 use crate::hass_mqtt::select::{SceneModeSelect, WorkModeSelect};
 use crate::hass_mqtt::sensor::{CapabilitySensor, DeviceStatusDiagnostic, GlobalFixedDiagnostic};
-use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch};
+use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch, PowerSwitch};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{availability_topic, oneclick_topic, purge_cache_topic};
@@ -182,6 +182,16 @@ pub async fn enumerate_entities_for_device(
         for index in 0..count {
             entities.add(OutletSwitch::new(d, state, index));
         }
+    }
+
+    // A single plug/switch we know only from a quirk has no platform metadata,
+    // so the capability loop below never runs and never creates a powerSwitch.
+    // Synthesize one from the quirk. Multi-outlet sockets are covered above.
+    if d.device_type() == DeviceType::Socket
+        && d.socket_outlet_count().is_none()
+        && d.http_device_info.is_none()
+    {
+        entities.add(PowerSwitch::new(d, state));
     }
 
     if let Some(info) = &d.http_device_info {
