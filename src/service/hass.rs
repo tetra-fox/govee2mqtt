@@ -473,20 +473,15 @@ struct IdAndOutlet {
 }
 
 /// HASS is sending a command to a single outlet of a multi-outlet socket
-/// (eg: H5082).
-///
-/// TODO: per-outlet control is not yet implemented. The platform API only
-/// exposes a single combined `powerSwitch`; switching an individual outlet
-/// requires sending the IoT/BLE command that sets that outlet's bit of the
-/// `onOff` value. For now we validate and log the request so the switch entity
-/// is fully wired up while the read path is being tested. The switch will
-/// revert in the HASS UI because we don't (yet) report the new state back.
+/// (eg: H5082). Routed over the IoT API, which is the only transport that can
+/// address individual outlets.
 /// <https://github.com/wez/govee2mqtt/issues/65>
 async fn mqtt_outlet_command(
     Payload(command): Payload<String>,
     Params(IdAndOutlet { id, index }): Params<IdAndOutlet>,
     State(state): State<StateHandle>,
 ) -> anyhow::Result<()> {
+    log::info!("outlet {index} for {id}: {command}");
     let index: u8 = index.parse()?;
     let on = match command.as_str() {
         "ON" | "on" => true,
@@ -495,13 +490,7 @@ async fn mqtt_outlet_command(
     };
     let device = state.resolve_device_for_control(&id).await?;
 
-    // TODO: send the per-outlet IoT/BLE command here.
-    log::warn!(
-        "Per-outlet control is not yet implemented; ignoring request to turn \
-         outlet {index} of {device} {on_state}. \
-         See https://github.com/wez/govee2mqtt/issues/65",
-        on_state = if on { "ON" } else { "OFF" }
-    );
+    state.device_set_socket_outlet(&device, index, on).await?;
 
     Ok(())
 }

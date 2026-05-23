@@ -383,6 +383,27 @@ impl State {
         anyhow::bail!("Unable to control power state for {device}");
     }
 
+    /// Switch a single outlet of a multi-outlet socket (eg: H5082). Only the
+    /// IoT API can address individual outlets; the platform API exposes a
+    /// single combined powerSwitch and the LAN API has no concept of outlets.
+    /// <https://github.com/wez/govee2mqtt/issues/65>
+    pub async fn device_set_socket_outlet(
+        self: &Arc<Self>,
+        device: &Device,
+        index: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        if let Some(iot) = self.get_iot_client().await {
+            if let Some(info) = &device.undoc_device_info {
+                log::info!("Using IoT API to set {device} outlet {index} power state");
+                iot.set_socket_outlet(&info.entry, index, on).await?;
+                return Ok(());
+            }
+        }
+
+        anyhow::bail!("Unable to control outlet {index} for {device}: IoT API unavailable");
+    }
+
     pub async fn device_set_brightness(
         self: &Arc<Self>,
         device: &Device,

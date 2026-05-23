@@ -82,6 +82,50 @@ impl IotClient {
         Ok(())
     }
 
+    /// Switch a single outlet of a multi-outlet socket (eg: H5082).
+    ///
+    /// These use the same `turn` command as a normal power toggle, but `val`
+    /// is bit-packed rather than a plain boolean: the high nibble selects which
+    /// outlet the command addresses, the low nibble carries its new on/off bit.
+    /// Outlet `index` occupies bit `index`, so outlet 0 on/off is 0x11/0x10 and
+    /// outlet 1 on/off is 0x22/0x20, matching the values Govee's app sends.
+    /// <https://github.com/wez/govee2mqtt/issues/65>
+    pub async fn set_socket_outlet(
+        &self,
+        device: &DeviceEntry,
+        index: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        log::trace!(
+            "set_socket_outlet for {} outlet {index} to {on}",
+            device.device
+        );
+        let device_topic = device.device_topic()?;
+
+        let val = socket_outlet_turn_val(index, on);
+
+        self.client
+            .publish(
+                device_topic,
+                serde_json::to_string(&serde_json::json!({
+                    "msg": {
+                        "cmd": "turn",
+                        "data": {
+                            "val": val,
+                        },
+                        "cmdVersion": 0,
+                        "transaction": format!("v_{}000", ms_timestamp()),
+                        "type": 1,
+                    }
+                }))?,
+                QoS::AtMostOnce,
+                false,
+            )
+            .await
+            .context("IotClient::set_socket_outlet")?;
+        Ok(())
+    }
+
     pub async fn set_brightness(&self, device: &DeviceEntry, percent: u8) -> anyhow::Result<()> {
         log::trace!("set_brightness for {} to {percent}", device.device);
         let device_topic = device.device_topic()?;
@@ -515,4 +559,26 @@ async fn run_iot_subscriber(
         }
     }
     Ok(())
+}
+
+/// The `turn` value that switches a single outlet of a multi-outlet socket.
+/// The high nibble selects which outlet bit the command addresses, the low
+/// nibble carries that outlet's new on/off state. See [`IotClient::set_socket_outlet`].
+fn socket_outlet_turn_val(index: u8, on: bool) -> u8 {
+    let outlet_bit = 1u8 << index;
+    (outlet_bit << 4) | if on { outlet_bit } else { 0 }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn outlet_turn_values_match_app() {
+        // Values observed from the Govee app for a dual-outlet H5082.
+        assert_eq!(socket_outlet_turn_val(0, true), 17);
+        assert_eq!(socket_outlet_turn_val(0, false), 16);
+        assert_eq!(socket_outlet_turn_val(1, true), 34);
+        assert_eq!(socket_outlet_turn_val(1, false), 32);
+    }
 }
