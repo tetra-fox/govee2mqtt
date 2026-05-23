@@ -88,8 +88,14 @@ pub struct UndocApiArguments {
     #[arg(long, global = true, default_value = "/dev/shm/govee.iot.cert")]
     pub govee_iot_cert: PathBuf,
 
-    /// Where to find the AWS root CA certificate
-    #[arg(long, global = true, default_value = "AmazonRootCA1.pem")]
+    /// Where to find the trust CA certificate used to verify the AWS IoT
+    /// endpoint. Defaults to the system CA bundle, which includes the Amazon
+    /// root CA that the IoT endpoint chains to.
+    #[arg(
+        long,
+        global = true,
+        default_value = "/etc/ssl/certs/ca-certificates.crt"
+    )]
     pub amazon_root_ca: PathBuf,
 }
 

@@ -27,12 +27,10 @@ FROM gcr.io/distroless/cc-debian12
 # Import from builder.
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
-#COPY --from=builder /etc/ssl/certs /etc/ssl/certs
 
 WORKDIR /app
 
 COPY --from=builder /work/govee /app/govee
-COPY AmazonRootCA1.pem /app
 COPY --from=builder --chown=govee:govee /data /data
 COPY assets /app/assets
 
@@ -48,7 +46,6 @@ VOLUME /data
 CMD ["/app/govee", \
   "serve", \
   "--govee-iot-key=/data/iot.key", \
-  "--govee-iot-cert=/data/iot.cert", \
-  "--amazon-root-ca=/app/AmazonRootCA1.pem"]
+  "--govee-iot-cert=/data/iot.cert"]
 
 
