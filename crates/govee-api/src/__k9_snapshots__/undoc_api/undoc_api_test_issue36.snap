@@ -37,6 +37,7 @@ OneClickResponse {
                 video_url: None,
                 one_clicks: [
                     OneClick {
+                        component_id: None,
                         name: "Turn off the tv light",
                         plan_type: 0,
                         preset_id: 0,
@@ -145,6 +146,7 @@ OneClickResponse {
                         ],
                     },
                     OneClick {
+                        component_id: None,
                         name: "Turn on the tv light",
                         plan_type: 0,
                         preset_id: 0,

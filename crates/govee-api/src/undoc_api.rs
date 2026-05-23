@@ -627,6 +627,10 @@ pub struct OneClickComponent {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
 pub struct OneClick {
+    /// Echoes the parent component's id; we don't use it, but newer API
+    /// responses include it and debug builds deny unknown fields.
+    #[serde(default)]
+    pub component_id: Option<u64>,
     pub name: String,
     pub plan_type: i64,
     pub preset_id: i64,
