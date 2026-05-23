@@ -768,6 +768,12 @@ pub struct DeviceEntry {
     pub version_hard: String,
     pub version_soft: String,
     pub gid_confirmed: Option<bool>,
+    /// An opaque access token present on devices that are shared with this
+    /// account. We don't use it, but must accept it so debug builds (which
+    /// deny unknown fields) don't reject the device list.
+    /// <https://github.com/wez/govee2mqtt/issues/76>
+    #[serde(default)]
+    pub gas: Option<String>,
 }
 
 impl DeviceEntry {
@@ -796,6 +802,12 @@ pub struct DeviceEntryExt {
     pub ext_resources: ExtResources,
     #[serde(deserialize_with = "embedded_json", serialize_with = "as_json")]
     pub last_device_data: LastDeviceData,
+    /// Present for devices shared with this account (eg: `{"isFeast":0,
+    /// "pushSwitch":1}`). We don't use it, but must accept it so that debug
+    /// builds (which deny unknown fields) don't reject the device list.
+    /// <https://github.com/wez/govee2mqtt/issues/76>
+    #[serde(default)]
+    pub shared_settings: Option<JsonValue>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
