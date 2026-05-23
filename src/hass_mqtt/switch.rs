@@ -81,6 +81,74 @@ impl CapabilitySwitch {
     }
 }
 
+/// One outlet of a multi-outlet socket (eg: H5082), exposed as a switch.
+///
+/// The platform API only reports a single combined `powerSwitch`, but the IoT
+/// status packet packs each outlet into one bit of the `onOff` value, so we can
+/// report the per-outlet state. Independent *control* isn't implemented yet
+/// (see `mqtt_outlet_command`); we expose the switch now so the read path can be
+/// tested and the entity is in place for the full feature.
+/// <https://github.com/wez/govee2mqtt/issues/65>
+pub struct OutletSwitch {
+    switch: SwitchConfig,
+    device_id: String,
+    state: StateHandle,
+    outlet_index: u8,
+}
+
+impl OutletSwitch {
+    pub fn new(device: &ServiceDevice, state: &StateHandle, outlet_index: u8) -> Self {
+        let id = topic_safe_id(device);
+        let switch = SwitchConfig {
+            base: EntityConfig {
+                availability_topic: availability_topic(),
+                name: Some(
+                    device
+                        .socket_outlet_name(outlet_index)
+                        .unwrap_or_else(|| format!("Outlet {}", outlet_index + 1)),
+                ),
+                device_class: Some("outlet"),
+                origin: Origin::default(),
+                device: Device::for_device(device),
+                unique_id: format!("gv2mqtt-{id}-outlet-{outlet_index}"),
+                entity_category: None,
+                icon: Some("mdi:power-socket".to_string()),
+            },
+            command_topic: format!("gv2mqtt/switch/{id}/outlet/{outlet_index}/command"),
+            state_topic: format!("gv2mqtt/switch/{id}/outlet/{outlet_index}/state"),
+        };
+        Self {
+            switch,
+            device_id: device.id.to_string(),
+            state: state.clone(),
+            outlet_index,
+        }
+    }
+}
+
+#[async_trait]
+impl EntityInstance for OutletSwitch {
+    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
+        self.switch.publish(state, client).await
+    }
+
+    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+        let device = self
+            .state
+            .device_by_id(&self.device_id)
+            .await
+            .expect("device to exist");
+
+        // No reported state yet; leave the entity unknown rather than guessing
+        if let Some(on) = device.socket_outlet_state(self.outlet_index) {
+            client
+                .publish(&self.switch.state_topic, if on { "ON" } else { "OFF" })
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl EntityInstance for CapabilitySwitch {
     async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {

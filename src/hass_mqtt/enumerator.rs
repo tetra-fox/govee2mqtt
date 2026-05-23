@@ -8,7 +8,7 @@ use crate::hass_mqtt::number::WorkModeNumber;
 use crate::hass_mqtt::scene::SceneConfig;
 use crate::hass_mqtt::select::{SceneModeSelect, WorkModeSelect};
 use crate::hass_mqtt::sensor::{CapabilitySensor, DeviceStatusDiagnostic, GlobalFixedDiagnostic};
-use crate::hass_mqtt::switch::CapabilitySwitch;
+use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::platform_api::{DeviceCapability, DeviceCapabilityKind, DeviceType};
 use crate::service::device::Device as ServiceDevice;
@@ -170,6 +170,17 @@ pub async fn enumerate_entities_for_device(
     if d.device_type() != DeviceType::Light {
         if let Some(scenes) = SceneModeSelect::new(d, state).await? {
             entities.add(scenes);
+        }
+    }
+
+    // Multi-outlet sockets only expose a single combined powerSwitch via the
+    // platform API, but the IoT status reports each outlet separately. Surface
+    // each outlet as its own switch alongside that combined one. The read path
+    // works today; per-outlet control is stubbed pending the full feature.
+    // <https://github.com/wez/govee2mqtt/issues/65>
+    if let Some(count) = d.socket_outlet_count() {
+        for index in 0..count {
+            entities.add(OutletSwitch::new(d, state, index));
         }
     }
 

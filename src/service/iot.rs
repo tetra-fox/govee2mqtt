@@ -465,6 +465,13 @@ async fn run_iot_subscriber(
                                 // if the other fields are present
                                 if let Some(on_off) = packet.state.on_off {
                                     state.on = on_off != 0;
+                                    // For multi-outlet sockets the onOff value
+                                    // packs each outlet into one bit, rather
+                                    // than being a plain boolean.
+                                    // <https://github.com/wez/govee2mqtt/issues/65>
+                                    if device.socket_outlet_count().is_some() {
+                                        device.set_socket_outlet_bits(on_off);
+                                    }
                                 }
                                 device.set_iot_device_status(state);
                             }

@@ -466,6 +466,46 @@ async fn mqtt_switch_command(
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct IdAndOutlet {
+    id: String,
+    index: String,
+}
+
+/// HASS is sending a command to a single outlet of a multi-outlet socket
+/// (eg: H5082).
+///
+/// TODO: per-outlet control is not yet implemented. The platform API only
+/// exposes a single combined `powerSwitch`; switching an individual outlet
+/// requires sending the IoT/BLE command that sets that outlet's bit of the
+/// `onOff` value. For now we validate and log the request so the switch entity
+/// is fully wired up while the read path is being tested. The switch will
+/// revert in the HASS UI because we don't (yet) report the new state back.
+/// <https://github.com/wez/govee2mqtt/issues/65>
+async fn mqtt_outlet_command(
+    Payload(command): Payload<String>,
+    Params(IdAndOutlet { id, index }): Params<IdAndOutlet>,
+    State(state): State<StateHandle>,
+) -> anyhow::Result<()> {
+    let index: u8 = index.parse()?;
+    let on = match command.as_str() {
+        "ON" | "on" => true,
+        "OFF" | "off" => false,
+        _ => anyhow::bail!("invalid {command} for {id} outlet {index}"),
+    };
+    let device = state.resolve_device_for_control(&id).await?;
+
+    // TODO: send the per-outlet IoT/BLE command here.
+    log::warn!(
+        "Per-outlet control is not yet implemented; ignoring request to turn \
+         outlet {index} of {device} {on_state}. \
+         See https://github.com/wez/govee2mqtt/issues/65",
+        on_state = if on { "ON" } else { "OFF" }
+    );
+
+    Ok(())
+}
+
 pub fn mired_to_kelvin(mired: u32) -> u32 {
     if mired == 0 {
         0
@@ -531,6 +571,12 @@ async fn run_mqtt_loop(
             .await?;
         router
             .route("gv2mqtt/switch/:id/command/:instance", mqtt_switch_command)
+            .await?;
+        router
+            .route(
+                "gv2mqtt/switch/:id/outlet/:index/command",
+                mqtt_outlet_command,
+            )
             .await?;
 
         router.route(oneclick_topic(), mqtt_oneclick).await?;

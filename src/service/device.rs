@@ -36,6 +36,11 @@ pub struct Device {
     pub iot_device_status: Option<LanDeviceStatus>,
     pub last_iot_device_status_update: Option<DateTime<Utc>>,
 
+    /// For multi-outlet sockets, the most recent raw onOff value from the
+    /// IoT status packet. Each outlet occupies one bit. See
+    /// <https://github.com/wez/govee2mqtt/issues/65>
+    pub socket_outlet_bits: Option<u8>,
+
     pub nightlight_state: Option<NotifyHumidifierNightlightParams>,
     pub target_humidity_percent: Option<u8>,
     pub humidifier_work_mode: Option<u8>,
@@ -127,6 +132,12 @@ impl Device {
         if let Some(info) = &self.http_device_info {
             return Some(&info.device_name);
         }
+        // The platform API doesn't return every device (eg: offline or shared
+        // devices), but the undoc API device list still carries the app-defined
+        // name, so prefer that over a computed SKU_MAC name.
+        if let Some(info) = &self.undoc_device_info {
+            return Some(&info.entry.device_name);
+        }
         None
     }
 
@@ -213,6 +224,41 @@ impl Device {
         self.iot_device_status.replace(status);
         self.last_iot_device_status_update.replace(Utc::now());
         self.clear_scene_if_color_changed();
+    }
+
+    /// Number of independently switched outlets for a multi-outlet socket,
+    /// or None if this device isn't one
+    pub fn socket_outlet_count(&self) -> Option<u8> {
+        self.resolve_quirk().and_then(|q| q.socket_outlet_count)
+    }
+
+    pub fn set_socket_outlet_bits(&mut self, bits: u8) {
+        self.socket_outlet_bits.replace(bits);
+    }
+
+    /// State of a single outlet on a multi-outlet socket. Outlet `index`
+    /// occupies bit `index` of the reported onOff value.
+    pub fn socket_outlet_state(&self, index: u8) -> Option<bool> {
+        self.socket_outlet_bits
+            .map(|bits| bits & (1 << index) != 0)
+    }
+
+    /// The user-assigned name for outlet `index` of a multi-outlet socket, as
+    /// configured in the Govee app. Comes from the undoc API's per-device
+    /// `subDevices` metadata (`{"sub_0": {"name": "..."}}`), where `sub_<index>`
+    /// lines up with bit `index` of the onOff value. None if unavailable.
+    pub fn socket_outlet_name(&self, index: u8) -> Option<String> {
+        self.undoc_device_info
+            .as_ref()?
+            .entry
+            .device_ext
+            .device_settings
+            .sub_devices
+            .as_ref()?
+            .get(format!("sub_{index}"))?
+            .get("name")?
+            .as_str()
+            .map(|s| s.to_string())
     }
 
     pub fn set_http_device_info(&mut self, info: HttpDeviceInfo) {

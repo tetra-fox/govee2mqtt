@@ -39,6 +39,12 @@ pub struct Quirk {
     /// their state.
     pub iot_api_supported: bool,
     pub show_as_preset_buttons: Option<&'static [&'static str]>,
+    /// For sockets that expose more than one independently switched
+    /// outlet but only report a single combined powerSwitch via the
+    /// platform API. The IoT status packet packs each outlet into one
+    /// bit of the onOff value, so we can at least report the per-outlet
+    /// state. See <https://github.com/wez/govee2mqtt/issues/65>
+    pub socket_outlet_count: Option<u8>,
 }
 
 impl Quirk {
@@ -61,6 +67,7 @@ impl Quirk {
             platform_humidity_sensor_units: None,
             iot_api_supported: false,
             show_as_preset_buttons: None,
+            socket_outlet_count: None,
         }
     }
 
@@ -133,6 +140,11 @@ impl Quirk {
         self
     }
 
+    pub fn with_socket_outlets(mut self, count: u8) -> Self {
+        self.socket_outlet_count.replace(count);
+        self
+    }
+
     pub fn with_broken_platform(mut self) -> Self {
         self.avoid_platform_api = true;
         self
@@ -172,6 +184,7 @@ const NIGHTLIGHT: &str = "mdi:lightbulb-night";
 const WALL_SCONCE: &str = "mdi:wall-sconce";
 const OUTDOOR_LAMP: &str = "mdi:outdoor-lamp";
 const SPOTLIGHT: &str = "mdi:lightbulb-spot";
+const POWER_SOCKET: &str = "mdi:power-socket";
 
 fn load_quirks() -> HashMap<String, Quirk> {
     let mut map = HashMap::new();
@@ -259,6 +272,11 @@ fn load_quirks() -> HashMap<String, Quirk> {
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         // <https://github.com/wez/govee2mqtt/issues/343>
         Quirk::ice_maker("H7172").with_iot_api_support(false),
+        // Dual smart plug. The platform API only exposes a single combined
+        // powerSwitch, but the IoT status packet reports each outlet as one
+        // bit of the onOff value, so we can report per-outlet state.
+        // <https://github.com/wez/govee2mqtt/issues/65>
+        Quirk::device("H5082", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(2),
         Quirk::thermometer("H5051")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit)
             .with_platform_humidity_sensor_units(HumidityUnits::RelativePercent),
