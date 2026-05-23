@@ -47,5 +47,3 @@ CMD ["/app/govee2mqtt", \
   "serve", \
   "--govee-iot-key=/data/iot.key", \
   "--govee-iot-cert=/data/iot.cert"]
-
-
