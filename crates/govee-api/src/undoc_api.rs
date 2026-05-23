@@ -845,6 +845,9 @@ pub struct DeviceSettings {
     pub completion_noti_on_off: bool,
     #[serde(deserialize_with = "boolean_int", default)]
     pub auto_shut_down_on_off: bool,
+    /// Whether the device supports encrypted communication. Present on newer
+    /// devices; reported as a JSON bool rather than the 0/1 used elsewhere.
+    pub support_enc: Option<bool>,
     #[serde(deserialize_with = "boolean_int", default)]
     pub water_shortage_on_off: bool,
     #[serde(deserialize_with = "boolean_int", default)]
