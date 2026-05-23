@@ -918,6 +918,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "serde_json_path_to_error",
