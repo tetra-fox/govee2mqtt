@@ -1,5 +1,5 @@
-use crate::platform_api::DeviceType;
-use crate::temperature::TemperatureUnits;
+use govee_api::platform_api::DeviceType;
+use govee_api::temperature::TemperatureUnits;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::collections::HashMap;

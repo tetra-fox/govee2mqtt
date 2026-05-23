@@ -1,6 +1,6 @@
-use crate::platform_api::{DeviceCapability, DeviceParameters, EnumOption};
 use crate::service::device::Device as ServiceDevice;
 use anyhow::anyhow;
+use govee_api::platform_api::{DeviceCapability, DeviceParameters, EnumOption};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -260,7 +260,7 @@ impl WorkMode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::platform_api::{from_json, DeviceCapabilityKind, StructField};
+    use govee_api::platform_api::{from_json, DeviceCapabilityKind, StructField};
     use serde_json::json;
     use std::collections::HashMap;
 

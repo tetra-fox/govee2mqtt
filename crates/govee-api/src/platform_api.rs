@@ -1,14 +1,15 @@
 use crate::cache::{cache_get, CacheComputeResult, CacheGetOptions};
-use crate::hass_mqtt::climate::parse_temperature_constraints;
 use crate::opt_env_var;
-use crate::service::state::sort_and_dedup_scenes;
-use crate::temperature::{TemperatureUnits, TemperatureValue};
+use crate::temperature::{
+    TemperatureConstraints, TemperatureScale, TemperatureUnits, TemperatureValue,
+};
 use crate::undoc_api::GoveeUndocumentedApi;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use reqwest::Method;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -1103,6 +1104,49 @@ impl GoveeApiClient {
             .await?;
 
         http_response_body(response).await
+    }
+}
+
+pub fn sort_and_dedup_scenes(mut scenes: Vec<String>) -> Vec<String> {
+    scenes.sort_by_key(|s| s.to_ascii_lowercase());
+    scenes.dedup();
+    scenes
+}
+
+pub fn parse_temperature_constraints(
+    instance: &DeviceCapability,
+) -> anyhow::Result<TemperatureConstraints> {
+    let units = instance
+        .struct_field_by_name("unit")
+        .and_then(|field| {
+            field.default_value.as_ref().and_then(|v| {
+                v.as_str()
+                    .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
+            })
+        })
+        .unwrap_or(TemperatureUnits::Fahrenheit);
+
+    let temperature = instance
+        .struct_field_by_name("temperature")
+        .ok_or_else(|| anyhow!("no temperature field in {instance:?}"))?;
+    match &temperature.field_type {
+        DeviceParameters::Integer { unit, range } => {
+            let range_units = unit
+                .as_deref()
+                .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
+                .unwrap_or(units);
+
+            let min = TemperatureValue::new(range.min.into(), range_units);
+            let max = TemperatureValue::new(range.max.into(), range_units);
+
+            Ok(TemperatureConstraints {
+                min: min.as_unit(units),
+                max: max.as_unit(units),
+            })
+        }
+        _ => {
+            anyhow::bail!("Unexpected temperature value in {instance:?}");
+        }
     }
 }
 

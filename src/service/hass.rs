@@ -4,14 +4,14 @@ use crate::hass_mqtt::humidifier::{mqtt_device_set_work_mode, mqtt_humidifier_se
 use crate::hass_mqtt::instance::EntityList;
 use crate::hass_mqtt::number::mqtt_number_command;
 use crate::hass_mqtt::select::mqtt_set_mode_scene;
-use crate::lan_api::DeviceColor;
-use crate::opt_env_var;
-use crate::platform_api::{from_json, DeviceType};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::state::StateHandle;
-use crate::temperature::TemperatureScale;
 use anyhow::Context;
 use async_channel::Receiver;
+use govee_api::lan_api::DeviceColor;
+use govee_api::opt_env_var;
+use govee_api::platform_api::{from_json, DeviceType};
+use govee_api::temperature::TemperatureScale;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
 use mosquitto_rs::{Client, Event, QoS};
 use serde::{Deserialize, Serialize};
@@ -397,7 +397,7 @@ async fn mqtt_light_segment_command(
 
 async fn mqtt_purge_caches(State(state): State<StateHandle>) -> anyhow::Result<()> {
     log::info!("mqtt_purge_caches");
-    crate::cache::purge_cache()?;
+    govee_api::cache::purge_cache()?;
     state
         .get_hass_client()
         .await

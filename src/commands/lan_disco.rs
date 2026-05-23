@@ -1,4 +1,4 @@
-use crate::lan_api::Client;
+use govee_api::lan_api::Client;
 use tokio::time::{Duration, Instant};
 
 #[derive(clap::Parser, Debug)]

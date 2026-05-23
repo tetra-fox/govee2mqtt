@@ -1,14 +1,13 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::EntityInstance;
 use crate::hass_mqtt::number::NumberConfig;
-use crate::platform_api::{DeviceCapability, DeviceParameters};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{availability_topic, topic_safe_id, topic_safe_string, HassClient};
 use crate::service::state::StateHandle;
-use crate::temperature::{
+use govee_api::platform_api::{parse_temperature_constraints, DeviceCapability};
+use govee_api::temperature::{
     TemperatureScale, TemperatureUnits, TemperatureValue, DEVICE_CLASS_TEMPERATURE,
 };
-use anyhow::anyhow;
 use mosquitto_rs::router::{Params, Payload, State};
 use serde::Deserialize;
 use std::str::FromStr;
@@ -21,57 +20,6 @@ pub struct TargetTemperatureEntity {
     device_id: String,
     state: StateHandle,
     instance_name: String,
-}
-
-pub struct TemperatureConstraints {
-    pub min: TemperatureValue,
-    pub max: TemperatureValue,
-}
-
-impl TemperatureConstraints {
-    pub fn as_unit(&self, unit: TemperatureUnits) -> Self {
-        Self {
-            min: self.min.as_unit(unit),
-            max: self.max.as_unit(unit),
-        }
-    }
-}
-
-pub fn parse_temperature_constraints(
-    instance: &DeviceCapability,
-) -> anyhow::Result<TemperatureConstraints> {
-    let units = instance
-        .struct_field_by_name("unit")
-        .and_then(|field| {
-            field.default_value.as_ref().and_then(|v| {
-                v.as_str()
-                    .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
-            })
-        })
-        .unwrap_or(TemperatureUnits::Fahrenheit);
-
-    let temperature = instance
-        .struct_field_by_name("temperature")
-        .ok_or_else(|| anyhow!("no temperature field in {instance:?}"))?;
-    match &temperature.field_type {
-        DeviceParameters::Integer { unit, range } => {
-            let range_units = unit
-                .as_deref()
-                .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
-                .unwrap_or(units);
-
-            let min = TemperatureValue::new(range.min.into(), range_units);
-            let max = TemperatureValue::new(range.max.into(), range_units);
-
-            Ok(TemperatureConstraints {
-                min: min.as_unit(units),
-                max: max.as_unit(units),
-            })
-        }
-        _ => {
-            anyhow::bail!("Unexpected temperature value in {instance:?}");
-        }
-    }
 }
 
 impl TargetTemperatureEntity {

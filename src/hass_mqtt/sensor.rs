@@ -2,14 +2,14 @@ use crate::commands::serve::POLL_INTERVAL;
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
-use crate::platform_api::DeviceCapability;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{availability_topic, topic_safe_id, topic_safe_string, HassClient};
 use crate::service::quirks::HumidityUnits;
 use crate::service::state::StateHandle;
-use crate::temperature::{TemperatureUnits, TemperatureValue, DEVICE_CLASS_TEMPERATURE};
 use async_trait::async_trait;
 use chrono::Utc;
+use govee_api::platform_api::DeviceCapability;
+use govee_api::temperature::{TemperatureUnits, TemperatureValue, DEVICE_CLASS_TEMPERATURE};
 use serde::Serialize;
 use serde_json::json;
 

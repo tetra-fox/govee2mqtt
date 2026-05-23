@@ -1,4 +1,4 @@
-use crate::lan_api::Client as LanClient;
+use govee_api::lan_api::Client as LanClient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

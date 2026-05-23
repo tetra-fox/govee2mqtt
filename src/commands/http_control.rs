@@ -1,4 +1,4 @@
-use crate::platform_api::{DeviceParameters, EnumOption};
+use govee_api::platform_api::{DeviceParameters, EnumOption};
 use uncased::Uncased;
 
 #[derive(clap::Parser, Debug)]

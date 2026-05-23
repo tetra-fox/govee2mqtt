@@ -1,13 +1,15 @@
-use crate::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
-use crate::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
-use crate::platform_api::{DeviceCapability, DeviceType, GoveeApiClient};
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
 use crate::service::hass::{topic_safe_id, HassClient};
 use crate::service::iot::IotClient;
-use crate::temperature::{TemperatureScale, TemperatureValue};
-use crate::undoc_api::GoveeUndocumentedApi;
 use anyhow::Context;
+use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
+use govee_api::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
+use govee_api::platform_api::{
+    sort_and_dedup_scenes, DeviceCapability, DeviceType, GoveeApiClient,
+};
+use govee_api::temperature::{TemperatureScale, TemperatureValue};
+use govee_api::undoc_api::GoveeUndocumentedApi;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -536,7 +538,7 @@ impl State {
         }
 
         if let Some(lan_dev) = &device.lan_device {
-            let color = crate::lan_api::DeviceColor { r, g, b };
+            let color = govee_api::lan_api::DeviceColor { r, g, b };
             log::info!("Using LAN API to set {device} color");
             lan_dev.send_color_rgb(color).await?;
             self.poll_lan_api(lan_dev, |status| status.color == color)
@@ -691,10 +693,4 @@ impl State {
 
         Ok(())
     }
-}
-
-pub fn sort_and_dedup_scenes(mut scenes: Vec<String>) -> Vec<String> {
-    scenes.sort_by_key(|s| s.to_ascii_lowercase());
-    scenes.dedup();
-    scenes
 }

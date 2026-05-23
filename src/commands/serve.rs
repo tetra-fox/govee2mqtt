@@ -1,15 +1,15 @@
-use crate::lan_api::Client as LanClient;
-use crate::platform_api::GoveeApiClient;
 use crate::service::device::Device;
 use crate::service::hass::spawn_hass_integration;
 use crate::service::http::run_http_server;
 use crate::service::iot::start_iot_client;
 use crate::service::state::StateHandle;
-use crate::undoc_api::GoveeUndocumentedApi;
 use crate::version_info::govee_version;
 use crate::UndocApiArguments;
 use anyhow::Context;
 use chrono::Utc;
+use govee_api::lan_api::Client as LanClient;
+use govee_api::platform_api::GoveeApiClient;
+use govee_api::undoc_api::GoveeUndocumentedApi;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;

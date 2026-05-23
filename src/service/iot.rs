@@ -1,11 +1,11 @@
-use crate::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
-use crate::lan_api::{DeviceColor, DeviceStatus};
-use crate::platform_api::from_json;
 use crate::service::state::StateHandle;
-use crate::undoc_api::{ms_timestamp, DeviceEntry, LoginAccountResponse, ParsedOneClick};
 use crate::UndocApiArguments;
 use anyhow::Context;
 use async_channel::Receiver;
+use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
+use govee_api::lan_api::{DeviceColor, DeviceStatus};
+use govee_api::platform_api::from_json;
+use govee_api::undoc_api::{ms_timestamp, DeviceEntry, LoginAccountResponse, ParsedOneClick};
 use mosquitto_rs::{Event, QoS};
 use serde::Deserialize;
 use std::time::Duration;

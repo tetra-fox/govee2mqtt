@@ -1,6 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
-use crate::platform_api::DeviceType;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{
     availability_topic, kelvin_to_mired, light_segment_state_topic, light_state_topic,
@@ -8,6 +7,7 @@ use crate::service::hass::{
 };
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
+use govee_api::platform_api::DeviceType;
 use serde::Serialize;
 use serde_json::json;
 

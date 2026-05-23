@@ -884,7 +884,6 @@ name = "govee"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "async-channel",
  "async-trait",
  "axum",
@@ -898,17 +897,39 @@ dependencies = [
  "dirs-next",
  "dotenvy",
  "env_logger",
+ "govee-api",
  "iana-time-zone",
- "if-addrs",
  "k9",
  "log",
  "mosquitto-rs",
  "once_cell",
  "openssl",
  "p12",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "uncased",
+ "uuid",
+]
+
+[[package]]
+name = "govee-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "chrono",
+ "clap",
+ "data-encoding",
+ "dirs-next",
+ "if-addrs",
+ "k9",
+ "log",
+ "once_cell",
  "parking_lot",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "serde_json_path_to_error",
@@ -917,8 +938,6 @@ dependencies = [
  "strum_macros",
  "thiserror 2.0.18",
  "tokio",
- "tower-http",
- "uncased",
  "uuid",
 ]
 

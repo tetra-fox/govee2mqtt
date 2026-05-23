@@ -1,11 +1,11 @@
-use crate::ble::NotifyHumidifierNightlightParams;
 use crate::commands::serve::POLL_INTERVAL;
-use crate::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
-use crate::platform_api::{
-    DeviceCapability, DeviceCapabilityState, DeviceType, HttpDeviceInfo, HttpDeviceState,
-};
 use crate::service::quirks::{resolve_quirk, Quirk, BULB};
 use chrono::{DateTime, Utc};
+use govee_api::ble::NotifyHumidifierNightlightParams;
+use govee_api::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
+use govee_api::platform_api::{
+    DeviceCapability, DeviceCapabilityState, DeviceType, HttpDeviceInfo, HttpDeviceState,
+};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ impl std::fmt::Display for Device {
 #[derive(Clone, Debug)]
 struct ActiveSceneInfo {
     pub name: String,
-    pub color: crate::lan_api::DeviceColor,
+    pub color: govee_api::lan_api::DeviceColor,
     pub kelvin: u32,
 }
 
@@ -83,7 +83,7 @@ pub struct DeviceState {
     pub kelvin: u32,
 
     /// The color
-    pub color: crate::lan_api::DeviceColor,
+    pub color: govee_api::lan_api::DeviceColor,
 
     /// The brightness in percent (0-100)
     pub brightness: u8,
@@ -99,7 +99,7 @@ pub struct DeviceState {
 #[derive(Debug, Clone)]
 pub struct UndocDeviceInfo {
     pub room_name: Option<String>,
-    pub entry: crate::undoc_api::DeviceEntry,
+    pub entry: govee_api::undoc_api::DeviceEntry,
 }
 
 impl Device {
@@ -239,8 +239,7 @@ impl Device {
     /// State of a single outlet on a multi-outlet socket. Outlet `index`
     /// occupies bit `index` of the reported onOff value.
     pub fn socket_outlet_state(&self, index: u8) -> Option<bool> {
-        self.socket_outlet_bits
-            .map(|bits| bits & (1 << index) != 0)
+        self.socket_outlet_bits.map(|bits| bits & (1 << index) != 0)
     }
 
     /// The user-assigned name for outlet `index` of a multi-outlet socket, as
@@ -274,7 +273,7 @@ impl Device {
 
     pub fn set_undoc_device_info(
         &mut self,
-        entry: crate::undoc_api::DeviceEntry,
+        entry: govee_api::undoc_api::DeviceEntry,
         room_name: Option<&str>,
     ) {
         self.undoc_device_info.replace(UndocDeviceInfo {

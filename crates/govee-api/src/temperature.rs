@@ -191,6 +191,20 @@ impl TemperatureValue {
     }
 }
 
+pub struct TemperatureConstraints {
+    pub min: TemperatureValue,
+    pub max: TemperatureValue,
+}
+
+impl TemperatureConstraints {
+    pub fn as_unit(&self, unit: TemperatureUnits) -> Self {
+        Self {
+            min: self.min.as_unit(unit),
+            max: self.max.as_unit(unit),
+        }
+    }
+}
+
 /// Extracts the numeric prefix from the string and any non-numeric suffix
 fn atoi<F: FromStr>(input: &str) -> Result<(F, &str), <F as FromStr>::Err> {
     let input = input.trim();

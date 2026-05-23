@@ -10,12 +10,12 @@ use crate::hass_mqtt::select::{SceneModeSelect, WorkModeSelect};
 use crate::hass_mqtt::sensor::{CapabilitySensor, DeviceStatusDiagnostic, GlobalFixedDiagnostic};
 use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
-use crate::platform_api::{DeviceCapability, DeviceCapabilityKind, DeviceType};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{availability_topic, oneclick_topic, purge_cache_topic};
 use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
 use anyhow::Context;
+use govee_api::platform_api::{DeviceCapability, DeviceCapabilityKind, DeviceType};
 
 use uuid::Uuid;
 

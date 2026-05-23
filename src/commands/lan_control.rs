@@ -1,7 +1,7 @@
-use crate::ble::{Base64HexBytes, SetSceneCode};
-use crate::lan_api::{Client, DiscoOptions};
-use crate::undoc_api::GoveeUndocumentedApi;
 use clap_num::maybe_hex;
+use govee_api::ble::{Base64HexBytes, SetSceneCode};
+use govee_api::lan_api::{Client, DiscoOptions};
+use govee_api::undoc_api::GoveeUndocumentedApi;
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use uncased::Uncased;
@@ -69,7 +69,7 @@ impl LanControlCommand {
             SubCommand::Color { color } => {
                 let [r, g, b, _a] = color.to_rgba8();
                 device
-                    .send_color_rgb(crate::lan_api::DeviceColor { r, g, b })
+                    .send_color_rgb(govee_api::lan_api::DeviceColor { r, g, b })
                     .await?;
             }
             SubCommand::Scene { list, scene } => {
