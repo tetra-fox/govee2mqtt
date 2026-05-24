@@ -14,6 +14,10 @@ use tokio::time::timeout;
 #[derive(Clone)]
 pub struct IotClient {
     client: mosquitto_rs::Client,
+    /// The account topic (GA/...), included as `msg.accountTopic` on every
+    /// command. The Govee app sends this on all writes (see AbsCmdWrite in the
+    /// app); some devices ignore commands that omit it.
+    account_topic: String,
 }
 
 impl IotClient {
@@ -33,6 +37,7 @@ impl IotClient {
                         "cmdVersion": 2,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 0,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
@@ -45,65 +50,13 @@ impl IotClient {
 
     pub async fn set_power_state(&self, device: &DeviceEntry, on: bool) -> anyhow::Result<()> {
         log::trace!("set_power_state for {} to {on}", device.device);
-        let device_topic = device.device_topic()?;
-
-        fn pwr(is_on: bool, on: u8, off: u8) -> u8 {
-            if is_on {
-                on
-            } else {
-                off
-            }
-        }
-
-        let power_state = match device.sku.as_str() {
-            "H5080" | "H5083" => pwr(on, 17, 16),
-            _ => pwr(on, 1, 0),
-        };
-
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "turn",
-                        "data": {
-                            "val": power_state,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
-            .await
-            .context("IotClient::set_power_state")?;
-        Ok(())
+        let val = if on { 1 } else { 0 };
+        self.publish_turn(device, val).await
     }
 
-    /// Switch a single outlet of a multi-outlet socket (eg: H5082).
-    ///
-    /// These use the same `turn` command as a normal power toggle, but `val`
-    /// is bit-packed rather than a plain boolean: the high nibble selects which
-    /// outlet the command addresses, the low nibble carries its new on/off bit.
-    /// Outlet `index` occupies bit `index`, so outlet 0 on/off is 0x11/0x10 and
-    /// outlet 1 on/off is 0x22/0x20, matching the values Govee's app sends.
-    /// <https://github.com/wez/govee2mqtt/issues/65>
-    pub async fn set_socket_outlet(
-        &self,
-        device: &DeviceEntry,
-        index: u8,
-        on: bool,
-    ) -> anyhow::Result<()> {
-        log::trace!(
-            "set_socket_outlet for {} outlet {index} to {on}",
-            device.device
-        );
+    /// Publish a `turn` command with a raw `val` byte.
+    async fn publish_turn(&self, device: &DeviceEntry, val: u8) -> anyhow::Result<()> {
         let device_topic = device.device_topic()?;
-
-        let val = socket_outlet_turn_val(index, on);
-
         self.client
             .publish(
                 device_topic,
@@ -116,13 +69,14 @@ impl IotClient {
                         "cmdVersion": 0,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 1,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
                 false,
             )
             .await
-            .context("IotClient::set_socket_outlet")?;
+            .context("IotClient::publish_turn")?;
         Ok(())
     }
 
@@ -141,6 +95,7 @@ impl IotClient {
                         "cmdVersion": 0,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 1,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
@@ -176,6 +131,7 @@ impl IotClient {
                         "cmdVersion": 0,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 1,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
@@ -213,6 +169,7 @@ impl IotClient {
                         "cmdVersion": 0,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 1,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
@@ -243,6 +200,7 @@ impl IotClient {
                         "cmdVersion": 0,
                         "transaction": format!("v_{}000", ms_timestamp()),
                         "type": 1,
+                        "accountTopic": self.account_topic,
                     }
                 }))?,
                 QoS::AtMostOnce,
@@ -335,6 +293,7 @@ pub async fn start_iot_client(
     state
         .set_iot_client(IotClient {
             client: client.clone(),
+            account_topic: acct.topic.to_string(),
         })
         .await;
 
@@ -561,24 +520,35 @@ async fn run_iot_subscriber(
     Ok(())
 }
 
-/// The `turn` value that switches a single outlet of a multi-outlet socket.
-/// The high nibble selects which outlet bit the command addresses, the low
-/// nibble carries that outlet's new on/off state. See [`IotClient::set_socket_outlet`].
-fn socket_outlet_turn_val(index: u8, on: bool) -> u8 {
-    let outlet_bit = 1u8 << index;
-    (outlet_bit << 4) | if on { outlet_bit } else { 0 }
+/// The `turn` `val` byte for a Wi-Fi smart plug/switch, matching the Govee app's
+/// CmdTurn.getCmd. The high nibble selects which outlet(s) the command targets,
+/// the low nibble carries their on/off bits. `outlet` is the zero-based outlet
+/// index; pass 15 to address all outlets (used for single-outlet plugs, which
+/// the app sends as 0xFF/0xF0).
+pub fn socket_turn_val(outlet: u8, on: bool) -> u8 {
+    let (select, bit) = match outlet {
+        0 => (0x10, 0x01),
+        1 => (0x20, 0x02),
+        2 => (0x40, 0x04),
+        _ => (0xf0, 0x0f),
+    };
+    select | if on { bit } else { 0 }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::socket_turn_val;
 
     #[test]
-    fn outlet_turn_values_match_app() {
-        // Values observed from the Govee app for a dual-outlet H5082.
-        assert_eq!(socket_outlet_turn_val(0, true), 17);
-        assert_eq!(socket_outlet_turn_val(0, false), 16);
-        assert_eq!(socket_outlet_turn_val(1, true), 34);
-        assert_eq!(socket_outlet_turn_val(1, false), 32);
+    fn socket_turn_values_match_app() {
+        // From the Govee app's H5080-family CmdTurn.getCmd (decompiled).
+        assert_eq!(socket_turn_val(15, true), 0xff); // single plug ON
+        assert_eq!(socket_turn_val(15, false), 0xf0); // single plug OFF
+        assert_eq!(socket_turn_val(0, true), 0x11);
+        assert_eq!(socket_turn_val(0, false), 0x10);
+        assert_eq!(socket_turn_val(1, true), 0x22);
+        assert_eq!(socket_turn_val(1, false), 0x20);
+        assert_eq!(socket_turn_val(2, true), 0x44);
+        assert_eq!(socket_turn_val(2, false), 0x40);
     }
 }

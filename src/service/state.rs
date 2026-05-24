@@ -1,7 +1,7 @@
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
 use crate::service::hass::{topic_safe_id, HassClient};
-use crate::service::iot::IotClient;
+use crate::service::iot::{socket_turn_val, IotClient};
 use anyhow::Context;
 use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
 use govee_api::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
@@ -362,6 +362,14 @@ impl State {
             return Ok(());
         }
 
+        // Wi-Fi smart plugs/switches don't honor a direct MQTT `turn` publish;
+        // the command must go through Govee's REST relay (which carries the
+        // `gas` token authorizing control). 15 addresses all outlets, the form
+        // the app uses for a single-outlet plug.
+        if device.device_type() == DeviceType::Socket {
+            return self.device_socket_turn(device, 15, on).await;
+        }
+
         if device.iot_api_supported() {
             if let Some(iot) = self.get_iot_client().await {
                 if let Some(info) = &device.undoc_device_info {
@@ -383,9 +391,7 @@ impl State {
         anyhow::bail!("Unable to control power state for {device}");
     }
 
-    /// Switch a single outlet of a multi-outlet socket (eg: H5082). Only the
-    /// IoT API can address individual outlets; the platform API exposes a
-    /// single combined powerSwitch and the LAN API has no concept of outlets.
+    /// Switch a single outlet of a multi-outlet socket (eg: H5082).
     /// <https://github.com/wez/govee2mqtt/issues/65>
     pub async fn device_set_socket_outlet(
         self: &Arc<Self>,
@@ -393,15 +399,34 @@ impl State {
         index: u8,
         on: bool,
     ) -> anyhow::Result<()> {
-        if let Some(iot) = self.get_iot_client().await {
-            if let Some(info) = &device.undoc_device_info {
-                log::info!("Using IoT API to set {device} outlet {index} power state");
-                iot.set_socket_outlet(&info.entry, index, on).await?;
-                return Ok(());
-            }
-        }
+        self.device_socket_turn(device, index, on).await
+    }
 
-        anyhow::bail!("Unable to control outlet {index} for {device}: IoT API unavailable");
+    /// Control a Wi-Fi smart plug/switch outlet via Govee's REST relay
+    /// (`fx-device/iot-msgs`). Direct MQTT publishes are ignored by these
+    /// devices; the relay carries the `gas` token that authorizes control.
+    /// `outlet` is the zero-based outlet index, or 15 for all outlets.
+    async fn device_socket_turn(
+        &self,
+        device: &Device,
+        outlet: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        let info = device.undoc_device_info.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("{device} has no undoc metadata; cannot control socket")
+        })?;
+        let undoc = self
+            .get_undoc_client()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("undoc API client unavailable for {device}"))?;
+
+        let val = socket_turn_val(outlet, on);
+        log::info!("Using REST relay to set {device} outlet {outlet} -> {on} (val {val})");
+
+        let mut msg = serde_json::Map::new();
+        msg.insert("cmd".into(), serde_json::json!("turn"));
+        msg.insert("data".into(), serde_json::json!({ "val": val }));
+        undoc.control_device(&info.entry, msg).await
     }
 
     pub async fn device_set_brightness(

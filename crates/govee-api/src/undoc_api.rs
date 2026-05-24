@@ -262,6 +262,70 @@ impl GoveeUndocumentedApi {
         Ok(value.into_inner())
     }
 
+    /// Send a control command to a device via Govee's REST relay
+    /// (`fx-device/iot-msgs`). The app uses this instead of publishing MQTT
+    /// directly: the command is wrapped in `iotMsg` and accompanied by the
+    /// account/device topics and the `gas` token, which authorizes control of
+    /// shared devices. Devices ignore direct MQTT publishes that lack this.
+    ///
+    /// `inner_msg` is the `msg` object (eg `{"cmd":"turn","data":{"val":34}}`);
+    /// we add `cmdVersion`, `type`, `transaction`, and `accountTopic`.
+    pub async fn control_device(
+        &self,
+        device: &DeviceEntry,
+        mut inner_msg: serde_json::Map<String, JsonValue>,
+    ) -> anyhow::Result<()> {
+        let account = self.login_account_cached().await?;
+        let account_topic = account.topic.to_string();
+        let token = account.token.to_string();
+        let transaction = format!("v_{}000", ms_timestamp());
+
+        inner_msg.insert("cmdVersion".into(), json!(0));
+        inner_msg.insert("type".into(), json!(1));
+        inner_msg.insert("transaction".into(), json!(transaction));
+        inner_msg.insert("accountTopic".into(), json!(account_topic));
+        let iot_msg = serde_json::to_string(&json!({ "msg": inner_msg }))?;
+
+        let mut body = serde_json::Map::new();
+        body.insert("sku".into(), json!(device.sku));
+        body.insert("device".into(), json!(device.device));
+        body.insert("gd".into(), json!(device.device_topic()?));
+        body.insert("ga".into(), json!(account_topic));
+        if let Some(gas) = &device.gas {
+            body.insert("gas".into(), json!(gas));
+        }
+        body.insert("transaction".into(), json!(transaction));
+        body.insert("iotMsg".into(), json!(iot_msg));
+
+        let response = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?
+            .request(
+                Method::POST,
+                "https://app2.govee.com/bff-app/v1/fx-device/iot-msgs",
+            )
+            .header("Authorization", format!("Bearer {token}"))
+            .header("appVersion", APP_VERSION)
+            .header("clientId", &self.client_id)
+            .header("clientType", "1")
+            .header("iotVersion", "0")
+            .header("timestamp", ms_timestamp())
+            .header("User-Agent", user_agent())
+            .json(&body)
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_account_login();
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "fx-device/iot-msgs failed: {}",
+            response.status()
+        );
+        Ok(())
+    }
+
     pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
         let response = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
