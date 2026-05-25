@@ -130,6 +130,66 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
     }
 }
 
+/// Log the resolved device set once, with per-device API capabilities and
+/// warnings for devices that should be reachable over LAN but didn't respond.
+/// Runs off the startup critical path (see the caller) so registration and
+/// polling don't block on it.
+async fn log_device_summary(state: &StateHandle) {
+    log::info!("Devices returned from Govee's APIs");
+    for device in state.devices().await {
+        log::info!("{device}");
+        if let Some(lan) = &device.lan_device {
+            log::info!("  LAN API: ip={:?}", lan.ip);
+        }
+        if let Some(http_info) = &device.http_device_info {
+            let kind = &http_info.device_type;
+            let rgb = http_info.supports_rgb();
+            let bright = http_info.supports_brightness();
+            let color_temp = http_info.get_color_temperature_range();
+            let segment_rgb = http_info.supports_segmented_rgb();
+            log::info!("  Platform API: {kind}. supports_rgb={rgb} supports_brightness={bright}");
+            log::info!("                color_temp={color_temp:?} segment_rgb={segment_rgb:?}");
+            log::trace!("{http_info:#?}");
+        }
+        if let Some(undoc) = &device.undoc_device_info {
+            let room = &undoc.room_name;
+            let supports_iot = undoc.entry.device_ext.device_settings.topic.is_some();
+            let ble_only = undoc.entry.device_ext.device_settings.wifi_name.is_none();
+            log::info!("  Undoc: room={room:?} supports_iot={supports_iot} ble_only={ble_only}");
+            log::trace!("{undoc:#?}");
+        }
+        if let Some(quirk) = device.resolve_quirk() {
+            log::info!("  {quirk:?}");
+
+            // Sanity check for LAN devices: if we don't see an API for it,
+            // it may indicate a networking issue
+            if quirk.lan_api_capable && device.lan_device.is_none() {
+                log::warn!(
+                    "  This device should be available via the LAN API, \
+                    but didn't respond to probing yet. Possible causes:"
+                );
+                log::warn!("  1) LAN API needs to be enabled in the Govee Home App.");
+                log::warn!("  2) The device is offline.");
+                log::warn!("  3) A network configuration issue is preventing communication.");
+                log::warn!("  4) The device needs a firmware update before it can enable LAN API.");
+                log::warn!(
+                    "  5) The hardware version of the device is too old to enable the LAN API."
+                );
+            }
+        } else if device.http_device_info.is_none() {
+            log::warn!("  Unknown device type. Cannot map to Home Assistant.");
+            if state.get_platform_client().await.is_none() {
+                log::warn!(
+                    "  Recommendation: configure your Govee API Key so that \
+                              metadata can be fetched from Govee"
+                );
+            }
+        }
+
+        log::info!("");
+    }
+}
+
 async fn enumerate_devices_via_platform_api(
     state: StateHandle,
     client: Option<GoveeApiClient>,
@@ -261,7 +321,8 @@ impl ServeCommand {
         // Now start LAN discovery
 
         let options = args.lan_disco_args.to_disco_options()?;
-        if !options.is_empty() {
+        let lan_enabled = !options.is_empty();
+        if lan_enabled {
             log::info!("Starting LAN discovery");
             let state = state.clone();
             let (client, mut scan) = LanClient::new(options).await?;
@@ -291,74 +352,23 @@ impl ServeCommand {
                     });
                 }
             });
-
-            // I don't love that this is 10 seconds but since our timeout
-            // for query_status is 10 seconds, and we show a warning for
-            // devices that didn't respond in the section below, in the
-            // interest of reducing false positives we need to wait long
-            // enough to provide high-signal warnings.
-            log::info!("Waiting 10 seconds for LAN API discovery");
-            sleep(Duration::from_secs(10)).await;
         }
 
-        log::info!("Devices returned from Govee's APIs");
-        for device in state.devices().await {
-            log::info!("{device}");
-            if let Some(lan) = &device.lan_device {
-                log::info!("  LAN API: ip={:?}", lan.ip);
-            }
-            if let Some(http_info) = &device.http_device_info {
-                let kind = &http_info.device_type;
-                let rgb = http_info.supports_rgb();
-                let bright = http_info.supports_brightness();
-                let color_temp = http_info.get_color_temperature_range();
-                let segment_rgb = http_info.supports_segmented_rgb();
-                log::info!(
-                    "  Platform API: {kind}. supports_rgb={rgb} supports_brightness={bright}"
-                );
-                log::info!("                color_temp={color_temp:?} segment_rgb={segment_rgb:?}");
-                log::trace!("{http_info:#?}");
-            }
-            if let Some(undoc) = &device.undoc_device_info {
-                let room = &undoc.room_name;
-                let supports_iot = undoc.entry.device_ext.device_settings.topic.is_some();
-                let ble_only = undoc.entry.device_ext.device_settings.wifi_name.is_none();
-                log::info!(
-                    "  Undoc: room={room:?} supports_iot={supports_iot} ble_only={ble_only}"
-                );
-                log::trace!("{undoc:#?}");
-            }
-            if let Some(quirk) = device.resolve_quirk() {
-                log::info!("  {quirk:?}");
-
-                // Sanity check for LAN devices: if we don't see an API for it,
-                // it may indicate a networking issue
-                if quirk.lan_api_capable && device.lan_device.is_none() {
-                    log::warn!(
-                        "  This device should be available via the LAN API, \
-                        but didn't respond to probing yet. Possible causes:"
-                    );
-                    log::warn!("  1) LAN API needs to be enabled in the Govee Home App.");
-                    log::warn!("  2) The device is offline.");
-                    log::warn!("  3) A network configuration issue is preventing communication.");
-                    log::warn!(
-                        "  4) The device needs a firmware update before it can enable LAN API."
-                    );
-                    log::warn!(
-                        "  5) The hardware version of the device is too old to enable the LAN API."
-                    );
+        // Log the resolved device set once, off the startup critical path. When
+        // LAN discovery is enabled we wait for it to settle first, so the
+        // "didn't respond to LAN probing" warnings don't fire for devices that
+        // simply hadn't been probed yet (query_status has a 10s timeout).
+        // Startup no longer blocks on this: hass registration and polling start
+        // immediately below, and each device's state streams into hass via
+        // notify_of_state_change as discovery and polling respond.
+        {
+            let state = state.clone();
+            tokio::spawn(async move {
+                if lan_enabled {
+                    sleep(Duration::from_secs(10)).await;
                 }
-            } else if device.http_device_info.is_none() {
-                log::warn!("  Unknown device type. Cannot map to Home Assistant.");
-                if state.get_platform_client().await.is_none() {
-                    log::warn!(
-                        "  Recommendation: configure your Govee API Key so that \
-                                  metadata can be fetched from Govee"
-                    );
-                }
-            }
-
-            log::info!("");
+                log_device_summary(&state).await;
+            });
         }
 
         // Start periodic status polling

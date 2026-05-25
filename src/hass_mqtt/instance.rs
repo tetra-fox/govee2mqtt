@@ -71,10 +71,6 @@ impl EntityList {
         self.entities.push(Arc::new(e));
     }
 
-    pub fn len(&self) -> usize {
-        self.entities.len()
-    }
-
     /// Group every entity by its HA device and publish one device-discovery
     /// message per device. The device, origin and availability blocks are
     /// hoisted out of the components (they are identical within a device by
@@ -112,7 +108,8 @@ impl EntityList {
         }
 
         let mut published = PublishedComponents::new();
-        let delay = tokio::time::Duration::from_millis(100);
+        // One retained config message per device; the bounded rumqttc request
+        // channel paces the writes, so no inter-publish delay is needed.
         for object_id in order {
             let mut group = groups.remove(&object_id).expect("group exists");
             let topic = format!("{disco}/device/{object_id}/config");
@@ -133,7 +130,6 @@ impl EntityList {
             }
 
             client.publish_config(topic, group.into_payload()).await?;
-            tokio::time::sleep(delay).await;
         }
         Ok(published)
     }

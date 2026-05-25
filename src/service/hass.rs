@@ -148,7 +148,7 @@ impl HassClient {
         // retained device configs untouched and carries the previous map
         // forward; the next complete pass reconciles. State and availability are
         // still refreshed below.
-        if enumeration.complete {
+        let device_count = if enumeration.complete {
             // A device that is still present but dropped a component gets that
             // component tombstoned in its republished payload (handled inside
             // publish_config). The returned map is what we produced this pass.
@@ -166,21 +166,25 @@ impl HassClient {
                         .with_context(|| format!("remove stale config {topic}"))?;
                 }
             }
+            let count = published.len();
             state.set_published_components(published).await;
+            count
         } else {
             log::info!(
                 "Enumeration was incomplete; leaving discovery configs untouched to avoid removing entities that still exist"
             );
+            let count = previous.len();
             state.set_published_components(previous).await;
-        }
+            count
+        };
 
-        // Allow hass extra time to register the entities before
-        // we mark them as available
-        let delay = tokio::time::Duration::from_millis((10 * entities.len()) as u64);
-        log::info!(
-            "Wait {delay:?} for hass to settle on {} entity configs",
-            entities.len()
-        );
+        // Give hass time to ingest the device discovery configs before we mark
+        // devices available, so entities don't briefly resolve to unavailable.
+        // Discovery is one retained config message per device now, so this
+        // scales with device count rather than entity count. Capped so a large
+        // account doesn't stall registration.
+        let delay = Duration::from_millis((50 * device_count) as u64).min(Duration::from_secs(3));
+        log::info!("Wait {delay:?} for hass to settle on {device_count} device configs");
         tokio::time::sleep(delay).await;
 
         // Mark the bridge available. Retained so a late-subscribing hass (eg:
@@ -639,14 +643,7 @@ async fn mqtt_homeassitant_status(
 async fn build_router_and_register(
     client: &AsyncClient,
     state: &StateHandle,
-    first_connect: bool,
 ) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
-    if first_connect {
-        // Give LAN disco a chance to get current state before we register with
-        // hass.
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-
     let router = {
         let disco_prefix = state.get_hass_disco_prefix().await;
         let topics = state.topics().await;
@@ -810,13 +807,12 @@ async fn run_mqtt_loop(
                 }
                 let _ = router_tx.send(None);
 
-                let was_first = first_connect;
                 first_connect = false;
                 let client = client.clone();
                 let state = state.clone();
                 let router_tx = router_tx.clone();
                 register_task = Some(tokio::spawn(async move {
-                    match build_router_and_register(&client, &state, was_first).await {
+                    match build_router_and_register(&client, &state).await {
                         Ok(router) => {
                             let _ = router_tx.send(Some(router));
                         }
