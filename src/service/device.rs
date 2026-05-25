@@ -452,8 +452,10 @@ impl Device {
 
     /// The online flag the undoc device list reports for this device. This is
     /// the only reachability signal we get for shared devices, which the
-    /// platform API doesn't return and which we can't poll. Updated whenever the
-    /// device list is re-fetched (every few minutes).
+    /// platform API doesn't return and which we can't poll. It reflects the
+    /// cloud's last-known reachability and refreshes when the device list is
+    /// re-fetched, so it can lag (eg: a device reads false at rest until
+    /// something wakes it).
     pub fn undoc_reported_online(&self) -> Option<bool> {
         self.undoc_device_info
             .as_ref()?

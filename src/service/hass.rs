@@ -600,7 +600,6 @@ async fn mqtt_outlet_command(
     Ok(())
 }
 
-
 /// HASS is advising us that its status has changed
 async fn mqtt_homeassitant_status(
     Payload(status): Payload<String>,

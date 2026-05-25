@@ -87,6 +87,14 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
         return Ok(());
     }
 
+    // Shared devices aren't returned by the platform API (no http_device_info),
+    // so poll_platform_api can't reach them. Request status over IoT instead,
+    // which routes through the REST relay for shared devices. Without this they
+    // never get a device_state and show as unavailable in hass.
+    if device.http_device_info.is_none() && state.poll_iot_api(device).await? {
+        return Ok(());
+    }
+
     state.poll_platform_api(device).await?;
 
     Ok(())
