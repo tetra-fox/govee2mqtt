@@ -4,7 +4,7 @@ use crate::version_info::govee_version;
 use serde::Serialize;
 
 const MODEL: &str = "gv2mqtt";
-const URL: &str = "https://github.com/wez/govee2mqtt";
+const URL: &str = "https://github.com/tetra-fox/govee2mqtt";
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct EntityConfig {
@@ -78,7 +78,7 @@ impl Device {
     pub fn this_service() -> Self {
         Self {
             name: "Govee to MQTT".to_string(),
-            manufacturer: "Wez Furlong".to_string(),
+            manufacturer: "tetra-fox".to_string(),
             model: "govee2mqtt".to_string(),
             sw_version: Some(govee_version().to_string()),
             suggested_area: None,
