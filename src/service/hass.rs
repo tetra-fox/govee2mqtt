@@ -176,14 +176,14 @@ impl HassClient {
             count
         };
 
-        // Give hass time to ingest the device discovery configs before we mark
-        // devices available, so entities don't briefly resolve to unavailable.
-        // Discovery is one retained config message per device now, so this
-        // scales with device count rather than entity count. Capped so a large
-        // account doesn't stall registration.
-        let delay = Duration::from_millis((50 * device_count) as u64).min(Duration::from_secs(3));
-        log::info!("Wait {delay:?} for hass to settle on {device_count} device configs");
-        tokio::time::sleep(delay).await;
+        // No settle delay before publishing availability/state. Availability is
+        // retained, so hass reads it whenever it processes the config, ordering
+        // doesn't matter. The initial state is non-retained, but the paths that
+        // matter are safe: hass only emits its online birth (which triggers our
+        // re-register) once its mqtt integration is subscribed, and a broker
+        // reconnect leaves hass's subscriptions intact. A genuinely missed
+        // initial state is backfilled by the startup poll within seconds.
+        log::trace!("register_with_hass: registered {device_count} device configs");
 
         // Mark the bridge available. Retained so a late-subscribing hass (eg:
         // one that restarts after us) sees us as online without waiting for the
