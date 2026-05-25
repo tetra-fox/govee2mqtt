@@ -756,6 +756,13 @@ async fn run_mqtt_loop(
         tokio::sync::watch::channel::<Option<Arc<MqttRouter<StateHandle>>>>(None);
     let mut register_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut first_connect = true;
+    // before the first successful connect, a run of failures almost always means
+    // a misconfigured broker (wrong host/port, or nothing listening). bail with
+    // an actionable error rather than retrying forever against an address that
+    // was never reachable. once connected, reconnect indefinitely so a broker
+    // restart does not kill us.
+    let mut initial_failures = 0u32;
+    const MAX_INITIAL_FAILURES: u32 = 6;
 
     loop {
         let event = match eventloop.poll().await {
@@ -765,6 +772,16 @@ async fn run_mqtt_loop(
                 return Ok(());
             }
             Err(err) => {
+                if first_connect {
+                    initial_failures += 1;
+                    if initial_failures >= MAX_INITIAL_FAILURES {
+                        anyhow::bail!(
+                            "could not connect to the mqtt broker after {initial_failures} attempts: {err:#}. \
+                            check that a broker is running and that the host/port are correct \
+                            (--mqtt-host / --mqtt-port or $GOVEE2MQTT_MQTT_HOST / $GOVEE2MQTT_MQTT_PORT)"
+                        );
+                    }
+                }
                 // rumqttc reconnects on the next poll; the subscriptions are
                 // gone until then, so drop the router and rebuild on ConnAck.
                 log::warn!("MQTT disconnected: {err:#}");
