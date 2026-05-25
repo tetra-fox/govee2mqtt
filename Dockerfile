@@ -1,37 +1,43 @@
 ####################################################################################################
 ## Builder
 ####################################################################################################
-FROM --platform=$BUILDPLATFORM alpine:latest AS builder
-ARG TARGETPLATFORM
+FROM rust:1-bookworm AS builder
 
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "1000" \
-    "govee"
+# mosquitto-rs builds OpenSSL from source (vendored-openssl) via cmake + perl,
+# and rusqlite (bundled) compiles sqlite. the rust base image already carries
+# perl and pkg-config; cmake is the only one missing. matches flake.nix.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /work
-COPY docker-target/$TARGETPLATFORM/govee2mqtt /work
+# runtime user, copied into the distroless image below
+RUN useradd --uid 1000 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin govee \
+    && install -d -o govee -g govee /seed-data
 
-# Creates an empty /data dir that we can use to copy and chown in the next stage
-WORKDIR /data
+# build.rs embeds this as the version string. the workflow builds from a git
+# context with no .git to fall back to, so the release tag is passed in.
+ARG GOVEE_CI_TAG=""
+ENV GOVEE_CI_TAG=${GOVEE_CI_TAG}
+
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --bin govee2mqtt \
+    && cp target/release/govee2mqtt /govee2mqtt
 
 ####################################################################################################
 ## Final image
 ####################################################################################################
 FROM gcr.io/distroless/cc-debian12
 
-# Import from builder.
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 
 WORKDIR /app
 
-COPY --from=builder /work/govee2mqtt /app/govee2mqtt
-COPY --from=builder --chown=govee:govee /data /data
+COPY --from=builder /govee2mqtt /app/govee2mqtt
+COPY --from=builder --chown=govee:govee /seed-data /data
 COPY assets /app/assets
 
 USER govee:govee

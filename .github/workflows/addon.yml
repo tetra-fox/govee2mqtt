@@ -1,0 +1,75 @@
+name: Home Assistant add-on
+
+on:
+  # the add-on image is built FROM ghcr.io/.../govee2mqtt:latest, so it has to
+  # publish after the release image build pushed that tag
+  workflow_run:
+    workflows: ["Build Docker image"]
+    types: [completed]
+  # validate the add-on build config without publishing
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0 # need tags to resolve the release version
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: https://ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set add-on version from release tag
+        run: |
+          tag=$(git tag --points-at HEAD | head -n1)
+          echo "TAG_NAME=${tag#v}" >> "$GITHUB_ENV" # strip v to match the image's semver tag
+      - name: Apply tag to version
+        run: ./scripts/apply-tag.sh
+      - name: Build and Publish Home Assistant Add On
+        uses: home-assistant/builder@2026.02.1
+        with:
+          args: |
+            --amd64 \
+            --aarch64 \
+            --cosign \
+            --target /data/addon
+
+  test:
+    if: ${{ github.event_name != 'workflow_run' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: https://ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test Build Home Assistant Add On
+        uses: home-assistant/builder@2026.02.1
+        with:
+          args: |
+            --test \
+            --amd64 \
+            --aarch64 \
+            --cosign \
+            --target /data/addon
