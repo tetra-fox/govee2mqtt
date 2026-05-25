@@ -326,10 +326,9 @@ mod test {
             .is_some());
         assert!(!wm.mode_by_name("Normal").unwrap().should_show_as_preset());
 
-        k9::snapshot!(
-            wm,
-            r#"
-ParsedWorkMode {
+        assert_eq!(
+            format!("{wm:#?}"),
+            r#"ParsedWorkMode {
     modes: {
         "Normal": WorkMode {
             name: "Normal",
@@ -342,8 +341,7 @@ ParsedWorkMode {
             ),
         },
     },
-}
-"#
+}"#
         );
     }
 
@@ -358,10 +356,9 @@ ParsedWorkMode {
         // we should get a contiguous range that we can show as a slider
         let auto_mode = wm.mode_by_name("Auto").unwrap();
         assert!(auto_mode.contiguous_value_range().is_some());
-        k9::snapshot!(
-            wm,
-            r#"
-ParsedWorkMode {
+        assert_eq!(
+            format!("{wm:#?}"),
+            r#"ParsedWorkMode {
     modes: {
         "Auto": WorkMode {
             name: "Auto",
@@ -394,8 +391,7 @@ ParsedWorkMode {
             ),
         },
     },
-}
-"#
+}"#
         );
     }
 
@@ -454,10 +450,9 @@ ParsedWorkMode {
             .contiguous_value_range()
             .is_none());
 
-        k9::snapshot!(
-            wm,
-            r#"
-ParsedWorkMode {
+        assert_eq!(
+            format!("{wm:#?}"),
+            r#"ParsedWorkMode {
     modes: {
         "Normal": WorkMode {
             name: "Normal",
@@ -484,8 +479,7 @@ ParsedWorkMode {
             value_range: None,
         },
     },
-}
-"#
+}"#
         );
     }
 
@@ -498,10 +492,9 @@ ParsedWorkMode {
 
         assert!(!wm.mode_by_name("FanSpeed").unwrap().should_show_as_preset());
         assert!(wm.mode_by_name("Auto").unwrap().should_show_as_preset());
-        k9::snapshot!(
-            wm,
-            r#"
-ParsedWorkMode {
+        assert_eq!(
+            format!("{wm:#?}"),
+            r#"ParsedWorkMode {
     modes: {
         "Auto": WorkMode {
             name: "Auto",
@@ -564,8 +557,7 @@ ParsedWorkMode {
             value_range: None,
         },
     },
-}
-"#
+}"#
         );
     }
 
@@ -577,10 +569,9 @@ ParsedWorkMode {
         let mut wm = ParsedWorkMode::with_capability(&cap).unwrap();
         wm.adjust_for_device("H7173");
 
-        k9::snapshot!(
-            &wm,
-            r#"
-ParsedWorkMode {
+        assert_eq!(
+            format!("{wm:#?}"),
+            r#"ParsedWorkMode {
     modes: {
         "Boiling": WorkMode {
             name: "Boiling",
@@ -623,8 +614,7 @@ ParsedWorkMode {
             ),
         },
     },
-}
-"#
+}"#
         );
 
         assert_eq!(wm.mode_by_name("Boiling").unwrap().default_value(), 0);

@@ -44,4 +44,3 @@ features = ["vendored-openssl"]
 
 [dev-dependencies]
 anyhow = "1"
-k9 = "0.12.0"

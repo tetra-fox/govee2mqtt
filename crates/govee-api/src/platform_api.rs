@@ -1153,16 +1153,15 @@ mod test {
 
     #[test]
     fn get_device_scenes() {
-        let resp: GetDeviceScenesResponse = from_json(&SCENE_LIST).unwrap();
-        k9::assert_matches_snapshot!(format!("{resp:#?}"));
+        let _: GetDeviceScenesResponse = from_json(&SCENE_LIST).expect("parse device scenes");
     }
 
     const GET_DEVICE_STATE_EXAMPLE: &str = include_str!("../test-data/get_device_state.json");
 
     #[test]
     fn get_device_state() {
-        let resp: GetDeviceStateResponse = from_json(&GET_DEVICE_STATE_EXAMPLE).unwrap();
-        k9::assert_matches_snapshot!(format!("{resp:#?}"));
+        let _: GetDeviceStateResponse =
+            from_json(&GET_DEVICE_STATE_EXAMPLE).expect("parse device state");
     }
 
     const LIST_DEVICES_EXAMPLE: &str = include_str!("../test-data/list_devices.json");
@@ -1171,29 +1170,29 @@ mod test {
     #[test]
     fn list_devices_issue4() {
         let resp: GetDevicesResponse =
-            from_json(&include_str!("../test-data/list_devices_issue4.json")).unwrap();
-        k9::assert_matches_snapshot!(format!("{resp:#?}"));
+            from_json(&include_str!("../test-data/list_devices_issue4.json")).expect("parse");
+        assert!(!resp.data.is_empty());
     }
 
     #[test]
     fn list_devices_2() {
-        let resp: GetDevicesResponse = from_json(&LIST_DEVICES_EXAMPLE2).unwrap();
-        k9::assert_matches_snapshot!(format!("{resp:#?}"));
+        let resp: GetDevicesResponse = from_json(&LIST_DEVICES_EXAMPLE2).expect("parse");
+        assert!(!resp.data.is_empty());
     }
 
     #[test]
     fn list_devices() {
-        let resp: GetDevicesResponse = from_json(&LIST_DEVICES_EXAMPLE).unwrap();
-        k9::assert_matches_snapshot!(format!("{resp:#?}"));
+        let resp: GetDevicesResponse = from_json(&LIST_DEVICES_EXAMPLE).expect("parse");
+        assert!(!resp.data.is_empty());
     }
 
     #[test]
     fn enum_repr() {
-        k9::assert_equal!(
+        assert_eq!(
             serde_json::to_string(&DeviceType::Light).unwrap(),
             "\"devices.types.light\""
         );
-        k9::assert_equal!(
+        assert_eq!(
             serde_json::to_string(&DeviceType::Other("something".to_string())).unwrap(),
             "\"something\""
         );

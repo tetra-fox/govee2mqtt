@@ -31,4 +31,3 @@ parking_lot = "0.12.5"
 
 [dev-dependencies]
 anyhow = "1"
-k9 = "0.12.0"
