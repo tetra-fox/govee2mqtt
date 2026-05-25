@@ -101,9 +101,28 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
 }
 
 async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
-    sleep(Duration::from_secs(20)).await;
+    // Short settle so the IoT/platform clients finish connecting before the
+    // first poll, then poll right away rather than after a long blind wait.
+    // Cloud-only devices come online within seconds; LAN-capable devices are
+    // brought online by LAN discovery (see the disco task in run), which is
+    // why the first pass skips them below.
+    sleep(Duration::from_secs(3)).await;
+    let mut first_pass = true;
     loop {
         for d in state.devices().await {
+            // On the first pass, don't spend cloud request quota polling a
+            // device that LAN discovery is expected to answer for: leave it to
+            // the disco task, which publishes state as devices respond over the
+            // LAN. The device stays unavailable until LAN (or, if its LAN never
+            // answers, a later cloud poll once lan_device is still unset) gives
+            // us state, which is the honest status. A device with no LAN path
+            // is polled now over the cloud.
+            if first_pass
+                && d.lan_device.is_none()
+                && d.resolve_quirk().is_some_and(|q| q.lan_api_capable)
+            {
+                continue;
+            }
             if let Err(err) = poll_single_device(&state, &d).await {
                 log::error!("while polling {d}: {err:#}");
             }
@@ -126,6 +145,7 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
             }
         }
 
+        first_pass = false;
         sleep(Duration::from_secs(30)).await;
     }
 }
