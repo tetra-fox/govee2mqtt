@@ -49,8 +49,6 @@ pub struct HassArguments {
     /// The base topic, used as the prefix for all MQTT topics and as the
     /// prefix for the Home Assistant entity unique ids.
     /// You may also set this via the GOVEE_MQTT_BASE_TOPIC environment variable.
-    /// If unspecified, uses "govee2mqtt". Set this to "gv2mqtt" to keep the
-    /// topics and entities from an upstream wez/govee2mqtt install.
     #[arg(long, global = true)]
     mqtt_base_topic: Option<String>,
 

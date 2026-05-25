@@ -4,9 +4,7 @@ use crate::service::hass::{topic_safe_id, topic_safe_string};
 /// Builds every MQTT topic and Home Assistant unique id from a single base
 /// prefix. The publish-side topics (with concrete ids) and the subscribe-side
 /// route patterns (with `:param` placeholders) are defined next to each other
-/// so the two sides can't drift apart. The base prefix defaults to
-/// "govee2mqtt"; users migrating from an upstream install can set it to
-/// "gv2mqtt" to keep their existing topics and entities.
+/// so the two sides can't drift apart.
 #[derive(Clone, Debug)]
 pub struct Topics {
     base: String,
