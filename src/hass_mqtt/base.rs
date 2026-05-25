@@ -45,13 +45,23 @@ impl EntityConfig {
         )
     }
 
-    /// Availability for a real-device entity: the global bridge topic plus the
-    /// device's own topic, both required (`availability_mode: all`). The device
-    /// topic is driven by Device::availability_status.
+    /// Availability for a real-device entity. For a device we can poll, this is
+    /// the global bridge topic plus the device's own topic, both required
+    /// (`availability_mode: all`), so the entity goes unavailable when either
+    /// the bridge or the device is. The device topic is driven by
+    /// Device::availability_status.
+    ///
+    /// A device with no reachability signal (eg: a shared device, which the
+    /// platform API doesn't return and which we can't poll) gets only the
+    /// bridge topic: gating it on a per-device topic we never publish "online"
+    /// to would pin it offline forever.
     pub fn device_availability(
         topics: &Topics,
         device: &ServiceDevice,
     ) -> (Vec<Availability>, Option<&'static str>) {
+        if !device.has_reachability_signal() {
+            return Self::global_availability(topics);
+        }
         (
             vec![
                 Availability {

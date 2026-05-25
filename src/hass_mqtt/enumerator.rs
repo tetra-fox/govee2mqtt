@@ -20,11 +20,22 @@ use govee_api::platform_api::{DeviceCapability, DeviceCapabilityKind, DeviceType
 
 use uuid::Uuid;
 
-pub async fn enumerate_all_entites(state: &StateHandle) -> anyhow::Result<EntityList> {
+/// The result of enumerating every entity for registration. `complete` is false
+/// when a source we depend on failed (eg: the undoc one-click API), meaning the
+/// entity list is partial. Callers must not garbage-collect stale discovery
+/// configs from a partial pass, or a transient/permanent source failure would
+/// delete entities that still exist.
+pub struct Enumeration {
+    pub entities: EntityList,
+    pub complete: bool,
+}
+
+pub async fn enumerate_all_entites(state: &StateHandle) -> anyhow::Result<Enumeration> {
     let mut entities = EntityList::new();
+    let mut complete = true;
 
     enumerate_global_entities(state, &mut entities).await?;
-    enumerate_scenes(state, &mut entities).await?;
+    complete &= enumerate_scenes(state, &mut entities).await?;
 
     let devices = state.devices().await;
 
@@ -34,7 +45,7 @@ pub async fn enumerate_all_entites(state: &StateHandle) -> anyhow::Result<Entity
             .with_context(|| format!("Config::for_device({d})"))?;
     }
 
-    Ok(entities)
+    Ok(Enumeration { entities, complete })
 }
 
 async fn enumerate_global_entities(
@@ -55,42 +66,45 @@ async fn enumerate_global_entities(
     Ok(())
 }
 
-async fn enumerate_scenes(state: &StateHandle, entities: &mut EntityList) -> anyhow::Result<()> {
-    if let Some(undoc) = state.get_undoc_client().await {
-        let topics = state.topics().await;
-        // Propagate a failure rather than producing zero scenes: this is a live
-        // network call on every registration, and registration now removes any
-        // discovery config it no longer produces. Swallowing the error here
-        // would make a transient undoc API failure delete every scene entity
-        // from home assistant, then re-add them on the next success. Failing
-        // the whole pass instead leaves the retained configs untouched.
-        let items = undoc
-            .parse_one_clicks()
-            .await
-            .context("parse_one_clicks")?;
-        for oc in items {
-            let unique_id =
-                topics.one_click_id(Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple());
-            let (availability, availability_mode) = EntityConfig::global_availability(&topics);
-            entities.add(SceneConfig {
-                base: EntityConfig {
-                    availability,
-                    availability_mode,
-                    name: Some(oc.name.to_string()),
-                    entity_category: None,
-                    origin: Origin::default(),
-                    device: Device::this_service(&topics),
-                    unique_id: unique_id.clone(),
-                    device_class: None,
-                    icon: None,
-                },
-                command_topic: topics.oneclick(),
-                payload_on: oc.name,
-            });
+/// Returns false if the one-click list couldn't be fetched/parsed, so the
+/// caller knows the scene entities are missing from this pass and must not GC
+/// them. A failure here is non-fatal to registration: every other entity still
+/// registers, the existing scene configs are left alone, and the next
+/// successful pass restores them.
+async fn enumerate_scenes(state: &StateHandle, entities: &mut EntityList) -> anyhow::Result<bool> {
+    let Some(undoc) = state.get_undoc_client().await else {
+        return Ok(true);
+    };
+    let topics = state.topics().await;
+    let items = match undoc.parse_one_clicks().await {
+        Ok(items) => items,
+        Err(err) => {
+            log::warn!("Failed to parse one-clicks, leaving scene entities as-is: {err:#}");
+            return Ok(false);
         }
+    };
+    for oc in items {
+        let unique_id =
+            topics.one_click_id(Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple());
+        let (availability, availability_mode) = EntityConfig::global_availability(&topics);
+        entities.add(SceneConfig {
+            base: EntityConfig {
+                availability,
+                availability_mode,
+                name: Some(oc.name.to_string()),
+                entity_category: None,
+                origin: Origin::default(),
+                device: Device::this_service(&topics),
+                unique_id: unique_id.clone(),
+                device_class: None,
+                icon: None,
+            },
+            command_topic: topics.oneclick(),
+            payload_on: oc.name,
+        });
     }
 
-    Ok(())
+    Ok(true)
 }
 
 async fn entities_for_work_mode(

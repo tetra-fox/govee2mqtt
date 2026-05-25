@@ -450,21 +450,41 @@ impl Device {
         candidates.pop()
     }
 
-    /// Reachability of the device, derived from how recently any transport
-    /// (LAN, IoT, platform) last reported state. This is the single source of
-    /// truth for both the Status diagnostic sensor text and the per-device MQTT
+    /// The online flag the undoc device list reports for this device. This is
+    /// the only reachability signal we get for shared devices, which the
+    /// platform API doesn't return and which we can't poll. Updated whenever the
+    /// device list is re-fetched (every few minutes).
+    pub fn undoc_reported_online(&self) -> Option<bool> {
+        self.undoc_device_info
+            .as_ref()?
+            .entry
+            .device_ext
+            .last_device_data
+            .online
+    }
+
+    /// Reachability of the device. For a device we can poll (LAN/IoT/platform),
+    /// this is derived from how recently any transport last reported state. For
+    /// a device we can't poll (eg: shared devices), it comes from the online
+    /// flag in the undoc device list. This is the single source of truth for
+    /// both the Status diagnostic sensor text and the per-device MQTT
     /// availability topic, so the two always agree.
     pub fn availability_status(&self) -> Reachability {
-        match self.device_state() {
+        if let Some(state) = self.device_state() {
+            let threshold = *POLL_INTERVAL + chrono::Duration::seconds(30);
+            return if Utc::now() - state.updated > threshold {
+                Reachability::Missing
+            } else {
+                Reachability::Available
+            };
+        }
+
+        // No polled state. Fall back to the undoc device list's online flag,
+        // which is what shared devices report.
+        match self.undoc_reported_online() {
+            Some(true) => Reachability::Available,
+            Some(false) => Reachability::Missing,
             None => Reachability::Unknown,
-            Some(state) => {
-                let threshold = *POLL_INTERVAL + chrono::Duration::seconds(30);
-                if Utc::now() - state.updated > threshold {
-                    Reachability::Missing
-                } else {
-                    Reachability::Available
-                }
-            }
         }
     }
 
@@ -547,6 +567,18 @@ impl Device {
             (DeviceType::Kettle, _) => true,
             _ => true,
         }
+    }
+
+    /// Whether we have any signal for this device's reachability: a transport we
+    /// can poll, or the undoc device list's online flag (the only signal shared
+    /// devices give us). A device with no signal at all must not get a
+    /// per-device availability topic, or it would be pinned offline forever; it
+    /// falls back to the bridge availability instead. See [`availability_status`].
+    pub fn has_reachability_signal(&self) -> bool {
+        self.pollable_via_lan()
+            || self.pollable_via_iot()
+            || self.http_device_info.is_some()
+            || self.undoc_reported_online().is_some()
     }
 
     pub fn pollable_via_lan(&self) -> bool {

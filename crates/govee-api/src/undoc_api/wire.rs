@@ -200,6 +200,12 @@ pub struct OneClick {
     pub group_name: String,
     #[serde(default)]
     pub iot_rules: Vec<OneClickIotRule>,
+    /// Added by the app (seen 2026-05); unused by us, but debug builds deny
+    /// unknown fields so we must accept them. Observed as null.
+    #[serde(default)]
+    pub action_type: Option<JsonValue>,
+    #[serde(default)]
+    pub all_sort: Option<JsonValue>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -557,6 +563,23 @@ mod test {
     fn issue36() {
         let _: OneClickResponse =
             from_json(include_str!("../../test-data/undoc-one-click-issue36.json")).expect("parse");
+    }
+
+    #[test]
+    fn one_click_action_type() {
+        // The app added actionType/allSort to each oneClick (seen 2026-05);
+        // debug builds deny unknown fields, so this captures that we accept them.
+        let resp: OneClickResponse = from_json(include_str!(
+            "../../test-data/undoc-one-click-action-type.json"
+        ))
+        .expect("parse");
+        let daily = resp
+            .data
+            .components
+            .iter()
+            .find(|c| c.name == "Daily")
+            .expect("Daily component");
+        assert_eq!(daily.one_clicks[0].name, "Get Home");
     }
 
     #[test]

@@ -139,20 +139,36 @@ impl HassClient {
         // pass below repopulates it via record_published_config_topic.
         let previous_topics = state.take_published_config_topics().await;
 
-        let entities = enumerate_all_entites(state).await?;
+        let enumeration = enumerate_all_entites(state).await?;
+        let entities = &enumeration.entities;
 
         // Register the configs
         log::trace!("register_with_hass: register entities");
         entities.publish_config(state, self).await?;
 
         // Remove any entity we published before but no longer produce. Empty
-        // retained payload is home assistant's signal to drop the entity.
-        let current_topics = state.current_published_config_topics().await;
-        for topic in previous_topics.difference(&current_topics) {
-            log::info!("Removing stale discovery config {topic}");
-            self.remove_config(topic)
-                .await
-                .with_context(|| format!("remove stale config {topic}"))?;
+        // retained payload is home assistant's signal to drop the entity. Only
+        // safe when enumeration was complete: a partial pass (eg: the undoc
+        // one-click API failed) is missing entities that still exist, and GCing
+        // against it would wrongly delete them.
+        if enumeration.complete {
+            let current_topics = state.current_published_config_topics().await;
+            for topic in previous_topics.difference(&current_topics) {
+                log::info!("Removing stale discovery config {topic}");
+                self.remove_config(topic)
+                    .await
+                    .with_context(|| format!("remove stale config {topic}"))?;
+            }
+        } else {
+            log::info!(
+                "Enumeration was incomplete; skipping stale-config cleanup to avoid removing entities that still exist"
+            );
+            // Carry the previous topics forward so a later complete pass can
+            // still GC anything that legitimately went away. take_* cleared the
+            // set; the pass above only re-recorded what it managed to produce.
+            for topic in previous_topics {
+                state.record_published_config_topic(topic).await;
+            }
         }
 
         // Allow hass extra time to register the entities before
@@ -284,11 +300,18 @@ impl HassClient {
     /// Publish a device's reachability to its per-device availability topic.
     /// Retained so a late-subscribing hass sees the last known status, matching
     /// the global availability and last-will.
+    ///
+    /// A device with no reachability signal uses bridge-only availability (see
+    /// EntityConfig::device_availability) and has no per-device topic, so
+    /// there's nothing to publish.
     pub async fn publish_device_availability(
         &self,
         device: &ServiceDevice,
         state: &StateHandle,
     ) -> anyhow::Result<()> {
+        if !device.has_reachability_signal() {
+            return Ok(());
+        }
         let topic = state.topics().await.device_availability(device);
         let payload = device.availability_status().as_mqtt_payload();
         self.publish_availability(topic, payload).await
