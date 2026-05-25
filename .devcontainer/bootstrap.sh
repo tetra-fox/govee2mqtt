@@ -23,12 +23,23 @@ mkdir -p "${DEV}"
 # host (addon-dev/ is gitignored). --delete keeps re-runs from accumulating
 # stale files. Exclude build output, the integration-test scratch dir, git
 # metadata, and addon-dev itself so we don't recurse into the dir we populate.
+#
+# .github is excluded because the Supervisor scans the add-on dir recursively
+# for a build.<yaml|yml|json> config, and would otherwise pick up the
+# .github/workflows/build.yml CI workflow and warn that the add-on uses a
+# deprecated build.yaml. The Docker build context does not need it anyway, nor
+# the other non-source dirs below.
 rsync -a --delete \
   --exclude 'target' \
   --exclude 'hatest' \
   --exclude '.git' \
+  --exclude '.github' \
   --exclude '.direnv' \
   --exclude 'node_modules' \
+  --exclude 'docs' \
+  --exclude '.devcontainer' \
+  --exclude 'addon' \
+  --exclude 'addon-edge' \
   --exclude 'addon-dev' \
   "${REPO}/" "${DEV}/"
 
