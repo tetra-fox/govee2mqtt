@@ -323,10 +323,12 @@ impl GoveeUndocumentedApi {
     }
 
     pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
+        // The app migrated device-list to this BFF GET; the legacy
+        // POST /device/rest/devices/v1/list is gone from the app (v7.4.40).
         let response = self
             .app_request(
-                Method::POST,
-                "https://app2.govee.com/device/rest/devices/v1/list",
+                Method::GET,
+                "https://app2.govee.com/bff-app/v1/device/list",
                 Some(token),
             )
             .send()
@@ -336,9 +338,9 @@ impl GoveeUndocumentedApi {
             self.invalidate_account_login();
         }
 
-        let resp: DevicesResponse = http_response_body(response).await?;
+        let envelope: DeviceListEnvelope = http_response_body(response).await?;
 
-        Ok(resp)
+        Ok(envelope.data)
     }
 
     pub fn invalidate_community_login(&self) {
@@ -783,13 +785,24 @@ pub struct LoginAccountResponse {
     pub topic: Redacted<String>,
 }
 
+/// Wrapper for `GET /bff-app/v1/device/list` (the app's
+/// `BaseStatusResponse<DeviceListResponse>`). The top-level status/message are
+/// validated by `http_response_body`; we only need the inner data payload.
+#[derive(Deserialize, Debug)]
+struct DeviceListEnvelope {
+    data: DevicesResponse,
+}
+
+/// The device-list payload. The field set is shared between the current
+/// `/bff-app/v1/device/list` response's `data` object and the legacy flat
+/// device-list responses (still used by the parsing tests). Extra fields in
+/// either form (sort, accountSetting, message, status, ...) are ignored.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DevicesResponse {
     pub devices: Vec<DeviceEntry>,
+    #[serde(default)]
     pub groups: Vec<GroupEntry>,
-    pub message: String,
-    pub status: u16,
 }
 
 #[derive(Deserialize, Debug)]
@@ -826,6 +839,10 @@ pub struct DeviceEntry {
     /// <https://github.com/wez/govee2mqtt/issues/76>
     #[serde(default)]
     pub gas: Option<String>,
+    /// Card layout hint from the BFF device-list endpoint; unused. Present so
+    /// debug builds (deny_unknown_fields) accept the response.
+    #[serde(default)]
+    pub card_type: Option<i64>,
 }
 
 impl DeviceEntry {
@@ -867,6 +884,10 @@ pub struct DeviceEntryExt {
     /// <https://github.com/wez/govee2mqtt/issues/76>
     #[serde(default)]
     pub shared_settings: Option<JsonValue>,
+    /// Present on the BFF device-list response (an embedded JSON string, often
+    /// `{}`); unused. Accepted so debug builds don't reject the response.
+    #[serde(default)]
+    pub device_splice: Option<JsonValue>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -942,6 +963,12 @@ pub struct DeviceSettings {
     /// eg: Glide Hexa. Value is base64 encoded data
     pub shapes: Option<String>,
     pub support_ble_broad_v3: Option<bool>,
+
+    // Present in the BFF device-list response (app v7.4.40); unused by us.
+    pub app_version: Option<String>,
+    pub language: Option<String>,
+    pub matter_id: Option<String>,
+    pub wifi_func_list: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -1040,5 +1067,16 @@ mod test {
         let resp: DevicesResponse =
             from_json(include_str!("../test-data/undoc-device-list-issue-21.json")).expect("parse");
         assert!(!resp.devices.is_empty());
+    }
+
+    #[test]
+    fn bff_device_list() {
+        // The current GET /bff-app/v1/device/list shape: a status/message
+        // wrapper around `data`, with the per-device `cardType` and the
+        // `deviceExt.deviceSplice` fields the legacy endpoint did not send.
+        let resp: DeviceListEnvelope =
+            from_json(include_str!("../test-data/undoc-device-list-bff.json")).expect("parse");
+        assert_eq!(resp.data.devices.len(), 1);
+        assert_eq!(resp.data.devices[0].card_type, Some(1));
     }
 }

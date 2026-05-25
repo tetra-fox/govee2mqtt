@@ -1,0 +1,39 @@
+{
+  "status": 200,
+  "message": "Success",
+  "data": {
+    "devices": [
+      {
+        "deviceId": 1,
+        "groupId": 0,
+        "sku": "H6093",
+        "device": "AA:BB:CC:DD:EE:FF:00:11",
+        "spec": "",
+        "versionHard": "3.03.01",
+        "versionSoft": "1.00.11",
+        "deviceName": "Test Light",
+        "pactType": 1,
+        "pactCode": 2,
+        "deviceExt": {
+          "deviceSettings": "{\"wifiName\":\"net\",\"address\":\"AA:BB:CC:DD:EE:FF\",\"bleName\":\"ihoment_H6093\",\"topic\":\"GD/0123456789abcdef\",\"wifiMac\":\"11:22:33:44:55:66\",\"pactType\":1,\"pactCode\":2}",
+          "lastDeviceData": "{\"online\":true}",
+          "deviceSplice": "{}",
+          "extResources": "{\"skuUrl\":\"\"}",
+          "sharedSettings": "{}"
+        },
+        "share": 0,
+        "gidConfirmed": true,
+        "gas": null,
+        "goodsType": 271,
+        "attributesId": 112,
+        "supportScene": 0,
+        "cardType": 1
+      }
+    ],
+    "groups": [],
+    "sort": [{"columnId": 0, "deviceIdStr": [1]}],
+    "accountSetting": {"style": 1},
+    "sortTime": 0,
+    "feastLastUpdateTime": null
+  }
+}
