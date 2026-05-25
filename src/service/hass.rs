@@ -509,15 +509,28 @@ async fn mqtt_homeassitant_status(
     Ok(())
 }
 
-async fn run_mqtt_loop(
-    state: StateHandle,
-    mut eventloop: EventLoop,
-    client: AsyncClient,
-) -> anyhow::Result<()> {
-    async fn rebuild_router(
-        client: &AsyncClient,
-        state: &StateHandle,
-    ) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
+/// Build the router (subscribing to every command topic) and register all
+/// entities with home assistant.
+///
+/// rumqttc only writes queued subscribe/publish requests to the network while
+/// `EventLoop::poll` is being driven, and its request channel is bounded. This
+/// function issues many subscribes plus hundreds of config/state publishes with
+/// sleeps in between, so it must NOT run inline in the poll loop: doing so parks
+/// the event loop, the request channel fills, and the next publish blocks
+/// forever. It runs in its own task (see `run_mqtt_loop`) so the poll loop keeps
+/// draining the channel concurrently.
+async fn build_router_and_register(
+    client: &AsyncClient,
+    state: &StateHandle,
+    first_connect: bool,
+) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
+    if first_connect {
+        // Give LAN disco a chance to get current state before we register with
+        // hass.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+
+    let router = {
         let disco_prefix = state.get_hass_disco_prefix().await;
         let topics = state.topics().await;
         let mut router: MqttRouter<StateHandle> = MqttRouter::new(client.clone());
@@ -601,22 +614,36 @@ async fn run_mqtt_loop(
             )
             .await?;
 
-        tokio::time::sleep(HASS_REGISTER_DELAY).await;
-        state
-            .get_hass_client()
-            .await
-            .expect("have hass client")
-            .register_with_hass(state)
-            .await
-            .context("register_with_hass")?;
+        router
+    };
 
-        Ok(Arc::new(router))
-    }
+    tokio::time::sleep(HASS_REGISTER_DELAY).await;
+    state
+        .get_hass_client()
+        .await
+        .expect("have hass client")
+        .register_with_hass(state)
+        .await
+        .context("register_with_hass")?;
 
+    Ok(Arc::new(router))
+}
+
+async fn run_mqtt_loop(
+    state: StateHandle,
+    mut eventloop: EventLoop,
+    client: AsyncClient,
+) -> anyhow::Result<()> {
     // The router is (re)built on each ConnAck. rumqttc uses a clean session, so
     // the broker drops our subscriptions across a reconnect; rebuilding
     // re-subscribes and re-registers the entities with home assistant.
-    let mut router: Option<Arc<MqttRouter<StateHandle>>> = None;
+    //
+    // Registration runs in a separate task (see build_router_and_register for
+    // why it must not run inline here) and publishes the finished router back
+    // over this watch channel; the poll loop reads it to dispatch messages.
+    let (router_tx, router_rx) =
+        tokio::sync::watch::channel::<Option<Arc<MqttRouter<StateHandle>>>>(None);
+    let mut register_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut first_connect = true;
 
     loop {
@@ -630,7 +657,10 @@ async fn run_mqtt_loop(
                 // rumqttc reconnects on the next poll; the subscriptions are
                 // gone until then, so drop the router and rebuild on ConnAck.
                 log::warn!("MQTT disconnected: {err:#}");
-                router = None;
+                if let Some(task) = register_task.take() {
+                    task.abort();
+                }
+                let _ = router_tx.send(None);
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
@@ -639,16 +669,31 @@ async fn run_mqtt_loop(
         match event {
             Event::Incoming(Packet::ConnAck(_)) => {
                 log::info!("MQTT connected");
-                if first_connect {
-                    // Give LAN disco a chance to get current state before we
-                    // register with hass.
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    first_connect = false;
+                // Supersede any registration still in flight from a previous
+                // connect that we never saw complete.
+                if let Some(task) = register_task.take() {
+                    task.abort();
                 }
-                router = Some(rebuild_router(&client, &state).await?);
+                let _ = router_tx.send(None);
+
+                let was_first = first_connect;
+                first_connect = false;
+                let client = client.clone();
+                let state = state.clone();
+                let router_tx = router_tx.clone();
+                register_task = Some(tokio::spawn(async move {
+                    match build_router_and_register(&client, &state, was_first).await {
+                        Ok(router) => {
+                            let _ = router_tx.send(Some(router));
+                        }
+                        Err(err) => {
+                            log::error!("registering with home assistant: {err:#}");
+                        }
+                    }
+                }));
             }
             Event::Incoming(Packet::Publish(publish)) => {
-                let Some(router) = router.clone() else {
+                let Some(router) = router_rx.borrow().clone() else {
                     log::warn!(
                         "Received publish on {} before router was ready",
                         publish.topic
