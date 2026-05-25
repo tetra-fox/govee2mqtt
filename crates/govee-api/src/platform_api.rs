@@ -65,8 +65,8 @@ pub struct GoveeApiClient {
 }
 
 impl GoveeApiClient {
-    pub fn new<K: Into<String>>(key: K) -> Self {
-        Self { key: key.into() }
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 
     pub async fn get_devices(&self) -> anyhow::Result<Vec<HttpDeviceInfo>> {
@@ -88,8 +88,7 @@ impl GoveeApiClient {
         .await
     }
 
-    pub async fn get_device_by_id<I: AsRef<str>>(&self, id: I) -> anyhow::Result<HttpDeviceInfo> {
-        let id = id.as_ref();
+    pub async fn get_device_by_id(&self, id: &str) -> anyhow::Result<HttpDeviceInfo> {
         let devices = self.get_devices().await?;
         for d in devices {
             if d.device == id {
@@ -230,16 +229,21 @@ impl GoveeApiClient {
     ) -> anyhow::Result<Vec<DeviceCapability>> {
         let mut result = vec![];
 
-        let scene_caps = self.get_device_scenes(device).await?;
-        let diy_caps = self.get_device_diy_scenes(device).await?;
-        let undoc_caps =
-            match GoveeUndocumentedApi::synthesize_platform_api_scene_list(&device.sku).await {
-                Ok(caps) => caps,
-                Err(err) => {
-                    log::warn!("synthesize_platform_api_scene_list: {err:#}");
-                    vec![]
-                }
-            };
+        // These three fetches are independent; run them concurrently.
+        let (scene_caps, diy_caps, undoc_caps) = tokio::join!(
+            self.get_device_scenes(device),
+            self.get_device_diy_scenes(device),
+            GoveeUndocumentedApi::synthesize_platform_api_scene_list(&device.sku),
+        );
+        let scene_caps = scene_caps?;
+        let diy_caps = diy_caps?;
+        let undoc_caps = match undoc_caps {
+            Ok(caps) => caps,
+            Err(err) => {
+                log::warn!("synthesize_platform_api_scene_list: {err:#}");
+                vec![]
+            }
+        };
 
         for (origin, caps) in [
             ("device.capabilities", &device.capabilities),
@@ -376,12 +380,12 @@ impl GoveeApiClient {
 
         let min = constraints.min.as_celsius();
         let max = constraints.max.as_celsius();
-        let celsius = target.as_celsius().max(min).min(max);
-        let clamped = celsius.max(min).min(max);
-        if clamped != celsius {
+        let requested = target.as_celsius();
+        let celsius = requested.max(min).min(max);
+        if celsius != requested {
             log::info!(
-                "set_target_temperature: constraining requested {celsius} to \
-                       {clamped} because min={min} and max={max}"
+                "set_target_temperature: constraining requested {requested} to \
+                       {celsius} because min={min} and max={max}"
             );
         }
 
@@ -995,13 +999,6 @@ pub struct HttpRequestFailed {
     content: String,
 }
 
-impl HttpRequestFailed {
-    #[allow(unused)]
-    pub fn from_err(err: &anyhow::Error) -> Option<&Self> {
-        err.root_cause().downcast_ref::<Self>()
-    }
-}
-
 pub async fn json_body<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> anyhow::Result<T> {
@@ -1073,10 +1070,9 @@ impl GoveeApiClient {
         &self,
         url: T,
     ) -> anyhow::Result<R> {
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()?
+        let response = crate::http_client()
             .request(Method::GET, url)
+            .timeout(Duration::from_secs(60))
             .header("Govee-API-Key", &self.key)
             .send()
             .await?;
@@ -1094,10 +1090,9 @@ impl GoveeApiClient {
         url: T,
         body: &B,
     ) -> anyhow::Result<R> {
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()?
+        let response = crate::http_client()
             .request(method, url)
+            .timeout(Duration::from_secs(60))
             .header("Govee-API-Key", &self.key)
             .json(body)
             .send()

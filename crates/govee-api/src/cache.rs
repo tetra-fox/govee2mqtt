@@ -82,15 +82,6 @@ pub enum CacheComputeResult<T> {
     WithTtl(T, Duration),
 }
 
-impl<T> CacheComputeResult<T> {
-    #[allow(dead_code)]
-    pub fn into_inner(self) -> T {
-        match self {
-            Self::Value(v) | Self::WithTtl(v, _) => v,
-        }
-    }
-}
-
 pub fn invalidate_key(topic: &str, key: &str) -> anyhow::Result<()> {
     let topic = CACHE.load().topic(topic)?;
     Ok(topic.delete(key)?)

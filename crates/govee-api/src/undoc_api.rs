@@ -1,4 +1,3 @@
-#![allow(unused)]
 use crate::cache::{cache_get, CacheComputeResult, CacheGetOptions};
 use crate::lan_api::{boolean_int, truthy};
 use crate::opt_env_var;
@@ -58,12 +57,15 @@ fn user_agent() -> String {
     )
 }
 
-pub fn ms_timestamp() -> String {
+fn epoch_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("unix epoch in the past")
         .as_millis()
-        .to_string()
+}
+
+pub fn ms_timestamp() -> String {
+    epoch_millis().to_string()
 }
 
 #[derive(Clone, clap::Parser, Debug)]
@@ -147,9 +149,7 @@ pub struct GoveeUndocumentedApi {
 }
 
 impl GoveeUndocumentedApi {
-    pub fn new<E: Into<String>, P: Into<String>>(email: E, password: P) -> Self {
-        let email = email.into();
-        let password = password.into();
+    pub fn new(email: String, password: String) -> Self {
         let client_id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, email.as_bytes());
         let client_id = format!("{}", client_id.simple());
         Self {
@@ -159,7 +159,30 @@ impl GoveeUndocumentedApi {
         }
     }
 
-    #[allow(unused)]
+    /// Build a request to the app API (app2.govee.com) carrying the standard
+    /// identification headers the app sends. `token`, when present, is the
+    /// account Bearer token from `login_account`.
+    fn app_request(
+        &self,
+        method: Method,
+        url: impl reqwest::IntoUrl,
+        token: Option<&str>,
+    ) -> reqwest::RequestBuilder {
+        let mut req = crate::http_client()
+            .request(method, url)
+            .timeout(Duration::from_secs(30))
+            .header("appVersion", APP_VERSION)
+            .header("clientId", &self.client_id)
+            .header("clientType", "1")
+            .header("iotVersion", "0")
+            .header("timestamp", ms_timestamp())
+            .header("User-Agent", user_agent());
+        if let Some(token) = token {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        req
+    }
+
     pub async fn get_iot_key(&self, token: &str) -> anyhow::Result<IotKey> {
         cache_get(
             CacheGetOptions {
@@ -171,17 +194,12 @@ impl GoveeUndocumentedApi {
                 allow_stale: false,
             },
             async {
-                let response = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(30))
-                    .build()?
-                    .request(Method::GET, "https://app2.govee.com/app/v1/account/iot/key")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header("appVersion", APP_VERSION)
-                    .header("clientId", &self.client_id)
-                    .header("clientType", "1")
-                    .header("iotVersion", "0")
-                    .header("timestamp", ms_timestamp())
-                    .header("User-Agent", user_agent())
+                let response = self
+                    .app_request(
+                        Method::GET,
+                        "https://app2.govee.com/app/v1/account/iot/key",
+                        Some(token),
+                    )
                     .send()
                     .await?;
 
@@ -202,23 +220,17 @@ impl GoveeUndocumentedApi {
     }
 
     pub fn invalidate_account_login(&self) {
+        // best-effort: a failed invalidation just means the next call recomputes
         crate::cache::invalidate_key("undoc-api", "account-info").ok();
     }
 
     async fn login_account_impl(&self) -> anyhow::Result<CacheComputeResult<LoginAccountResponse>> {
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?
-            .request(
+        let response = self
+            .app_request(
                 Method::POST,
                 "https://app2.govee.com/account/rest/account/v1/login",
+                None,
             )
-            .header("appVersion", APP_VERSION)
-            .header("clientId", &self.client_id)
-            .header("clientType", "1")
-            .header("iotVersion", "0")
-            .header("timestamp", ms_timestamp())
-            .header("User-Agent", user_agent())
             .json(&serde_json::json!({
                 "email": self.email,
                 "password": self.password,
@@ -256,12 +268,6 @@ impl GoveeUndocumentedApi {
         .await
     }
 
-    #[allow(dead_code)]
-    pub async fn login_account(&self) -> anyhow::Result<LoginAccountResponse> {
-        let value = self.login_account_impl().await?;
-        Ok(value.into_inner())
-    }
-
     /// Send an IoT message to a device via Govee's REST relay
     /// (`fx-device/iot-msgs`). The app uses this for SHARED devices instead of
     /// publishing MQTT directly: the message is wrapped in `iotMsg` and
@@ -278,7 +284,6 @@ impl GoveeUndocumentedApi {
     ) -> anyhow::Result<()> {
         let account = self.login_account_cached().await?;
         let account_topic = account.topic.to_string();
-        let token = account.token.to_string();
         let transaction = format!("v_{}000", ms_timestamp());
 
         inner_msg.insert("transaction".into(), json!(transaction));
@@ -296,20 +301,12 @@ impl GoveeUndocumentedApi {
         body.insert("transaction".into(), json!(transaction));
         body.insert("iotMsg".into(), json!(iot_msg));
 
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?
-            .request(
+        let response = self
+            .app_request(
                 Method::POST,
                 "https://app2.govee.com/bff-app/v1/fx-device/iot-msgs",
+                Some(account.token.as_str()),
             )
-            .header("Authorization", format!("Bearer {token}"))
-            .header("appVersion", APP_VERSION)
-            .header("clientId", &self.client_id)
-            .header("clientType", "1")
-            .header("iotVersion", "0")
-            .header("timestamp", ms_timestamp())
-            .header("User-Agent", user_agent())
             .json(&body)
             .send()
             .await?;
@@ -326,20 +323,12 @@ impl GoveeUndocumentedApi {
     }
 
     pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
-        let response = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?
-            .request(
+        let response = self
+            .app_request(
                 Method::POST,
                 "https://app2.govee.com/device/rest/devices/v1/list",
+                Some(token),
             )
-            .header("Authorization", format!("Bearer {token}"))
-            .header("appVersion", APP_VERSION)
-            .header("clientId", &self.client_id)
-            .header("clientType", "1")
-            .header("iotVersion", "0")
-            .header("timestamp", ms_timestamp())
-            .header("User-Agent", user_agent())
             .send()
             .await?;
 
@@ -353,6 +342,7 @@ impl GoveeUndocumentedApi {
     }
 
     pub fn invalidate_community_login(&self) {
+        // best-effort: a failed invalidation just means the next call recomputes
         crate::cache::invalidate_key("undoc-api", "community-login").ok();
     }
 
@@ -363,15 +353,17 @@ impl GoveeUndocumentedApi {
                 topic: "undoc-api",
                 key: "community-login",
                 soft_ttl: ONE_DAY,
-                hard_ttl: HALF_DAY,
+                // hard_ttl bounds how long the row survives in sqlite; it must
+                // be >= the dynamic soft TTL below (capped at ONE_DAY) or a
+                // still-valid token gets evicted early and re-fetched.
+                hard_ttl: ONE_WEEK,
                 negative_ttl: Duration::from_secs(10),
                 allow_stale: false,
             },
             async {
-                let response = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(60))
-                    .build()?
+                let response = crate::http_client()
                     .request(Method::POST, "https://community-api.govee.com/os/v1/login")
+                    .timeout(Duration::from_secs(60))
                     .json(&serde_json::json!({
                         "email": self.email,
                         "password": self.password,
@@ -400,12 +392,7 @@ impl GoveeUndocumentedApi {
 
                 let resp: Response = http_response_body(response).await?;
 
-                let ts_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("unix epoch in the past")
-                    .as_millis();
-
-                let ttl_ms = resp.data.expiredAt as u128 - ts_ms;
+                let ttl_ms = resp.data.expiredAt as u128 - epoch_millis();
                 let ttl = Duration::from_millis(ttl_ms as u64).min(ONE_DAY);
 
                 Ok(CacheComputeResult::WithTtl(resp.data.token, ttl))
@@ -427,15 +414,14 @@ impl GoveeUndocumentedApi {
                 allow_stale: true,
             },
             async {
-                let response = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(10))
-                    .build()?
+                let response = crate::http_client()
                     .request(
                         Method::GET,
                         format!(
                             "https://app2.govee.com/appsku/v1/light-effect-libraries?sku={sku}"
                         ),
                     )
+                    .timeout(Duration::from_secs(10))
                     .header("AppVersion", APP_VERSION)
                     .header("User-Agent", user_agent())
                     .send()
@@ -495,20 +481,13 @@ impl GoveeUndocumentedApi {
                 allow_stale: true,
             },
             async {
-                let response = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(10))
-                    .build()?
-                    .request(
+                let response = self
+                    .app_request(
                         Method::GET,
                         "https://app2.govee.com/bff-app/v1/exec-plat/home",
+                        Some(community_token),
                     )
-                    .header("Authorization", format!("Bearer {community_token}"))
-                    .header("appVersion", APP_VERSION)
-                    .header("clientId", &self.client_id)
-                    .header("clientType", "1")
-                    .header("iotVersion", "0")
-                    .header("timestamp", ms_timestamp())
-                    .header("User-Agent", user_agent())
+                    .timeout(Duration::from_secs(10))
                     .send()
                     .await?;
 

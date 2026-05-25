@@ -4,7 +4,6 @@ pub const UNIT_CELSIUS: &str = "°C";
 pub const UNIT_FAHRENHEIT: &str = "°F";
 pub const DEVICE_CLASS_TEMPERATURE: &str = "temperature";
 
-#[allow(unused)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TemperatureUnits {
     Celsius,
@@ -25,17 +24,6 @@ impl TemperatureUnits {
         match self {
             Self::Celsius | Self::CelsiusTimes100 => TemperatureScale::Celsius,
             Self::Fahrenheit | Self::FahrenheitTimes100 => TemperatureScale::Fahrenheit,
-        }
-    }
-
-    #[allow(unused)]
-    pub fn unit_of_measurement(&self) -> Option<&'static str> {
-        let factor = self.factor();
-        let scale = self.scale();
-        if factor == 1. {
-            Some(scale.unit_of_measurement())
-        } else {
-            None
         }
     }
 }
@@ -117,24 +105,9 @@ impl std::fmt::Display for TemperatureValue {
     }
 }
 
-#[allow(unused)]
 impl TemperatureValue {
     pub fn new(value: f64, unit: TemperatureUnits) -> Self {
         Self { value, unit }
-    }
-
-    pub fn with_celsius(value: f64) -> Self {
-        Self {
-            unit: TemperatureUnits::Celsius,
-            value,
-        }
-    }
-
-    pub fn with_fahrenheit(value: f64) -> Self {
-        Self {
-            unit: TemperatureUnits::Fahrenheit,
-            value,
-        }
     }
 
     pub fn value(&self) -> f64 {

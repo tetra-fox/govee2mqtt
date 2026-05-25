@@ -61,7 +61,7 @@ impl PacketManager {
                     if codec.supported_skus.contains(&sku)
                         && map.insert(codec.type_id, codec.clone()).is_some()
                     {
-                        eprintln!("Conflicting PacketCodecs for {sku} {:?}", codec.type_id);
+                        log::error!("Conflicting PacketCodecs for {sku} {:?}", codec.type_id);
                     }
                 }
 
@@ -262,22 +262,6 @@ impl DecodePacketParam for u8 {
     }
 }
 
-impl DecodePacketParam for u16 {
-    fn decode_param<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<&'a [u8]> {
-        let lo = *data.first().ok_or_else(|| anyhow!("EOF"))?;
-        let hi = *data.get(1).ok_or_else(|| anyhow!("EOF"))?;
-        *self = ((hi as u16) << 8) | lo as u16;
-        Ok(&data[2..])
-    }
-
-    fn encode_param(&self, target: &mut Vec<u8>) {
-        let hi = (*self >> 8) as u8;
-        let lo = (*self & 0xff) as u8;
-        target.push(lo);
-        target.push(hi);
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct SetHumidifierNightlightParams {
     pub on: bool,
@@ -309,7 +293,7 @@ pub struct NotifyHumidifierNightlightParams {
 }
 
 /// Data is offset by 128 with increments of 1%,
-/// so 0% is 128, 100% is 228%
+/// so 0% is 128, 100% is 228
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetHumidity(u8);
 
@@ -495,28 +479,14 @@ impl DecodePacketParam for bool {
     fn decode_param<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<&'a [u8]> {
         let mut byte = 0u8;
         let remain = byte.decode_param(data)?;
-        *self = itob(&byte);
+        *self = byte != 0;
         Ok(remain)
     }
 
     fn encode_param(&self, target: &mut Vec<u8>) {
-        target.push(btoi(*self));
+        target.push(u8::from(*self));
     }
 }
-
-fn btoi(on: bool) -> u8 {
-    if on {
-        1
-    } else {
-        0
-    }
-}
-
-fn itob(i: &u8) -> bool {
-    *i != 0
-}
-
-impl GoveeBlePacket {}
 
 #[cfg(test)]
 mod test {
