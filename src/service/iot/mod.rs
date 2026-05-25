@@ -187,25 +187,26 @@ pub async fn start_iot_client(
 
     // The PFX from Govee holds the per-account client certificate and private
     // key for mutual TLS to AWS IoT. rumqttc takes PEM bytes directly, so we
-    // convert in memory rather than writing the key to disk.
+    // convert in memory rather than writing the key to disk. p12 hands back the
+    // private key as PKCS#8 DER and the cert as X.509 DER; wrap each in PEM with
+    // the matching RFC 7468 label (rustls-pemfile, which rumqttc uses to read
+    // these, parses PKCS8 PRIVATE KEY and CERTIFICATE blocks).
     log::trace!("parsing IoT PFX key");
     let container = p12::PFX::parse(&key_bytes).context("PFX::parse")?;
-    let mut key_pem = None;
-    for key in container.key_bags(&res.p12_pass).context("key_bags")? {
-        let priv_key = openssl::pkey::PKey::private_key_from_der(&key).context("from_der")?;
-        key_pem = Some(
-            priv_key
-                .private_key_to_pem_pkcs8()
-                .context("to_pem_pkcs8")?,
-        );
-    }
-    let mut cert_pem = None;
-    for cert in container.cert_bags(&res.p12_pass).context("cert_bags")? {
-        let cert = openssl::x509::X509::from_der(&cert).context("x509 from der")?;
-        cert_pem = Some(cert.to_pem().context("cert.to_pem")?);
-    }
-    let key_pem = key_pem.context("PFX contained no private key")?;
-    let cert_pem = cert_pem.context("PFX contained no certificate")?;
+    let key_pem = container
+        .key_bags(&res.p12_pass)
+        .context("key_bags")?
+        .into_iter()
+        .next()
+        .map(|der| pem::encode(&pem::Pem::new("PRIVATE KEY", der)).into_bytes())
+        .context("PFX contained no private key")?;
+    let cert_pem = container
+        .cert_bags(&res.p12_pass)
+        .context("cert_bags")?
+        .into_iter()
+        .next()
+        .map(|der| pem::encode(&pem::Pem::new("CERTIFICATE", der)).into_bytes())
+        .context("PFX contained no certificate")?;
 
     // Server verification uses the system CA bundle (the trust anchor that the
     // AWS IoT endpoint cert chains to). rumqttc's Simple config reads it into a

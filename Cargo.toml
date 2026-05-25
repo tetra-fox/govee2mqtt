@@ -35,7 +35,7 @@ data-encoding = "2.11.0"
 clap-num = "1.2.0"
 uuid = { version = "1.23.1", features = ["v4", "v5"] }
 uncased = "0.9.10"
-openssl = { version = "0.10.80", features = ["vendored"] }
+pem = "3"
 p12 = "0.6.3"
 axum = "0.8.9"
 tower-http = { version = "0.6.11", features = ["fs"] }
