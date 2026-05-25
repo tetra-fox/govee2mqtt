@@ -68,3 +68,10 @@ container:
     npm install @devcontainers/cli
     npx @devcontainers/cli up --workspace-folder .
     npx @devcontainers/cli exec --workspace-folder . supervisor_run
+
+# rebuild the dev add-on against the current working tree. run this INSIDE the
+# devcontainer after editing code. the add-on's source is bind-mounted live (see
+# .devcontainer/bootstrap.sh), so this just triggers the rebuild; the HA UI
+# "Rebuild" button works identically now that the context is always live
+dev-rebuild:
+    ha apps rebuild local_govee2mqtt_dev
