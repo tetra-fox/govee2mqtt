@@ -1,13 +1,13 @@
 use crate::hass_mqtt::topic::Topics;
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
-use crate::service::hass::{topic_safe_id, HassClient};
+use crate::service::hass::{HassClient, topic_safe_id};
 use crate::service::iot::IotClient;
 use anyhow::Context;
 use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
 use govee_api::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::{
-    sort_and_dedup_scenes, DeviceCapability, DeviceType, GoveeApiClient,
+    DeviceCapability, DeviceType, GoveeApiClient, sort_and_dedup_scenes,
 };
 use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Semaphore};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[derive(Default)]
 pub struct State {
@@ -199,31 +199,30 @@ impl State {
     }
 
     pub async fn poll_iot_api(self: &Arc<Self>, device: &Device) -> anyhow::Result<bool> {
-        if let Some(iot) = self.get_iot_client().await {
-            if let Some(info) = device.undoc_device_info.clone() {
-                if iot.is_device_compatible(&info.entry) {
-                    let device_state = device.device_state();
-                    log::info!("requesting update via IoT MQTT {device} {device_state:?}");
-                    match iot
-                        .request_status_update(&info.entry)
+        if let Some(iot) = self.get_iot_client().await
+            && let Some(info) = device.undoc_device_info.clone()
+            && iot.is_device_compatible(&info.entry)
+        {
+            let device_state = device.device_state();
+            log::info!("requesting update via IoT MQTT {device} {device_state:?}");
+            match iot
+                .request_status_update(&info.entry)
+                .await
+                .context("iot.request_status_update")
+            {
+                Err(err) => {
+                    log::error!("Failed: {err:#}");
+                }
+                Ok(()) => {
+                    // The response will come in async via the mqtt loop in iot.rs
+                    // However, if the device is offline, nothing will change our state.
+                    // Let's explicitly mark the device as having been polled so that
+                    // we don't keep sending a request every minute.
+                    self.device_mut(&device.sku, &device.id)
                         .await
-                        .context("iot.request_status_update")
-                    {
-                        Err(err) => {
-                            log::error!("Failed: {err:#}");
-                        }
-                        Ok(()) => {
-                            // The response will come in async via the mqtt loop in iot.rs
-                            // However, if the device is offline, nothing will change our state.
-                            // Let's explicitly mark the device as having been polled so that
-                            // we don't keep sending a request every minute.
-                            self.device_mut(&device.sku, &device.id)
-                                .await
-                                .set_last_polled();
+                        .set_last_polled();
 
-                            return Ok(true);
-                        }
-                    }
+                    return Ok(true);
                 }
             }
         }
@@ -301,12 +300,12 @@ impl State {
         value: V,
     ) -> anyhow::Result<()> {
         let value: JsonValue = value.into();
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to send {value:?} control to {device}");
-                client.control_device(info, capability, value).await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to send {value:?} control to {device}");
+            client.control_device(info, capability, value).await?;
+            return Ok(());
         }
 
         anyhow::bail!("Unable to use Platform API to control {device}");
@@ -340,22 +339,21 @@ impl State {
             return Ok(());
         }
 
-        if device.iot_api_supported() {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} light power state");
-                    iot.set_power_state(&info.entry, on).await?;
-                    return Ok(());
-                }
-            }
+        if device.iot_api_supported()
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} light power state");
+            iot.set_power_state(&info.entry, on).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} light {instance_name} state");
-                client.set_toggle_state(info, instance_name, on).await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} light {instance_name} state");
+            client.set_toggle_state(info, instance_name, on).await?;
+            return Ok(());
         }
 
         anyhow::bail!("Unable to control light power state for {device}");
@@ -381,22 +379,21 @@ impl State {
             return self.device_socket_turn(device, 15, on).await;
         }
 
-        if device.iot_api_supported() {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} power state");
-                    iot.set_power_state(&info.entry, on).await?;
-                    return Ok(());
-                }
-            }
+        if device.iot_api_supported()
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} power state");
+            iot.set_power_state(&info.entry, on).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} power state");
-                client.set_power_state(info, on).await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} power state");
+            client.set_power_state(info, on).await?;
+            return Ok(());
         }
 
         anyhow::bail!("Unable to control power state for {device}");
@@ -458,22 +455,21 @@ impl State {
             return Ok(());
         }
 
-        if device.iot_api_supported() {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} brightness");
-                    iot.set_brightness(&info.entry, percent).await?;
-                    return Ok(());
-                }
-            }
+        if device.iot_api_supported()
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} brightness");
+            iot.set_brightness(&info.entry, percent).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} brightness");
-                client.set_brightness(info, percent).await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} brightness");
+            client.set_brightness(info, percent).await?;
+            return Ok(());
         }
         anyhow::bail!("Unable to control brightness for {device}");
     }
@@ -494,25 +490,24 @@ impl State {
             return Ok(());
         }
 
-        if device.iot_api_supported() {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} color temperature");
-                    iot.set_color_temperature(&info.entry, kelvin).await?;
-                    return Ok(());
-                }
-            }
+        if device.iot_api_supported()
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} color temperature");
+            iot.set_color_temperature(&info.entry, kelvin).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} color temperature");
-                client.set_color_temperature(info, kelvin).await?;
-                self.device_mut(&device.sku, &device.id)
-                    .await
-                    .set_active_scene(None);
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} color temperature");
+            client.set_color_temperature(info, kelvin).await?;
+            self.device_mut(&device.sku, &device.id)
+                .await
+                .set_active_scene(None);
+            return Ok(());
         }
         anyhow::bail!("Unable to control color temperature for {device}");
     }
@@ -527,14 +522,13 @@ impl State {
             device.nightlight_state.unwrap_or_default().into();
         (apply)(&mut params);
 
-        if let Ok(command) = Base64HexBytes::encode_for_sku(&device.sku, &params) {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} color");
-                    iot.send_real(&info.entry, command.base64()).await?;
-                    return Ok(true);
-                }
-            }
+        if let Ok(command) = Base64HexBytes::encode_for_sku(&device.sku, &params)
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} color");
+            iot.send_real(&info.entry, command.base64()).await?;
+            return Ok(true);
         }
 
         Ok(false)
@@ -552,20 +546,18 @@ impl State {
                 mode: work_mode as u8,
                 param: value as u8,
             },
-        ) {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    iot.send_real(&info.entry, command.base64()).await?;
-                    return Ok(());
-                }
-            }
+        ) && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            iot.send_real(&info.entry, command.base64()).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                client.set_work_mode(info, work_mode, value).await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            client.set_work_mode(info, work_mode, value).await?;
+            return Ok(());
         }
         anyhow::bail!("Unable to control humidifier parameter work_mode={work_mode} for {device}");
     }
@@ -601,25 +593,24 @@ impl State {
             return Ok(());
         }
 
-        if device.iot_api_supported() {
-            if let Some(iot) = self.get_iot_client().await {
-                if let Some(info) = &device.undoc_device_info {
-                    log::info!("Using IoT API to set {device} color");
-                    iot.set_color_rgb(&info.entry, r, g, b).await?;
-                    return Ok(());
-                }
-            }
+        if device.iot_api_supported()
+            && let Some(iot) = self.get_iot_client().await
+            && let Some(info) = &device.undoc_device_info
+        {
+            log::info!("Using IoT API to set {device} color");
+            iot.set_color_rgb(&info.entry, r, g, b).await?;
+            return Ok(());
         }
 
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} color");
-                client.set_color_rgb(info, r, g, b).await?;
-                self.device_mut(&device.sku, &device.id)
-                    .await
-                    .set_active_scene(None);
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} color");
+            client.set_color_rgb(info, r, g, b).await?;
+            self.device_mut(&device.sku, &device.id)
+                .await
+                .set_active_scene(None);
+            return Ok(());
         }
         anyhow::bail!("Unable to control color for {device}");
     }
@@ -652,10 +643,10 @@ impl State {
 
     pub async fn device_list_scenes(&self, device: &Device) -> anyhow::Result<Vec<String>> {
         // TODO: some plumbing to maintain offline scene controls for preferred-LAN control
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                return Ok(sort_and_dedup_scenes(client.list_scene_names(info).await?));
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            return Ok(sort_and_dedup_scenes(client.list_scene_names(info).await?));
         }
 
         if let Ok(categories) = GoveeUndocumentedApi::get_scenes_for_device(&device.sku).await {
@@ -684,14 +675,14 @@ impl State {
         instance_name: &str,
         target: TemperatureValue,
     ) -> anyhow::Result<()> {
-        if let Some(client) = self.get_platform_client().await {
-            if let Some(info) = &device.http_device_info {
-                log::info!("Using Platform API to set {device} target temperature to {target}");
-                client
-                    .set_target_temperature(info, instance_name, target)
-                    .await?;
-                return Ok(());
-            }
+        if let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} target temperature to {target}");
+            client
+                .set_target_temperature(info, instance_name, target)
+                .await?;
+            return Ok(());
         }
 
         anyhow::bail!("Unable to set temperature for {device}");
@@ -705,24 +696,23 @@ impl State {
         // TODO: some plumbing to maintain offline scene controls for preferred-LAN control
         let avoid_platform_api = device.avoid_platform_api();
 
-        if !avoid_platform_api {
-            if let Some(client) = self.get_platform_client().await {
-                if let Some(info) = &device.http_device_info {
-                    log::info!("Using Platform API to set {device} to scene {scene}");
-                    client
-                        .set_scene_by_name_with_music(
-                            info,
-                            scene,
-                            device.music_sensitivity(),
-                            device.music_auto_color(),
-                        )
-                        .await?;
-                    self.device_mut(&device.sku, &device.id)
-                        .await
-                        .set_active_scene(Some(scene));
-                    return Ok(());
-                }
-            }
+        if !avoid_platform_api
+            && let Some(client) = self.get_platform_client().await
+            && let Some(info) = &device.http_device_info
+        {
+            log::info!("Using Platform API to set {device} to scene {scene}");
+            client
+                .set_scene_by_name_with_music(
+                    info,
+                    scene,
+                    device.music_sensitivity(),
+                    device.music_auto_color(),
+                )
+                .await?;
+            self.device_mut(&device.sku, &device.id)
+                .await
+                .set_active_scene(Some(scene));
+            return Ok(());
         }
 
         if let Some(lan_dev) = &device.lan_device {

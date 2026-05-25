@@ -1,6 +1,6 @@
 use crate::service::device::Device;
-use tokio::sync::oneshot::Sender as OneShotSender;
 use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::oneshot::Sender as OneShotSender;
 
 /// The Coordinator ensures that only one task at a time can
 /// be processing requests that control or otherwise change

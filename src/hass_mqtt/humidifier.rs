@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
 use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
@@ -91,19 +91,16 @@ impl Humidifier {
             .map(|wm| wm.get_mode_names())
             .unwrap_or(vec![]);
 
-        if let Some(info) = &device.http_device_info {
-            if let Some(cap) = info.capability_by_instance("humidity") {
-                if let Some(DeviceParameters::Integer {
-                    range: IntegerRange { min, max, .. },
-                    unit,
-                }) = &cap.parameters
-                {
-                    if unit.as_deref() == Some("unit.percent") {
-                        min_humidity.replace(*min as u8);
-                        max_humidity.replace(*max as u8);
-                    }
-                }
-            }
+        if let Some(info) = &device.http_device_info
+            && let Some(cap) = info.capability_by_instance("humidity")
+            && let Some(DeviceParameters::Integer {
+                range: IntegerRange { min, max, .. },
+                unit,
+            }) = &cap.parameters
+            && unit.as_deref() == Some("unit.percent")
+        {
+            min_humidity.replace(*min as u8);
+            max_humidity.replace(*max as u8);
         }
 
         Ok(Self {
@@ -216,14 +213,13 @@ impl EntityInstance for Humidifier {
         } else {
             let work_modes = ParsedWorkMode::with_device(&device)?;
 
-            if let Some(cap) = device.get_state_capability_by_instance("workMode") {
-                if let Some(mode_num) = cap.state.pointer("/value/workMode") {
-                    if let Some(mode) = work_modes.mode_for_value(mode_num) {
-                        return client
-                            .publish(&self.humidifier.mode_state_topic, mode.name.to_string())
-                            .await;
-                    }
-                }
+            if let Some(cap) = device.get_state_capability_by_instance("workMode")
+                && let Some(mode_num) = cap.state.pointer("/value/workMode")
+                && let Some(mode) = work_modes.mode_for_value(mode_num)
+            {
+                return client
+                    .publish(&self.humidifier.mode_state_topic, mode.name.to_string())
+                    .await;
             }
         }
         Ok(())
@@ -267,31 +263,30 @@ pub async fn mqtt_humidifier_set_target(
 
     let use_iot = device.pollable_via_iot() && state.get_iot_client().await.is_some();
 
-    if !use_iot {
-        if let Some(info) = &device.http_device_info {
-            if let Some(cap) = info.capability_by_instance("humidity") {
-                state.device_control(&device, cap, percent).await?;
+    if !use_iot
+        && let Some(info) = &device.http_device_info
+        && let Some(cap) = info.capability_by_instance("humidity")
+    {
+        state.device_control(&device, cap, percent).await?;
 
-                // We're running in optimistic mode; stash
-                // the last set value so that we can report it
-                // to hass
-                state
-                    .device_mut(&device.sku, &device.id)
-                    .await
-                    .set_target_humidity(percent as u8);
+        // We're running in optimistic mode; stash
+        // the last set value so that we can report it
+        // to hass
+        state
+            .device_mut(&device.sku, &device.id)
+            .await
+            .set_target_humidity(percent as u8);
 
-                // For the H7160 at least, setting the humidity
-                // will put the device into auto mode and turn
-                // it on, however, we don't know that the device
-                // is actually turned on.
-                //
-                // This is handled by the device_was_controlled
-                // stuff; it will cause us to poll the device
-                // after a short delay, and that should fix up
-                // the reported device state.
-                return Ok(());
-            }
-        }
+        // For the H7160 at least, setting the humidity
+        // will put the device into auto mode and turn
+        // it on, however, we don't know that the device
+        // is actually turned on.
+        //
+        // This is handled by the device_was_controlled
+        // stuff; it will cause us to poll the device
+        // after a short delay, and that should fix up
+        // the reported device state.
+        return Ok(());
     }
 
     let work_modes = ParsedWorkMode::with_device(&device)?;

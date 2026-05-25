@@ -1,11 +1,11 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
 use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{camel_case_to_space_separated, HassClient, IdParameter};
+use crate::service::hass::{HassClient, IdParameter, camel_case_to_space_separated};
 use crate::service::state::StateHandle;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use govee_api::platform_api::{DeviceCapability, DeviceParameters};
 use mosquitto_rs::router::{Params, Payload, State};
 use serde::{Deserialize, Serialize};
@@ -92,14 +92,13 @@ impl EntityInstance for WorkModeSelect {
         } else {
             let work_modes = ParsedWorkMode::with_device(&device)?;
 
-            if let Some(cap) = device.get_state_capability_by_instance("workMode") {
-                if let Some(mode_num) = cap.state.pointer("/value/workMode") {
-                    if let Some(mode) = work_modes.mode_for_value(mode_num) {
-                        return client
-                            .publish(&self.select.state_topic, mode.name.to_string())
-                            .await;
-                    }
-                }
+            if let Some(cap) = device.get_state_capability_by_instance("workMode")
+                && let Some(mode_num) = cap.state.pointer("/value/workMode")
+                && let Some(mode) = work_modes.mode_for_value(mode_num)
+            {
+                return client
+                    .publish(&self.select.state_topic, mode.name.to_string())
+                    .await;
             }
         }
         Ok(())
@@ -267,14 +266,13 @@ impl EntityInstance for CapabilityModeSelect {
             .and_then(|s| s.state.pointer("/value").cloned());
         let cap = device.get_capability_by_instance(&self.instance_name);
 
-        if let (Some(value), Some(cap)) = (reported, cap) {
-            if let Some(DeviceParameters::Enum { options }) = &cap.parameters {
-                if let Some(opt) = options.iter().find(|o| o.value == value) {
-                    return client
-                        .publish(&self.select.state_topic, opt.name.to_string())
-                        .await;
-                }
-            }
+        if let (Some(value), Some(cap)) = (reported, cap)
+            && let Some(DeviceParameters::Enum { options }) = &cap.parameters
+            && let Some(opt) = options.iter().find(|o| o.value == value)
+        {
+            return client
+                .publish(&self.select.state_topic, opt.name.to_string())
+                .await;
         }
         Ok(())
     }

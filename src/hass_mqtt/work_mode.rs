@@ -38,13 +38,13 @@ impl ParsedWorkMode {
             }
         }
 
-        if let Some(mv) = cap.struct_field_by_name("modeValue") {
-            if let DeviceParameters::Enum { options } = &mv.field_type {
-                for opt in options {
-                    let mode_name = &opt.name;
-                    if let Some(work_mode) = work_modes.get_mut(mode_name) {
-                        work_mode.add_values(opt);
-                    }
+        if let Some(mv) = cap.struct_field_by_name("modeValue")
+            && let DeviceParameters::Enum { options } = &mv.field_type
+        {
+            for opt in options {
+                let mode_name = &opt.name;
+                if let Some(work_mode) = work_modes.get_mut(mode_name) {
+                    work_mode.add_values(opt);
                 }
             }
         }
@@ -159,11 +159,11 @@ impl WorkMode {
             max: i64,
         }
 
-        if let Some(range) = opt.extras.get("range") {
-            if let Ok(range) = serde_json::from_value::<ModeRange>(range.clone()) {
-                self.value_range = Some(range.min..range.max + 1);
-                return;
-            }
+        if let Some(range) = opt.extras.get("range")
+            && let Ok(range) = serde_json::from_value::<ModeRange>(range.clone())
+        {
+            self.value_range = Some(range.min..range.max + 1);
+            return;
         }
 
         #[derive(Deserialize)]
@@ -258,7 +258,7 @@ impl WorkMode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use govee_api::platform_api::{from_json, DeviceCapabilityKind, StructField};
+    use govee_api::platform_api::{DeviceCapabilityKind, StructField, from_json};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -317,11 +317,12 @@ mod test {
 
         // We shouldn't show this as a set of preset buttons, because
         // we should get a contiguous range that we can show as a slider
-        assert!(wm
-            .mode_by_name("Normal")
-            .unwrap()
-            .contiguous_value_range()
-            .is_some());
+        assert!(
+            wm.mode_by_name("Normal")
+                .unwrap()
+                .contiguous_value_range()
+                .is_some()
+        );
         assert!(!wm.mode_by_name("Normal").unwrap().should_show_as_preset());
 
         assert_eq!(
@@ -442,11 +443,12 @@ mod test {
 
         let wm = ParsedWorkMode::with_capability(&cap).unwrap();
 
-        assert!(wm
-            .mode_by_name("Normal")
-            .unwrap()
-            .contiguous_value_range()
-            .is_none());
+        assert!(
+            wm.mode_by_name("Normal")
+                .unwrap()
+                .contiguous_value_range()
+                .is_none()
+        );
 
         assert_eq!(
             format!("{wm:#?}"),

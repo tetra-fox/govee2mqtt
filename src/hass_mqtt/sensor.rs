@@ -1,16 +1,16 @@
 use crate::commands::serve::POLL_INTERVAL;
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
-use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{topic_safe_id, topic_safe_string, HassClient};
+use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
 use crate::service::quirks::HumidityUnits;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use chrono::Utc;
 use govee_api::platform_api::DeviceCapability;
-use govee_api::temperature::{TemperatureUnits, TemperatureValue, DEVICE_CLASS_TEMPERATURE};
+use govee_api::temperature::{DEVICE_CLASS_TEMPERATURE, TemperatureUnits, TemperatureValue};
 use serde::Serialize;
 use serde_json::json;
 
@@ -313,18 +313,18 @@ impl EntityInstance for CapabilityEventSensor {
 
         // No event reported yet, also expose the static metadata (alarm type)
         // from the capability definition so the entity carries some context.
-        if let Some(cap) = device.get_capability_by_instance(&self.instance_name) {
-            if let Some(topic) = &self.sensor.json_attributes_topic {
-                client
-                    .publish_obj(
-                        topic,
-                        json!({
-                            "alarm_type": cap.alarm_type,
-                            "event_state": cap.event_state,
-                        }),
-                    )
-                    .await?;
-            }
+        if let Some(cap) = device.get_capability_by_instance(&self.instance_name)
+            && let Some(topic) = &self.sensor.json_attributes_topic
+        {
+            client
+                .publish_obj(
+                    topic,
+                    json!({
+                        "alarm_type": cap.alarm_type,
+                        "event_state": cap.event_state,
+                    }),
+                )
+                .await?;
         }
         Ok(())
     }

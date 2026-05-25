@@ -1,13 +1,13 @@
-use crate::cache::{cache_get, CacheComputeResult, CacheGetOptions};
+use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
 use crate::opt_env_var;
 use crate::temperature::{
     TemperatureConstraints, TemperatureScale, TemperatureUnits, TemperatureValue,
 };
 use crate::undoc_api::GoveeUndocumentedApi;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use reqwest::Method;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
@@ -304,15 +304,15 @@ impl GoveeApiClient {
         }
 
         // Add in music modes
-        if let Some(cap) = device.capability_by_instance("musicMode") {
-            if let Some(DeviceParameters::Struct { fields }) = &cap.parameters {
-                for f in fields {
-                    if f.field_name == "musicMode" {
-                        if let DeviceParameters::Enum { options } = &f.field_type {
-                            for opt in options {
-                                result.push(format!("Music: {}", opt.name));
-                            }
-                        }
+        if let Some(cap) = device.capability_by_instance("musicMode")
+            && let Some(DeviceParameters::Struct { fields }) = &cap.parameters
+        {
+            for f in fields {
+                if f.field_name == "musicMode"
+                    && let DeviceParameters::Enum { options } = &f.field_type
+                {
+                    for opt in options {
+                        result.push(format!("Music: {}", opt.name));
                     }
                 }
             }
@@ -349,19 +349,17 @@ impl GoveeApiClient {
             anyhow::bail!("Cannot set scene to no-scene");
         }
 
-        if let Some(music_mode) = scene.strip_prefix("Music: ") {
-            if let Some(cap) = device.capability_by_instance("musicMode") {
-                if let Some(field) = cap.struct_field_by_name("musicMode") {
-                    if let Some(value) = field.field_type.enum_parameter_by_name(music_mode) {
-                        let value = serde_json::json!({
-                            "musicMode": value,
-                            "sensitivity": sensitivity.min(100),
-                            "autoColor": if auto_color { 1 } else { 0 },
-                        });
-                        return self.control_device(device, cap, value).await;
-                    }
-                }
-            }
+        if let Some(music_mode) = scene.strip_prefix("Music: ")
+            && let Some(cap) = device.capability_by_instance("musicMode")
+            && let Some(field) = cap.struct_field_by_name("musicMode")
+            && let Some(value) = field.field_type.enum_parameter_by_name(music_mode)
+        {
+            let value = serde_json::json!({
+                "musicMode": value,
+                "sensitivity": sensitivity.min(100),
+                "autoColor": if auto_color { 1 } else { 0 },
+            });
+            return self.control_device(device, cap, value).await;
         }
 
         let caps = self.get_scene_caps(device).await?;
@@ -1022,27 +1020,27 @@ pub async fn json_body<T: serde::de::DeserializeOwned>(
         .await
         .with_context(|| format!("read {url} response body"))?;
 
-    if let Ok(status) = from_json::<EmbeddedRequestStatus, _>(&data) {
-        if status.status != reqwest::StatusCode::OK.as_u16() {
-            if let Ok(code) = reqwest::StatusCode::from_u16(status.status) {
-                return Err(HttpRequestFailed {
-                    status: code,
-                    content: format!(
-                        "Request to {url} failed with code {code} {message}. Full response: {}",
-                        String::from_utf8_lossy(&data),
-                        message = status.message
-                    ),
-                })
-                .with_context(|| format!("parsing {url} response"));
-            }
-
-            anyhow::bail!(
-                "Request to {url} failed with status={status} {message}. Full response was: {}",
-                String::from_utf8_lossy(&data),
-                status = status.status,
-                message = status.message,
-            );
+    if let Ok(status) = from_json::<EmbeddedRequestStatus, _>(&data)
+        && status.status != reqwest::StatusCode::OK.as_u16()
+    {
+        if let Ok(code) = reqwest::StatusCode::from_u16(status.status) {
+            return Err(HttpRequestFailed {
+                status: code,
+                content: format!(
+                    "Request to {url} failed with code {code} {message}. Full response: {}",
+                    String::from_utf8_lossy(&data),
+                    message = status.message
+                ),
+            })
+            .with_context(|| format!("parsing {url} response"));
         }
+
+        anyhow::bail!(
+            "Request to {url} failed with status={status} {message}. Full response was: {}",
+            String::from_utf8_lossy(&data),
+            status = status.status,
+            message = status.message,
+        );
     }
 
     from_json(&data).with_context(|| format!("parsing {url} response"))

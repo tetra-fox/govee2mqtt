@@ -431,7 +431,7 @@ pub struct Base64HexBytes(HexBytes);
 
 impl Base64HexBytes {
     pub fn decode_for_sku(&self, sku: &str) -> GoveeBlePacket {
-        MGR.decode_for_sku(sku, &self.0 .0)
+        MGR.decode_for_sku(sku, &self.0.0)
     }
 
     pub fn encode_for_sku<T: 'static>(sku: &str, value: &T) -> anyhow::Result<Self> {
@@ -441,7 +441,7 @@ impl Base64HexBytes {
 
     pub fn base64(&self) -> Vec<String> {
         let mut result = vec![];
-        for chunk in self.0 .0.chunks(20) {
+        for chunk in self.0.0.chunks(20) {
             result.push(data_encoding::BASE64.encode(chunk));
         }
         result
@@ -503,7 +503,9 @@ mod test {
         assert_eq!(
             MGR.decode_for_sku(
                 "H7160",
-                &[0x33, 0x05, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23]
+                &[
+                    0x33, 0x05, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23
+                ]
             ),
             GoveeBlePacket::SetHumidifierMode(SetHumidifierMode {
                 mode: 1,
@@ -520,7 +522,9 @@ mod test {
                 }
             )
             .unwrap(),
-            vec![0x33, 0x05, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23]
+            vec![
+                0x33, 0x05, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23
+            ]
         );
     }
 

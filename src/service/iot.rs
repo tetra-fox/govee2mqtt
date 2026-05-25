@@ -1,16 +1,16 @@
-use crate::service::state::StateHandle;
 use crate::UndocApiArguments;
+use crate::service::state::StateHandle;
 use anyhow::Context;
 use async_channel::Receiver;
 use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
 use govee_api::lan_api::{DeviceColor, DeviceStatus};
 use govee_api::platform_api::from_json;
 use govee_api::undoc_api::{
-    ms_timestamp, DeviceEntry, GoveeUndocumentedApi, LoginAccountResponse, ParsedOneClick,
+    DeviceEntry, GoveeUndocumentedApi, LoginAccountResponse, ParsedOneClick, ms_timestamp,
 };
 use mosquitto_rs::{Event, QoS};
 use serde::Deserialize;
-use serde_json::{json, Map, Value as JsonValue};
+use serde_json::{Map, Value as JsonValue, json};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -442,15 +442,13 @@ async fn run_iot_subscriber(
                 if false {
                     let devices = state.devices().await;
                     for d in devices {
-                        if let Some(undoc) = &d.undoc_device_info {
-                            if let Ok(topic) = undoc.entry.device_topic() {
-                                client
-                                    .subscribe(topic, mosquitto_rs::QoS::AtMostOnce)
-                                    .await
-                                    .with_context(|| {
-                                        format!("subscribe to device topic {topic}")
-                                    })?;
-                            }
+                        if let Some(undoc) = &d.undoc_device_info
+                            && let Ok(topic) = undoc.entry.device_topic()
+                        {
+                            client
+                                .subscribe(topic, mosquitto_rs::QoS::AtMostOnce)
+                                .await
+                                .with_context(|| format!("subscribe to device topic {topic}"))?;
                         }
                     }
                 }

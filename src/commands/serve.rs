@@ -1,10 +1,10 @@
+use crate::UndocApiArguments;
 use crate::service::device::Device;
 use crate::service::hass::spawn_hass_integration;
 use crate::service::http::run_http_server;
 use crate::service::iot::start_iot_client;
 use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
-use crate::UndocApiArguments;
 use anyhow::Context;
 use chrono::Utc;
 use govee_api::lan_api::Client as LanClient;
@@ -13,7 +13,7 @@ use govee_api::undoc_api::GoveeUndocumentedApi;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 pub static POLL_INTERVAL: Lazy<chrono::Duration> = Lazy::new(|| chrono::Duration::seconds(900));
 
@@ -40,16 +40,15 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     // lights to flicker about a minute after polling, so it
     // is desirable to keep polling on a regular basis.
     // <https://github.com/wez/govee2mqtt/issues/250>
-    if let Some(lan_device) = &device.lan_device {
-        if let Some(client) = state.get_lan_client().await {
-            if let Ok(status) = client.query_status(lan_device).await {
-                state
-                    .device_mut(&lan_device.sku, &lan_device.device)
-                    .await
-                    .set_lan_device_status(status);
-                state.notify_of_state_change(&lan_device.device).await.ok();
-            }
-        }
+    if let Some(lan_device) = &device.lan_device
+        && let Some(client) = state.get_lan_client().await
+        && let Ok(status) = client.query_status(lan_device).await
+    {
+        state
+            .device_mut(&lan_device.sku, &lan_device.device)
+            .await
+            .set_lan_device_status(status);
+        state.notify_of_state_change(&lan_device.device).await.ok();
     }
 
     let poll_interval = device.preferred_poll_interval();

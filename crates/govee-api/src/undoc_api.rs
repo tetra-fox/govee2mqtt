@@ -1,14 +1,14 @@
-use crate::cache::{cache_get, CacheComputeResult, CacheGetOptions};
+use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
 use crate::lan_api::{boolean_int, truthy};
 use crate::opt_env_var;
 use crate::platform_api::{
-    from_json, http_response_body, DeviceCapability, DeviceCapabilityKind, DeviceParameters,
-    EnumOption,
+    DeviceCapability, DeviceCapabilityKind, DeviceParameters, EnumOption, from_json,
+    http_response_body,
 };
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;

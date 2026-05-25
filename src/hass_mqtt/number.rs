@@ -1,8 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{camel_case_to_space_separated, topic_safe_string, HassClient};
+use crate::service::hass::{HassClient, camel_case_to_space_separated, topic_safe_string};
 use crate::service::state::StateHandle;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -126,19 +126,18 @@ impl EntityInstance for WorkModeNumber {
             .await
             .expect("device to exist");
 
-        if let Some(cap) = device.get_state_capability_by_instance("workMode") {
-            if let Some(work_mode) = cap.state.pointer("/value/workMode") {
-                if *work_mode == self.work_mode {
-                    // The current mode matches us, so it is valid to
-                    // read the current parameter for that mode
+        if let Some(cap) = device.get_state_capability_by_instance("workMode")
+            && let Some(work_mode) = cap.state.pointer("/value/workMode")
+            && *work_mode == self.work_mode
+        {
+            // The current mode matches us, so it is valid to
+            // read the current parameter for that mode
 
-                    if let Some(value) = cap.state.pointer("/value/modeValue") {
-                        if let Some(n) = value.as_i64() {
-                            client.publish(state_topic, n.to_string()).await?;
-                            return Ok(());
-                        }
-                    }
-                }
+            if let Some(value) = cap.state.pointer("/value/modeValue")
+                && let Some(n) = value.as_i64()
+            {
+                client.publish(state_topic, n.to_string()).await?;
+                return Ok(());
             }
         }
 
@@ -239,11 +238,11 @@ impl EntityInstance for CapabilityNumber {
             .await
             .expect("device to exist");
 
-        if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name) {
-            if let Some(n) = cap.state.pointer("/value").and_then(|v| v.as_f64()) {
-                client.publish(state_topic, n.to_string()).await?;
-                return Ok(());
-            }
+        if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name)
+            && let Some(n) = cap.state.pointer("/value").and_then(|v| v.as_f64())
+        {
+            client.publish(state_topic, n.to_string()).await?;
+            return Ok(());
         }
 
         // Govee doesn't always report a value for these; leave the entity

@@ -3,11 +3,11 @@ use crate::hass_mqtt::instance::EntityInstance;
 use crate::hass_mqtt::number::NumberConfig;
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{topic_safe_id, topic_safe_string, HassClient};
+use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
 use crate::service::state::StateHandle;
-use govee_api::platform_api::{parse_temperature_constraints, DeviceCapability};
+use govee_api::platform_api::{DeviceCapability, parse_temperature_constraints};
 use govee_api::temperature::{
-    TemperatureScale, TemperatureUnits, TemperatureValue, DEVICE_CLASS_TEMPERATURE,
+    DEVICE_CLASS_TEMPERATURE, TemperatureScale, TemperatureUnits, TemperatureValue,
 };
 use mosquitto_rs::router::{Params, Payload, State};
 use serde::Deserialize;

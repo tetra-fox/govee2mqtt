@@ -183,10 +183,10 @@ pub async fn enumerate_entities_for_device(
         entities.add(Humidifier::new(&topics, d, state).await?);
     }
 
-    if d.device_type() != DeviceType::Light {
-        if let Some(scenes) = SceneModeSelect::new(&topics, d, state).await? {
-            entities.add(scenes);
-        }
+    if d.device_type() != DeviceType::Light
+        && let Some(scenes) = SceneModeSelect::new(&topics, d, state).await?
+    {
+        entities.add(scenes);
     }
 
     // Multi-outlet sockets only expose a single combined powerSwitch via the

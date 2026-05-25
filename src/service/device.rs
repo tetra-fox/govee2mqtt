@@ -1,5 +1,5 @@
 use crate::commands::serve::POLL_INTERVAL;
-use crate::service::quirks::{resolve_quirk, Quirk, BULB};
+use crate::service::quirks::{BULB, Quirk, resolve_quirk};
 use chrono::{DateTime, Utc};
 use govee_api::ble::NotifyHumidifierNightlightParams;
 use govee_api::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
@@ -379,10 +379,10 @@ impl Device {
                     }
                     _ => {}
                 }
-            } else if cap.instance == "online" {
-                if let Ok(value) = serde_json::from_value::<BoolValueState>(cap.state.clone()) {
-                    online.replace(value.value);
-                }
+            } else if cap.instance == "online"
+                && let Ok(value) = serde_json::from_value::<BoolValueState>(cap.state.clone())
+            {
+                online.replace(value.value);
             }
         }
 

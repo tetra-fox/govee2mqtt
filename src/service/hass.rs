@@ -13,7 +13,7 @@ use anyhow::Context;
 use async_channel::Receiver;
 use govee_api::lan_api::DeviceColor;
 use govee_api::opt_env_var;
-use govee_api::platform_api::{from_json, DeviceType};
+use govee_api::platform_api::{DeviceType, from_json};
 use govee_api::temperature::TemperatureScale;
 use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
 use mosquitto_rs::{Client, Event, QoS};
@@ -502,7 +502,9 @@ async fn mqtt_homeassitant_status(
         .await
         .expect("hass client to be present");
 
-    log::info!("Home Assistant status changed: {status}, waiting {HASS_REGISTER_DELAY:?} before re-registering entities");
+    log::info!(
+        "Home Assistant status changed: {status}, waiting {HASS_REGISTER_DELAY:?} before re-registering entities"
+    );
     tokio::time::sleep(HASS_REGISTER_DELAY).await;
 
     client.register_with_hass(&state).await?;
