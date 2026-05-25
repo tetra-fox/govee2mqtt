@@ -65,4 +65,5 @@ You will also need to configure `govee2mqtt` to use the same broker:
 |`--mqtt-port`|`GOVEE_MQTT_PORT`|`mqtt_port`|The port number of the mqtt broker. The default is `1883`|
 |`--mqtt-username`|`GOVEE_MQTT_USER`|`mqtt_username`|If your broker requires authentication, the username to use|
 |`--mqtt-password`|`GOVEE_MQTT_PASSWORD`|`mqtt_password`|If your broker requires authentication, the password to use|
+|`--mqtt-base-topic`|`GOVEE_MQTT_BASE_TOPIC`|`base_topic`|The prefix for all MQTT topics and Home Assistant entity unique ids. Defaults to `govee2mqtt`. If you are migrating from an upstream `wez/govee2mqtt` install and want to keep your existing entities, set this to `gv2mqtt`.|
 

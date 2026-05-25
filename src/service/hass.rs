@@ -46,6 +46,14 @@ pub struct HassArguments {
     #[arg(long, global = true)]
     mqtt_bind_address: Option<String>,
 
+    /// The base topic, used as the prefix for all MQTT topics and as the
+    /// prefix for the Home Assistant entity unique ids.
+    /// You may also set this via the GOVEE_MQTT_BASE_TOPIC environment variable.
+    /// If unspecified, uses "govee2mqtt". Set this to "gv2mqtt" to keep the
+    /// topics and entities from an upstream wez/govee2mqtt install.
+    #[arg(long, global = true)]
+    mqtt_base_topic: Option<String>,
+
     #[arg(long, global = true, default_value = "homeassistant")]
     hass_discovery_prefix: String,
 
@@ -96,6 +104,16 @@ impl HassArguments {
         }
     }
 
+    pub fn base_topic(&self) -> anyhow::Result<String> {
+        match &self.mqtt_base_topic {
+            Some(t) => Ok(t.to_string()),
+            None => {
+                Ok(opt_env_var("GOVEE_MQTT_BASE_TOPIC")?
+                    .unwrap_or_else(|| "govee2mqtt".to_string()))
+            }
+        }
+    }
+
     pub fn temperature_scale(&self) -> anyhow::Result<TemperatureScale> {
         match &self.temperature_scale {
             Some(s) => Ok(s.parse()?),
@@ -130,7 +148,8 @@ impl HassClient {
 
         // Mark as available
         log::trace!("register_with_hass: mark as online");
-        self.publish(availability_topic(), "online")
+        let base_topic = state.get_base_topic().await;
+        self.publish(availability_topic(&base_topic), "online")
             .await
             .context("online -> availability_topic")?;
 
@@ -200,36 +219,40 @@ pub fn topic_safe_id(device: &ServiceDevice) -> String {
     id
 }
 
-pub fn switch_instance_state_topic(device: &ServiceDevice, instance: &str) -> String {
+pub fn switch_instance_state_topic(
+    base_topic: &str,
+    device: &ServiceDevice,
+    instance: &str,
+) -> String {
     format!(
-        "gv2mqtt/switch/{id}/{instance}/state",
+        "{base_topic}/switch/{id}/{instance}/state",
         id = topic_safe_id(device)
     )
 }
 
-pub fn light_state_topic(device: &ServiceDevice) -> String {
-    format!("gv2mqtt/light/{id}/state", id = topic_safe_id(device))
+pub fn light_state_topic(base_topic: &str, device: &ServiceDevice) -> String {
+    format!("{base_topic}/light/{id}/state", id = topic_safe_id(device))
 }
 
-pub fn light_segment_state_topic(device: &ServiceDevice, segment: u32) -> String {
+pub fn light_segment_state_topic(base_topic: &str, device: &ServiceDevice, segment: u32) -> String {
     format!(
-        "gv2mqtt/light/{id}/state/{segment}",
+        "{base_topic}/light/{id}/state/{segment}",
         id = topic_safe_id(device)
     )
 }
 
 /// All entities use the same topic so that we can mark unavailable
 /// via last-will
-pub fn availability_topic() -> String {
-    "gv2mqtt/availability".to_string()
+pub fn availability_topic(base_topic: &str) -> String {
+    format!("{base_topic}/availability")
 }
 
-pub fn oneclick_topic() -> String {
-    "gv2mqtt/oneclick".to_string()
+pub fn oneclick_topic(base_topic: &str) -> String {
+    format!("{base_topic}/oneclick")
 }
 
-pub fn purge_cache_topic() -> String {
-    "gv2mqtt/purge-caches".to_string()
+pub fn purge_cache_topic(base_topic: &str) -> String {
+    format!("{base_topic}/purge-caches")
 }
 
 #[derive(Deserialize)]
@@ -535,6 +558,7 @@ async fn run_mqtt_loop(
         state: &StateHandle,
     ) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
         let disco_prefix = state.get_hass_disco_prefix().await;
+        let base = state.get_base_topic().await;
         let mut router: MqttRouter<StateHandle> = MqttRouter::new(client.clone());
 
         router
@@ -542,58 +566,69 @@ async fn run_mqtt_loop(
             .await?;
 
         router
-            .route("gv2mqtt/light/:id/command", mqtt_light_command)
+            .route(format!("{base}/light/:id/command"), mqtt_light_command)
             .await?;
         router
             .route(
-                "gv2mqtt/light/:id/command/:segment",
+                format!("{base}/light/:id/command/:segment"),
                 mqtt_light_segment_command,
             )
             .await?;
         router
-            .route("gv2mqtt/switch/:id/command/:instance", mqtt_switch_command)
+            .route(
+                format!("{base}/switch/:id/command/:instance"),
+                mqtt_switch_command,
+            )
             .await?;
         router
             .route(
-                "gv2mqtt/switch/:id/outlet/:index/command",
+                format!("{base}/switch/:id/outlet/:index/command"),
                 mqtt_outlet_command,
             )
             .await?;
 
-        router.route(oneclick_topic(), mqtt_oneclick).await?;
-        router.route(purge_cache_topic(), mqtt_purge_caches).await?;
+        router.route(oneclick_topic(&base), mqtt_oneclick).await?;
+        router
+            .route(purge_cache_topic(&base), mqtt_purge_caches)
+            .await?;
         router
             .route(
-                "gv2mqtt/:id/request-platform-data",
+                format!("{base}/:id/request-platform-data"),
                 mqtt_request_platform_data,
             )
             .await?;
         router
             .route(
-                "gv2mqtt/number/:id/command/:mode_name/:work_mode",
+                format!("{base}/number/:id/command/:mode_name/:work_mode"),
                 mqtt_number_command,
             )
             .await?;
         router
-            .route("gv2mqtt/humidifier/:id/set-mode", mqtt_device_set_work_mode)
-            .await?;
-        router
-            .route("gv2mqtt/:id/set-work-mode", mqtt_device_set_work_mode)
+            .route(
+                format!("{base}/humidifier/:id/set-mode"),
+                mqtt_device_set_work_mode,
+            )
             .await?;
         router
             .route(
-                "gv2mqtt/humidifier/:id/set-target",
+                format!("{base}/:id/set-work-mode"),
+                mqtt_device_set_work_mode,
+            )
+            .await?;
+        router
+            .route(
+                format!("{base}/humidifier/:id/set-target"),
                 mqtt_humidifier_set_target,
             )
             .await?;
         router
             .route(
-                "gv2mqtt/:id/set-temperature/:instance/:units",
+                format!("{base}/:id/set-temperature/:instance/:units"),
                 mqtt_set_temperature,
             )
             .await?;
         router
-            .route("gv2mqtt/:id/set-mode-scene", mqtt_set_mode_scene)
+            .route(format!("{base}/:id/set-mode-scene"), mqtt_set_mode_scene)
             .await?;
 
         tokio::time::sleep(HASS_REGISTER_DELAY).await;
@@ -651,12 +686,20 @@ pub async fn spawn_hass_integration(
 
     state.set_temperature_scale(args.temperature_scale()?).await;
 
+    let base_topic = args.base_topic()?;
+    state.set_base_topic(base_topic.clone()).await;
+
     let mqtt_host = args.mqtt_host()?;
     let mqtt_username = args.mqtt_username()?;
     let mqtt_password = args.mqtt_password()?;
     let mqtt_port = args.mqtt_port()?;
 
-    client.set_last_will(availability_topic(), "offline", QoS::AtMostOnce, false)?;
+    client.set_last_will(
+        availability_topic(&base_topic),
+        "offline",
+        QoS::AtMostOnce,
+        false,
+    )?;
 
     if mqtt_username.is_some() != mqtt_password.is_some() {
         log::error!(

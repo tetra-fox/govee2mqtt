@@ -53,7 +53,11 @@ pub struct Humidifier {
 }
 
 impl Humidifier {
-    pub async fn new(device: &ServiceDevice, state: &StateHandle) -> anyhow::Result<Self> {
+    pub async fn new(
+        base_topic: &str,
+        device: &ServiceDevice,
+        state: &StateHandle,
+    ) -> anyhow::Result<Self> {
         let _quirk = device.resolve_quirk();
         let use_iot = device.iot_api_supported() && state.get_iot_client().await.is_some();
         let optimistic = !use_iot;
@@ -67,30 +71,33 @@ impl Humidifier {
         // command_topic controls the power state; just route it to
         // the general power switch handler
         let command_topic = format!(
-            "gv2mqtt/switch/{id}/command/powerSwitch",
+            "{base_topic}/switch/{id}/command/powerSwitch",
             id = topic_safe_id(device)
         );
 
         let target_humidity_command_topic = format!(
-            "gv2mqtt/humidifier/{id}/set-target",
+            "{base_topic}/humidifier/{id}/set-target",
             id = topic_safe_id(device)
         );
         let target_humidity_state_topic = format!(
-            "gv2mqtt/humidifier/{id}/notify-target",
+            "{base_topic}/humidifier/{id}/notify-target",
             id = topic_safe_id(device)
         );
-        let state_topic = format!("gv2mqtt/humidifier/{id}/state", id = topic_safe_id(device));
+        let state_topic = format!(
+            "{base_topic}/humidifier/{id}/state",
+            id = topic_safe_id(device)
+        );
 
         let mode_command_topic = format!(
-            "gv2mqtt/humidifier/{id}/set-mode",
+            "{base_topic}/humidifier/{id}/set-mode",
             id = topic_safe_id(device)
         );
         let mode_state_topic = format!(
-            "gv2mqtt/humidifier/{id}/notify-mode",
+            "{base_topic}/humidifier/{id}/notify-mode",
             id = topic_safe_id(device)
         );
 
-        let unique_id = format!("gv2mqtt-{id}-humidifier", id = topic_safe_id(device),);
+        let unique_id = format!("{base_topic}-{id}-humidifier", id = topic_safe_id(device),);
 
         let mut min_humidity = None;
         let mut max_humidity = None;
@@ -119,7 +126,7 @@ impl Humidifier {
         Ok(Self {
             humidifier: HumidifierConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(),
+                    availability_topic: availability_topic(base_topic),
                     name: if matches!(
                         device.device_type(),
                         DeviceType::Humidifier | DeviceType::Dehumidifier
@@ -130,7 +137,7 @@ impl Humidifier {
                     },
                     device_class,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

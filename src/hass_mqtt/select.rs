@@ -32,11 +32,22 @@ pub struct WorkModeSelect {
 }
 
 impl WorkModeSelect {
-    pub fn new(device: &ServiceDevice, work_modes: &ParsedWorkMode, state: &StateHandle) -> Self {
-        let command_topic = format!("gv2mqtt/{id}/set-work-mode", id = topic_safe_id(device),);
-        let state_topic = format!("gv2mqtt/{id}/notify-work-mode", id = topic_safe_id(device));
-        let availability_topic = availability_topic();
-        let unique_id = format!("gv2mqtt-{id}-workMode", id = topic_safe_id(device),);
+    pub fn new(
+        base_topic: &str,
+        device: &ServiceDevice,
+        work_modes: &ParsedWorkMode,
+        state: &StateHandle,
+    ) -> Self {
+        let command_topic = format!(
+            "{base_topic}/{id}/set-work-mode",
+            id = topic_safe_id(device),
+        );
+        let state_topic = format!(
+            "{base_topic}/{id}/notify-work-mode",
+            id = topic_safe_id(device)
+        );
+        let availability_topic = availability_topic(base_topic);
+        let unique_id = format!("{base_topic}-{id}-workMode", id = topic_safe_id(device),);
 
         Self {
             select: SelectConfig {
@@ -45,7 +56,7 @@ impl WorkModeSelect {
                     name: Some("Mode".to_string()),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id,
                     entity_category: None,
                     icon: None,
@@ -106,16 +117,26 @@ pub struct SceneModeSelect {
 }
 
 impl SceneModeSelect {
-    pub async fn new(device: &ServiceDevice, state: &StateHandle) -> anyhow::Result<Option<Self>> {
+    pub async fn new(
+        base_topic: &str,
+        device: &ServiceDevice,
+        state: &StateHandle,
+    ) -> anyhow::Result<Option<Self>> {
         let scenes = state.device_list_scenes(device).await?;
         if scenes.is_empty() {
             return Ok(None);
         }
 
-        let command_topic = format!("gv2mqtt/{id}/set-mode-scene", id = topic_safe_id(device));
-        let state_topic = format!("gv2mqtt/{id}/notify-mode-scene", id = topic_safe_id(device));
-        let availability_topic = availability_topic();
-        let unique_id = format!("gv2mqtt-{id}-mode-scene", id = topic_safe_id(device));
+        let command_topic = format!(
+            "{base_topic}/{id}/set-mode-scene",
+            id = topic_safe_id(device)
+        );
+        let state_topic = format!(
+            "{base_topic}/{id}/notify-mode-scene",
+            id = topic_safe_id(device)
+        );
+        let availability_topic = availability_topic(base_topic);
+        let unique_id = format!("{base_topic}-{id}-mode-scene", id = topic_safe_id(device));
 
         Ok(Some(Self {
             select: SelectConfig {
@@ -124,7 +145,7 @@ impl SceneModeSelect {
                     name: Some("Mode/Scene".to_string()),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

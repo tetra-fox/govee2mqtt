@@ -27,6 +27,7 @@ pub struct State {
     iot_client: Mutex<Option<IotClient>>,
     hass_client: Mutex<Option<HassClient>>,
     hass_discovery_prefix: Mutex<String>,
+    base_topic: Mutex<String>,
     temperature_scale: Mutex<TemperatureScale>,
 }
 
@@ -51,6 +52,14 @@ impl State {
 
     pub async fn get_hass_disco_prefix(&self) -> String {
         self.hass_discovery_prefix.lock().await.to_string()
+    }
+
+    pub async fn set_base_topic(&self, base_topic: String) {
+        *self.base_topic.lock().await = base_topic;
+    }
+
+    pub async fn get_base_topic(&self) -> String {
+        self.base_topic.lock().await.to_string()
     }
 
     /// Returns a mutable version of the specified device, creating

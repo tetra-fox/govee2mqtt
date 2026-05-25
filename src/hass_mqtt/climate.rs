@@ -24,6 +24,7 @@ pub struct TargetTemperatureEntity {
 
 impl TargetTemperatureEntity {
     pub async fn new(
+        base_topic: &str,
         device: &ServiceDevice,
         state: &StateHandle,
         instance: &DeviceCapability,
@@ -39,23 +40,23 @@ impl TargetTemperatureEntity {
 
         let name = "Target Temperature".to_string();
         let command_topic = format!(
-            "gv2mqtt/{id}/set-temperature/{inst}/{units}",
+            "{base_topic}/{id}/set-temperature/{inst}/{units}",
             id = topic_safe_id(device),
             inst = topic_safe_string(&instance.instance)
         );
         let state_topic = format!(
-            "gv2mqtt/{id}/advise-set-temperature",
+            "{base_topic}/{id}/advise-set-temperature",
             id = topic_safe_id(device),
         );
 
         Ok(Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(),
+                    availability_topic: availability_topic(base_topic),
                     name: Some(name),
                     entity_category: None,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id: unique_id.clone(),
                     device_class: Some(DEVICE_CLASS_TEMPERATURE),
                     icon: Some("mdi:thermometer".to_string()),

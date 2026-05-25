@@ -54,6 +54,7 @@ pub struct WorkModeNumber {
 
 impl WorkModeNumber {
     pub fn new(
+        base_topic: &str,
         device: &ServiceDevice,
         state: &StateHandle,
         label: String,
@@ -62,7 +63,7 @@ impl WorkModeNumber {
         range: Option<Range<i64>>,
     ) -> Self {
         let command_topic = format!(
-            "gv2mqtt/number/{id}/command/{mode}/{mode_num}",
+            "{base_topic}/number/{id}/command/{mode}/{mode_num}",
             id = topic_safe_id(device),
             mode = topic_safe_string(mode_name),
             mode_num = work_mode
@@ -71,14 +72,14 @@ impl WorkModeNumber {
                 .unwrap_or_else(|| "work-mode-was-not-int".to_string()),
         );
         let state_topic = format!(
-            "gv2mqtt/number/{id}/state/{mode}",
+            "{base_topic}/number/{id}/state/{mode}",
             id = topic_safe_id(device),
             mode = topic_safe_string(mode_name)
         );
 
-        let availability_topic = availability_topic();
+        let availability_topic = availability_topic(base_topic);
         let unique_id = format!(
-            "gv2mqtt-{id}-{mode}-number",
+            "{base_topic}-{id}-{mode}-number",
             id = topic_safe_id(device),
             mode = topic_safe_string(mode_name),
         );
@@ -90,7 +91,7 @@ impl WorkModeNumber {
                     name: Some(label),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

@@ -22,17 +22,18 @@ pub struct ButtonConfig {
 impl ButtonConfig {
     #[allow(dead_code)]
     pub async fn for_device(
+        base_topic: &str,
         device: &ServiceDevice,
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
         let command_topic = format!(
-            "gv2mqtt/switch/{id}/command/{inst}",
+            "{base_topic}/switch/{id}/command/{inst}",
             id = topic_safe_id(device),
             inst = instance.instance
         );
-        let availability_topic = availability_topic();
+        let availability_topic = availability_topic(base_topic);
         let unique_id = format!(
-            "gv2mqtt-{id}-{inst}",
+            "{base_topic}-{id}-{inst}",
             id = topic_safe_id(device),
             inst = instance.instance
         );
@@ -43,7 +44,7 @@ impl ButtonConfig {
                 name: Some(camel_case_to_space_separated(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
-                device: Device::for_device(device),
+                device: Device::for_device(base_topic, device),
                 unique_id,
                 entity_category: None,
                 icon: None,
@@ -53,16 +54,20 @@ impl ButtonConfig {
         })
     }
 
-    pub fn new<NAME: Into<String>, TOPIC: Into<String>>(name: NAME, topic: TOPIC) -> Self {
+    pub fn new<NAME: Into<String>, TOPIC: Into<String>>(
+        base_topic: &str,
+        name: NAME,
+        topic: TOPIC,
+    ) -> Self {
         let name = name.into();
         let unique_id = format!("global-{}", topic_safe_string(&name));
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(),
+                availability_topic: availability_topic(base_topic),
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
-                device: Device::this_service(),
+                device: Device::this_service(base_topic),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,
@@ -73,6 +78,7 @@ impl ButtonConfig {
     }
 
     pub fn activate_work_mode_preset(
+        base_topic: &str,
         device: &ServiceDevice,
         name: &str,
         mode_name: &str,
@@ -80,22 +86,22 @@ impl ButtonConfig {
         value: i64,
     ) -> Self {
         let unique_id = format!(
-            "gv2mqtt-{id}-preset-{mode}-{mode_num}-{value}",
+            "{base_topic}-{id}-preset-{mode}-{mode_num}-{value}",
             id = topic_safe_id(device),
             mode = topic_safe_string(mode_name),
         );
         let command_topic = format!(
-            "gv2mqtt/number/{id}/command/{mode}/{mode_num}",
+            "{base_topic}/number/{id}/command/{mode}/{mode_num}",
             id = topic_safe_id(device),
             mode = topic_safe_string(mode_name),
         );
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(),
+                availability_topic: availability_topic(base_topic),
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
-                device: Device::for_device(device),
+                device: Device::for_device(base_topic, device),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,
@@ -105,22 +111,22 @@ impl ButtonConfig {
         }
     }
 
-    pub fn request_platform_data_for_device(device: &ServiceDevice) -> Self {
+    pub fn request_platform_data_for_device(base_topic: &str, device: &ServiceDevice) -> Self {
         let unique_id = format!(
-            "gv2mqtt-{id}-request-platform-data",
+            "{base_topic}-{id}-request-platform-data",
             id = topic_safe_id(device)
         );
         let command_topic = format!(
-            "gv2mqtt/{id}/request-platform-data",
+            "{base_topic}/{id}/request-platform-data",
             id = topic_safe_id(device)
         );
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(),
+                availability_topic: availability_topic(base_topic),
                 name: Some("Request Platform API State".to_string()),
                 entity_category: Some("diagnostic".to_string()),
                 origin: Origin::default(),
-                device: Device::for_device(device),
+                device: Device::for_device(base_topic, device),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,

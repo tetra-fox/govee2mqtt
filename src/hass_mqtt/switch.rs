@@ -21,18 +21,19 @@ pub struct SwitchConfig {
 
 impl SwitchConfig {
     pub async fn for_device(
+        base_topic: &str,
         device: &ServiceDevice,
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
         let command_topic = format!(
-            "gv2mqtt/switch/{id}/command/{inst}",
+            "{base_topic}/switch/{id}/command/{inst}",
             id = topic_safe_id(device),
             inst = instance.instance
         );
-        let state_topic = switch_instance_state_topic(device, &instance.instance);
-        let availability_topic = availability_topic();
+        let state_topic = switch_instance_state_topic(base_topic, device, &instance.instance);
+        let availability_topic = availability_topic(base_topic);
         let unique_id = format!(
-            "gv2mqtt-{id}-{inst}",
+            "{base_topic}-{id}-{inst}",
             id = topic_safe_id(device),
             inst = instance.instance
         );
@@ -43,7 +44,7 @@ impl SwitchConfig {
                 name: Some(camel_case_to_space_separated(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
-                device: Device::for_device(device),
+                device: Device::for_device(base_topic, device),
                 unique_id,
                 entity_category: None,
                 icon: None,
@@ -67,11 +68,12 @@ pub struct CapabilitySwitch {
 
 impl CapabilitySwitch {
     pub async fn new(
+        base_topic: &str,
         device: &ServiceDevice,
         state: &StateHandle,
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
-        let switch = SwitchConfig::for_device(device, instance).await?;
+        let switch = SwitchConfig::for_device(base_topic, device, instance).await?;
         Ok(Self {
             switch,
             device_id: device.id.to_string(),
@@ -97,11 +99,16 @@ pub struct OutletSwitch {
 }
 
 impl OutletSwitch {
-    pub fn new(device: &ServiceDevice, state: &StateHandle, outlet_index: u8) -> Self {
+    pub fn new(
+        base_topic: &str,
+        device: &ServiceDevice,
+        state: &StateHandle,
+        outlet_index: u8,
+    ) -> Self {
         let id = topic_safe_id(device);
         let switch = SwitchConfig {
             base: EntityConfig {
-                availability_topic: availability_topic(),
+                availability_topic: availability_topic(base_topic),
                 name: Some(
                     device
                         .socket_outlet_name(outlet_index)
@@ -109,13 +116,13 @@ impl OutletSwitch {
                 ),
                 device_class: Some("outlet"),
                 origin: Origin::default(),
-                device: Device::for_device(device),
-                unique_id: format!("gv2mqtt-{id}-outlet-{outlet_index}"),
+                device: Device::for_device(base_topic, device),
+                unique_id: format!("{base_topic}-{id}-outlet-{outlet_index}"),
                 entity_category: None,
                 icon: Some("mdi:power-socket".to_string()),
             },
-            command_topic: format!("gv2mqtt/switch/{id}/outlet/{outlet_index}/command"),
-            state_topic: format!("gv2mqtt/switch/{id}/outlet/{outlet_index}/state"),
+            command_topic: format!("{base_topic}/switch/{id}/outlet/{outlet_index}/command"),
+            state_topic: format!("{base_topic}/switch/{id}/outlet/{outlet_index}/state"),
         };
         Self {
             switch,
@@ -161,21 +168,21 @@ pub struct PowerSwitch {
 }
 
 impl PowerSwitch {
-    pub fn new(device: &ServiceDevice, state: &StateHandle) -> Self {
+    pub fn new(base_topic: &str, device: &ServiceDevice, state: &StateHandle) -> Self {
         let id = topic_safe_id(device);
         let switch = SwitchConfig {
             base: EntityConfig {
-                availability_topic: availability_topic(),
+                availability_topic: availability_topic(base_topic),
                 name: Some("Power".to_string()),
                 device_class: Some("outlet"),
                 origin: Origin::default(),
-                device: Device::for_device(device),
-                unique_id: format!("gv2mqtt-{id}-powerSwitch"),
+                device: Device::for_device(base_topic, device),
+                unique_id: format!("{base_topic}-{id}-powerSwitch"),
                 entity_category: None,
                 icon: None,
             },
-            command_topic: format!("gv2mqtt/switch/{id}/command/powerSwitch"),
-            state_topic: switch_instance_state_topic(device, "powerSwitch"),
+            command_topic: format!("{base_topic}/switch/{id}/command/powerSwitch"),
+            state_topic: switch_instance_state_topic(base_topic, device, "powerSwitch"),
         };
         Self {
             switch,

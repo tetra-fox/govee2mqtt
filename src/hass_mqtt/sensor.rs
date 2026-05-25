@@ -66,23 +66,27 @@ impl EntityInstance for GlobalFixedDiagnostic {
 }
 
 impl GlobalFixedDiagnostic {
-    pub fn new<NAME: Into<String>, VALUE: Into<String>>(name: NAME, value: VALUE) -> Self {
+    pub fn new<NAME: Into<String>, VALUE: Into<String>>(
+        base_topic: &str,
+        name: NAME,
+        value: VALUE,
+    ) -> Self {
         let name = name.into();
         let unique_id = format!("global-{}", topic_safe_string(&name));
 
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(),
+                    availability_topic: availability_topic(base_topic),
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::this_service(),
+                    device: Device::this_service(base_topic),
                     unique_id: unique_id.clone(),
                     device_class: None,
                     icon: None,
                 },
-                state_topic: format!("gv2mqtt/sensor/{unique_id}/state"),
+                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
                 state_class: None,
                 unit_of_measurement: None,
                 json_attributes_topic: None,
@@ -102,6 +106,7 @@ pub struct CapabilitySensor {
 
 impl CapabilitySensor {
     pub async fn new(
+        base_topic: &str,
         device: &ServiceDevice,
         state: &StateHandle,
         instance: &DeviceCapability,
@@ -140,16 +145,16 @@ impl CapabilitySensor {
         Ok(Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(),
+                    availability_topic: availability_topic(base_topic),
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id: unique_id.clone(),
                     device_class,
                     icon: None,
                 },
-                state_topic: format!("gv2mqtt/sensor/{unique_id}/state"),
+                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
                 state_class,
                 unit_of_measurement,
                 json_attributes_topic: None,
@@ -232,24 +237,27 @@ pub struct DeviceStatusDiagnostic {
 }
 
 impl DeviceStatusDiagnostic {
-    pub fn new(device: &ServiceDevice, state: &StateHandle) -> Self {
-        let unique_id = format!("sensor-{id}-gv2mqtt-status", id = topic_safe_id(device),);
+    pub fn new(base_topic: &str, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let unique_id = format!(
+            "sensor-{id}-{base_topic}-status",
+            id = topic_safe_id(device),
+        );
 
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(),
+                    availability_topic: availability_topic(base_topic),
                     name: Some("Status".to_string()),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id: unique_id.clone(),
                     device_class: None,
                     icon: None,
                 },
-                state_topic: format!("gv2mqtt/sensor/{unique_id}/state"),
+                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
                 state_class: None,
-                json_attributes_topic: Some(format!("gv2mqtt/sensor/{unique_id}/attributes")),
+                json_attributes_topic: Some(format!("{base_topic}/sensor/{unique_id}/attributes")),
                 unit_of_measurement: None,
             },
             device_id: device.id.to_string(),

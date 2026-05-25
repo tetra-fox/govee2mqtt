@@ -3,7 +3,7 @@ use crate::service::hass::topic_safe_id;
 use crate::version_info::govee_version;
 use serde::Serialize;
 
-const MODEL: &str = "gv2mqtt";
+const MODEL: &str = "govee2mqtt";
 const URL: &str = "https://github.com/tetra-fox/govee2mqtt";
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -56,16 +56,16 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn for_device(device: &ServiceDevice) -> Self {
+    pub fn for_device(base_topic: &str, device: &ServiceDevice) -> Self {
         Self {
             name: device.name(),
             manufacturer: "Govee".to_string(),
             model: device.sku.to_string(),
             sw_version: None,
             suggested_area: device.room_name().map(|s| s.to_string()),
-            via_device: Some("gv2mqtt".to_string()),
+            via_device: Some(base_topic.to_string()),
             identifiers: vec![
-                format!("gv2mqtt-{}", topic_safe_id(device)),
+                format!("{base_topic}-{}", topic_safe_id(device)),
                 /*
                 device.computed_name(),
                 device.id.to_string(),
@@ -75,15 +75,15 @@ impl Device {
         }
     }
 
-    pub fn this_service() -> Self {
+    pub fn this_service(base_topic: &str) -> Self {
         Self {
-            name: "Govee to MQTT".to_string(),
+            name: "Govee2MQTT".to_string(),
             manufacturer: "tetra-fox".to_string(),
             model: "govee2mqtt".to_string(),
             sw_version: Some(govee_version().to_string()),
             suggested_area: None,
             via_device: None,
-            identifiers: vec!["gv2mqtt".to_string()],
+            identifiers: vec![base_topic.to_string()],
             connections: vec![],
         }
     }

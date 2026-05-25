@@ -126,6 +126,7 @@ impl EntityInstance for DeviceLight {
 
 impl DeviceLight {
     pub async fn for_device(
+        base_topic: &str,
         device: &ServiceDevice,
         state: &StateHandle,
         segment: Option<u32>,
@@ -134,9 +135,12 @@ impl DeviceLight {
         let device_type = device.device_type();
 
         let command_topic = match segment {
-            None => format!("gv2mqtt/light/{id}/command", id = topic_safe_id(device)),
+            None => format!(
+                "{base_topic}/light/{id}/command",
+                id = topic_safe_id(device)
+            ),
             Some(seg) => format!(
-                "gv2mqtt/light/{id}/command/{seg}",
+                "{base_topic}/light/{id}/command/{seg}",
                 id = topic_safe_id(device)
             ),
         };
@@ -148,12 +152,12 @@ impl DeviceLight {
         };
 
         let state_topic = match segment {
-            Some(seg) => light_segment_state_topic(device, seg),
-            None => light_state_topic(device),
+            Some(seg) => light_segment_state_topic(base_topic, device, seg),
+            None => light_state_topic(base_topic, device),
         };
-        let availability_topic = availability_topic();
+        let availability_topic = availability_topic(base_topic);
         let unique_id = format!(
-            "gv2mqtt-{id}{seg}",
+            "{base_topic}-{id}{seg}",
             id = topic_safe_id(device),
             seg = segment.map(|n| format!("-{n}")).unwrap_or_default()
         );
@@ -211,7 +215,7 @@ impl DeviceLight {
                     name,
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(device),
+                    device: Device::for_device(base_topic, device),
                     unique_id,
                     entity_category: None,
                     icon: None,
