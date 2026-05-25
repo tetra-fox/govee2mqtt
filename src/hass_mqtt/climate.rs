@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::EntityInstance;
+use crate::hass_mqtt::instance::{Component, EntityInstance};
 use crate::hass_mqtt::number::NumberConfig;
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
@@ -73,8 +73,8 @@ impl TargetTemperatureEntity {
 
 #[async_trait::async_trait]
 impl EntityInstance for TargetTemperatureEntity {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.number.publish(state, client).await
+    fn component(&self) -> Component {
+        self.number.component()
     }
 
     fn device_id(&self) -> Option<&str> {

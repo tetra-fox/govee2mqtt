@@ -12,7 +12,7 @@ use govee_api::platform_api::{
 use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Semaphore};
@@ -30,11 +30,14 @@ pub struct State {
     hass_discovery_prefix: Mutex<String>,
     base_topic: Mutex<String>,
     temperature_scale: Mutex<TemperatureScale>,
-    /// The discovery config topics published during the most recent
-    /// registration. Held so the next registration can publish an empty
-    /// retained payload to any topic it no longer produces, removing the
-    /// stale entity from home assistant.
-    published_config_topics: Mutex<HashSet<String>>,
+    /// The device-discovery components published during the most recent
+    /// registration, keyed by device config topic, then by component unique id,
+    /// with the value being the component's platform. Held so the next
+    /// registration can: clear a device topic we no longer produce (empty
+    /// retained payload removes the whole device), and tombstone a single
+    /// component that a still-present device no longer produces (republished as
+    /// `{"p": platform}`, home assistant's signal to drop just that component).
+    published_components: Mutex<PublishedComponents>,
     /// Serializes registration so two overlapping registrations (eg: an HA
     /// birth message arriving during a reconnect re-register) can't both diff
     /// against a half-rebuilt topic set.
@@ -42,6 +45,10 @@ pub struct State {
 }
 
 pub type StateHandle = Arc<State>;
+
+/// Device config topic -> (component unique id -> platform), the discovery
+/// components published in one registration pass.
+pub type PublishedComponents = HashMap<String, HashMap<String, String>>;
 
 impl State {
     pub fn new() -> Self {
@@ -64,30 +71,24 @@ impl State {
         self.hass_discovery_prefix.lock().await.to_string()
     }
 
-    /// Record that a discovery config was published to `topic` during the
-    /// current registration pass.
-    pub async fn record_published_config_topic(&self, topic: String) {
-        self.published_config_topics.lock().await.insert(topic);
-    }
-
     /// Hold the registration lock for the duration of a registration pass.
     pub async fn lock_registration(&self) -> MutexGuard<'_, ()> {
         self.registration_lock.lock().await
     }
 
-    /// Snapshot and clear the recorded config topics at the start of a
-    /// registration pass. The pass repopulates the set via
-    /// `record_published_config_topic`; the returned snapshot is the previous
-    /// set, used afterwards to find which topics are now stale. Caller must
-    /// hold the registration lock so the snapshot and repopulation aren't
-    /// interleaved with another pass.
-    pub async fn take_published_config_topics(&self) -> HashSet<String> {
-        std::mem::take(&mut *self.published_config_topics.lock().await)
+    /// Take the components published in the previous registration pass, leaving
+    /// the stored map empty. The pass diffs the live components against this to
+    /// find devices and components that went away, then stores the new map via
+    /// `set_published_components`. Caller must hold the registration lock so the
+    /// take and the later set aren't interleaved with another pass.
+    pub async fn take_published_components(&self) -> PublishedComponents {
+        std::mem::take(&mut *self.published_components.lock().await)
     }
 
-    /// The config topics recorded so far in the current registration pass.
-    pub async fn current_published_config_topics(&self) -> HashSet<String> {
-        self.published_config_topics.lock().await.clone()
+    /// Store the components published in the current registration pass, for the
+    /// next pass to diff against.
+    pub async fn set_published_components(&self, components: PublishedComponents) {
+        *self.published_components.lock().await = components;
     }
 
     pub async fn set_base_topic(&self, base_topic: String) {

@@ -1,9 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{HassClient, camel_case_to_space_separated, topic_safe_string};
-use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceCapability;
 use serde::Serialize;
@@ -139,8 +138,8 @@ impl ButtonConfig {
 
 #[async_trait]
 impl EntityInstance for ButtonConfig {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("button", state, client, &self.base, self).await
+    fn component(&self) -> Component {
+        component("button", &self.base, self)
     }
 
     async fn notify_state(

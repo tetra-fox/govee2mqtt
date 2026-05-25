@@ -1,6 +1,6 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
@@ -38,8 +38,8 @@ pub enum StateClass {
 }
 
 impl SensorConfig {
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("sensor", state, client, &self.base, self).await
+    fn component(&self) -> Component {
+        component("sensor", &self.base, self)
     }
 
     pub async fn notify_state(&self, client: &HassClient, value: &str) -> anyhow::Result<()> {
@@ -55,8 +55,8 @@ pub struct GlobalFixedDiagnostic {
 
 #[async_trait]
 impl EntityInstance for GlobalFixedDiagnostic {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.sensor.publish(state, client).await
+    fn component(&self) -> Component {
+        self.sensor.component()
     }
 
     async fn notify_state(
@@ -176,8 +176,8 @@ impl CapabilitySensor {
 
 #[async_trait]
 impl EntityInstance for CapabilitySensor {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.sensor.publish(state, client).await
+    fn component(&self) -> Component {
+        self.sensor.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -290,8 +290,8 @@ impl CapabilityEventSensor {
 
 #[async_trait]
 impl EntityInstance for CapabilityEventSensor {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.sensor.publish(state, client).await
+    fn component(&self) -> Component {
+        self.sensor.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -376,8 +376,8 @@ impl DeviceStatusDiagnostic {
 
 #[async_trait]
 impl EntityInstance for DeviceStatusDiagnostic {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.sensor.publish(state, client).await
+    fn component(&self) -> Component {
+        self.sensor.component()
     }
 
     fn device_id(&self) -> Option<&str> {

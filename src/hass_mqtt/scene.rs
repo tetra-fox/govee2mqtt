@@ -1,8 +1,7 @@
 use crate::hass_mqtt::base::EntityConfig;
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::HassClient;
-use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -15,16 +14,10 @@ pub struct SceneConfig {
     pub payload_on: String,
 }
 
-impl SceneConfig {
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("scene", state, client, &self.base, self).await
-    }
-}
-
 #[async_trait]
 impl EntityInstance for SceneConfig {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.publish(state, client).await
+    fn component(&self) -> Component {
+        component("scene", &self.base, self)
     }
 
     async fn notify_state(

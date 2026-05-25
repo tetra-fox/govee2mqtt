@@ -33,6 +33,17 @@ pub struct Availability {
 }
 
 impl EntityConfig {
+    /// The discovery object id used to group this entity's component under its
+    /// device and as the `<prefix>/device/<id>/config` topic segment. It is the
+    /// device's first HA identifier, always set by Device::for_device (the
+    /// per-device id) or Device::this_service (the service id).
+    pub fn device_object_id(&self) -> &str {
+        self.device
+            .identifiers
+            .first()
+            .expect("device has an identifier")
+    }
+
     /// Availability for an entity owned by the bridge device itself (Version,
     /// Purge Caches, scenes): just the global topic, which the broker last-will
     /// flips offline when the bridge dies.
@@ -74,6 +85,27 @@ impl EntityConfig {
             Some("all"),
         )
     }
+}
+
+/// One device-based discovery message: the device and origin metadata written
+/// once, plus a map of every component (entity) keyed by its unique id. Home
+/// assistant reads this from a single `<prefix>/device/<id>/config` topic and
+/// creates the device with all of its entities at once.
+/// <https://www.home-assistant.io/integrations/mqtt/#device-discovery-payload>
+#[derive(Serialize, Clone, Debug)]
+pub struct DeviceDiscovery {
+    #[serde(rename = "dev")]
+    pub device: Device,
+    #[serde(rename = "o")]
+    pub origin: Origin,
+    /// Availability shared by every component, hoisted here so it isn't
+    /// repeated in each one.
+    #[serde(rename = "avty", skip_serializing_if = "Vec::is_empty")]
+    pub availability: Vec<Availability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability_mode: Option<&'static str>,
+    #[serde(rename = "cmps")]
+    pub components: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Clone, Debug)]

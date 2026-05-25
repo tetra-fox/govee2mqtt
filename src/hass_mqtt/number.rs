@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
@@ -30,8 +30,8 @@ pub struct NumberConfig {
 }
 
 impl NumberConfig {
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("number", state, client, &self.base, self).await
+    pub fn component(&self) -> Component {
+        component("number", &self.base, self)
     }
 
     pub async fn notify_state(&self, client: &HassClient, value: &str) -> anyhow::Result<()> {
@@ -107,8 +107,8 @@ impl WorkModeNumber {
 
 #[async_trait]
 impl EntityInstance for WorkModeNumber {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.number.publish(state, client).await
+    fn component(&self) -> Component {
+        self.number.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -218,8 +218,8 @@ impl CapabilityNumber {
 
 #[async_trait]
 impl EntityInstance for CapabilityNumber {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.number.publish(state, client).await
+    fn component(&self) -> Component {
+        self.number.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -324,8 +324,8 @@ impl MusicSensitivityNumber {
 
 #[async_trait]
 impl EntityInstance for MusicSensitivityNumber {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.number.publish(state, client).await
+    fn component(&self) -> Component {
+        self.number.component()
     }
 
     fn device_id(&self) -> Option<&str> {

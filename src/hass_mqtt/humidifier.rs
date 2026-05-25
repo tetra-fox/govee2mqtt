@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
@@ -146,15 +146,8 @@ impl Humidifier {
 
 #[async_trait]
 impl EntityInstance for Humidifier {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config(
-            "humidifier",
-            state,
-            client,
-            &self.humidifier.base,
-            &self.humidifier,
-        )
-        .await
+    fn component(&self) -> Component {
+        component("humidifier", &self.humidifier.base, &self.humidifier)
     }
 
     fn device_id(&self) -> Option<&str> {

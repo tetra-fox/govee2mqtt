@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
@@ -46,8 +46,8 @@ impl SwitchConfig {
         })
     }
 
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("switch", state, client, &self.base, self).await
+    pub fn component(&self) -> Component {
+        component("switch", &self.base, self)
     }
 }
 
@@ -118,8 +118,8 @@ impl OutletSwitch {
 
 #[async_trait]
 impl EntityInstance for OutletSwitch {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.switch.publish(state, client).await
+    fn component(&self) -> Component {
+        self.switch.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -180,8 +180,8 @@ impl PowerSwitch {
 
 #[async_trait]
 impl EntityInstance for PowerSwitch {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.switch.publish(state, client).await
+    fn component(&self) -> Component {
+        self.switch.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -244,8 +244,8 @@ impl MusicAutoColorSwitch {
 
 #[async_trait]
 impl EntityInstance for MusicAutoColorSwitch {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.switch.publish(state, client).await
+    fn component(&self) -> Component {
+        self.switch.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -293,8 +293,8 @@ pub async fn mqtt_music_auto_color_command(
 
 #[async_trait]
 impl EntityInstance for CapabilitySwitch {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.switch.publish(state, client).await
+    fn component(&self) -> Component {
+        self.switch.component()
     }
 
     fn device_id(&self) -> Option<&str> {

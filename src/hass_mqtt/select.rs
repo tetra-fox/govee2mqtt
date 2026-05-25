@@ -1,5 +1,5 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
@@ -22,8 +22,8 @@ pub struct SelectConfig {
 }
 
 impl SelectConfig {
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("select", state, client, &self.base, self).await
+    pub fn component(&self) -> Component {
+        component("select", &self.base, self)
     }
 }
 
@@ -63,8 +63,8 @@ impl WorkModeSelect {
 
 #[async_trait::async_trait]
 impl EntityInstance for WorkModeSelect {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.select.publish(state, client).await
+    fn component(&self) -> Component {
+        self.select.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -143,8 +143,8 @@ impl SceneModeSelect {
 
 #[async_trait::async_trait]
 impl EntityInstance for SceneModeSelect {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.select.publish(state, client).await
+    fn component(&self) -> Component {
+        self.select.component()
     }
 
     fn device_id(&self) -> Option<&str> {
@@ -239,8 +239,8 @@ impl CapabilityModeSelect {
 
 #[async_trait::async_trait]
 impl EntityInstance for CapabilityModeSelect {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.select.publish(state, client).await
+    fn component(&self) -> Component {
+        self.select.component()
     }
 
     fn device_id(&self) -> Option<&str> {

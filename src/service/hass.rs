@@ -129,43 +129,49 @@ pub struct HassClient {
 impl HassClient {
     async fn register_with_hass(&self, state: &StateHandle) -> anyhow::Result<()> {
         // Serialize registration passes so the snapshot/diff of published
-        // config topics below stays consistent if two passes overlap.
+        // components below stays consistent if two passes overlap.
         let _guard = state.lock_registration().await;
 
-        // Snapshot what we published last time and reset the recorded set; the
-        // pass below repopulates it via record_published_config_topic.
-        let previous_topics = state.take_published_config_topics().await;
+        // Snapshot what we published last time and clear the stored map; the
+        // pass below produces the new map and we store it via
+        // set_published_components.
+        let previous = state.take_published_components().await;
 
         let enumeration = enumerate_all_entites(state).await?;
         let entities = &enumeration.entities;
 
-        // Register the configs
-        log::trace!("register_with_hass: register entities");
-        entities.publish_config(state, self).await?;
-
-        // Remove any entity we published before but no longer produce. Empty
-        // retained payload is home assistant's signal to drop the entity. Only
-        // safe when enumeration was complete: a partial pass (eg: the undoc
-        // one-click API failed) is missing entities that still exist, and GCing
-        // against it would wrongly delete them.
+        // Only publish discovery on a complete pass. Under device discovery a
+        // device's entities share one config topic, so republishing that topic
+        // from a partial enumeration (eg: the undoc one-click API failed, so the
+        // scenes that share the service device's topic are missing) would drop
+        // the missing entities from home assistant. A partial pass leaves the
+        // retained device configs untouched and carries the previous map
+        // forward; the next complete pass reconciles. State and availability are
+        // still refreshed below.
         if enumeration.complete {
-            let current_topics = state.current_published_config_topics().await;
-            for topic in previous_topics.difference(&current_topics) {
-                log::info!("Removing stale discovery config {topic}");
-                self.remove_config(topic)
-                    .await
-                    .with_context(|| format!("remove stale config {topic}"))?;
+            // A device that is still present but dropped a component gets that
+            // component tombstoned in its republished payload (handled inside
+            // publish_config). The returned map is what we produced this pass.
+            log::trace!("register_with_hass: register entities");
+            let published = entities.publish_config(state, self, &previous).await?;
+
+            // Remove any device we published before but no longer produce at
+            // all. Empty retained payload to its device topic is home
+            // assistant's signal to drop the whole device.
+            for topic in previous.keys() {
+                if !published.contains_key(topic) {
+                    log::info!("Removing stale device discovery {topic}");
+                    self.remove_config(topic)
+                        .await
+                        .with_context(|| format!("remove stale config {topic}"))?;
+                }
             }
+            state.set_published_components(published).await;
         } else {
             log::info!(
-                "Enumeration was incomplete; skipping stale-config cleanup to avoid removing entities that still exist"
+                "Enumeration was incomplete; leaving discovery configs untouched to avoid removing entities that still exist"
             );
-            // Carry the previous topics forward so a later complete pass can
-            // still GC anything that legitimately went away. take_* cleared the
-            // set; the pass above only re-recorded what it managed to produce.
-            for topic in previous_topics {
-                state.record_published_config_topic(topic).await;
-            }
+            state.set_published_components(previous).await;
         }
 
         // Allow hass extra time to register the entities before

@@ -1,9 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
-use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::HassClient;
-use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceType;
 use serde::Serialize;
@@ -50,12 +49,6 @@ pub struct LightConfig {
     pub payload_available: String,
 }
 
-impl LightConfig {
-    pub async fn publish(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        publish_entity_config("light", state, client, &self.base, self).await
-    }
-}
-
 #[derive(Clone)]
 pub struct DeviceLight {
     light: LightConfig,
@@ -64,8 +57,8 @@ pub struct DeviceLight {
 
 #[async_trait]
 impl EntityInstance for DeviceLight {
-    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
-        self.light.publish(state, client).await
+    fn component(&self) -> Component {
+        component("light", &self.light.base, &self.light)
     }
 
     fn device_id(&self) -> Option<&str> {
