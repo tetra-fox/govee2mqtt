@@ -16,6 +16,10 @@ pub struct ButtonConfig {
     pub command_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_press: Option<String>,
+    /// Omitted (HA enables) unless set false for a rarely-used button that would
+    /// otherwise clutter the device card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled_by_default: Option<bool>,
 }
 
 impl ButtonConfig {
@@ -43,6 +47,7 @@ impl ButtonConfig {
             },
             command_topic,
             payload_press: None,
+            enabled_by_default: None,
         })
     }
 
@@ -68,6 +73,7 @@ impl ButtonConfig {
             },
             command_topic: topic.into(),
             payload_press: None,
+            enabled_by_default: None,
         }
     }
 
@@ -102,6 +108,7 @@ impl ButtonConfig {
             },
             command_topic,
             payload_press: Some(value.to_string()),
+            enabled_by_default: None,
         }
     }
 
@@ -123,6 +130,9 @@ impl ButtonConfig {
             },
             command_topic,
             payload_press: None,
+            // Manual diagnostic poll trigger; most users never need it, so keep
+            // it off the device card unless they enable it.
+            enabled_by_default: Some(false),
         }
     }
 }

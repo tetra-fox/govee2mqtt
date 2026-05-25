@@ -2,7 +2,7 @@ use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{HassClient, kelvin_to_mired};
+use crate::service::hass::HassClient;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceType;
@@ -37,9 +37,15 @@ pub struct LightConfig {
     pub effect_list: Vec<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_mireds: Option<u32>,
+    pub min_kelvin: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_mireds: Option<u32>,
+    pub max_kelvin: Option<u32>,
+
+    /// Segment lights are disabled by default: a device can have dozens, and
+    /// most users only want the whole-device light. Omitted (HA enables) for
+    /// the primary light.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled_by_default: Option<bool>,
 
     pub payload_available: String,
 }
@@ -98,7 +104,7 @@ impl EntityInstance for DeviceLight {
                             "state": "ON",
                             "color_mode": "color_temp",
                             "brightness": device_state.brightness,
-                            "color_temp": kelvin_to_mired(device_state.kelvin),
+                            "color_temp_kelvin": device_state.kelvin,
                             "effect": device_state.scene,
                         })
                     }
@@ -168,13 +174,11 @@ impl DeviceLight {
             supported_color_modes.push("rgb".to_string());
         }
 
-        let (min_mireds, max_mireds) = if segment.is_some() {
+        let (min_kelvin, max_kelvin) = if segment.is_some() {
             (None, None)
         } else if let Some((min, max)) = device.get_color_temperature_range() {
             supported_color_modes.push("color_temp".to_string());
-            // Note that min and max are swapped by the translation
-            // from kelvin to mired
-            (Some(kelvin_to_mired(max)), Some(kelvin_to_mired(min)))
+            (Some(min), Some(max))
         } else {
             (None, None)
         };
@@ -218,8 +222,9 @@ impl DeviceLight {
                 effect: true,
                 effect_list,
                 payload_available: "online".to_string(),
-                max_mireds,
-                min_mireds,
+                max_kelvin,
+                min_kelvin,
+                enabled_by_default: segment.map(|_| false),
                 optimistic: segment.is_some(),
                 icon,
             },
