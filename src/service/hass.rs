@@ -21,8 +21,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_secs(15);
-
 #[derive(clap::Parser, Debug)]
 pub struct HassArguments {
     /// The mqtt broker hostname or address.
@@ -620,10 +618,7 @@ async fn mqtt_homeassitant_status(
         .await
         .expect("hass client to be present");
 
-    log::info!(
-        "Home Assistant status changed: {status}, waiting {HASS_REGISTER_DELAY:?} before re-registering entities"
-    );
-    tokio::time::sleep(HASS_REGISTER_DELAY).await;
+    log::info!("Home Assistant status changed: {status}, re-registering entities");
 
     client.register_with_hass(&state).await?;
 
@@ -635,11 +630,11 @@ async fn mqtt_homeassitant_status(
 ///
 /// rumqttc only writes queued subscribe/publish requests to the network while
 /// `EventLoop::poll` is being driven, and its request channel is bounded. This
-/// function issues many subscribes plus hundreds of config/state publishes with
-/// sleeps in between, so it must NOT run inline in the poll loop: doing so parks
-/// the event loop, the request channel fills, and the next publish blocks
-/// forever. It runs in its own task (see `run_mqtt_loop`) so the poll loop keeps
-/// draining the channel concurrently.
+/// function issues many subscribes plus the per-device config/state/availability
+/// publishes and a settle sleep, so it must NOT run inline in the poll loop:
+/// doing so parks the event loop, the request channel fills, and the next
+/// publish blocks forever. It runs in its own task (see `run_mqtt_loop`) so the
+/// poll loop keeps draining the channel concurrently.
 async fn build_router_and_register(
     client: &AsyncClient,
     state: &StateHandle,
@@ -731,7 +726,6 @@ async fn build_router_and_register(
         router
     };
 
-    tokio::time::sleep(HASS_REGISTER_DELAY).await;
     state
         .get_hass_client()
         .await
