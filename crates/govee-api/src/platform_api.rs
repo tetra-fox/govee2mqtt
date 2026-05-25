@@ -1,4 +1,5 @@
 use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
+use crate::http::http_response_body;
 use crate::opt_env_var;
 use crate::temperature::{
     TemperatureConstraints, TemperatureScale, TemperatureUnits, TemperatureValue,
@@ -6,12 +7,17 @@ use crate::temperature::{
 use crate::undoc_api::GoveeUndocumentedApi;
 use anyhow::{Context, anyhow};
 use reqwest::Method;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
-use thiserror::Error;
+
+// The capability type model (DeviceCapability, DeviceParameters, DeviceType, ...)
+// lives in crate::model; the shared HTTP helpers in crate::http. Re-export the
+// pieces callers reach for via `platform_api::` so existing import paths keep
+// working.
+pub use crate::http::{HttpRequestFailed, json_body};
+pub use crate::model::*;
 
 // This file implements the Govee Platform API V1 as described at:
 // <https://developer.govee.com/reference/get-you-devices>
@@ -777,306 +783,6 @@ impl HttpDeviceInfo {
     }
 }
 
-/// Helper to generate boilerplate around govee enum string types
-macro_rules! enum_string {
-    {pub enum $name:ident {
-     $($var:ident = $label:literal),* $(,)?
-     }
-    } => {
-
-#[derive(Debug, Clone, PartialEq, Eq, strum_macros::Display, strum_macros::EnumString)]
-pub enum $name {
-    $(
-        #[strum(serialize = $label)]
-        $var,
-    )*
-        Other(String),
-}
-
-impl Default for $name {
-    fn default() -> Self {
-        Self::Other("NONE".to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for $name {
-    fn deserialize<D>(d: D) -> Result<Self, <D as Deserializer<'de>>::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(d)?;
-
-        if let Ok(t) = s.parse::<Self>() {
-            Ok(t)
-        } else {
-            Ok(Self::Other(s))
-        }
-    }
-}
-
-impl Serialize for $name {
-    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Other(s) => s.serialize(serializer),
-            _ => self.to_string().serialize(serializer),
-        }
-    }
-}
-
-    }
-}
-
-enum_string! {
-pub enum DeviceType {
-    Light = "devices.types.light",
-    AirPurifier = "devices.types.air_purifier",
-    Thermometer = "devices.types.thermometer",
-    Socket = "devices.types.socket",
-    Sensor = "devices.types.sensor",
-    Heater = "devices.types.heater",
-    Humidifier = "devices.types.humidifier",
-    Dehumidifier = "devices.types.dehumidifier",
-    IceMaker = "devices.types.ice_maker",
-    AromaDiffuser = "devices.types.aroma_diffuser",
-    Fan = "devices.types.fan",
-    Kettle = "devices.types.kettle",
-}
-}
-
-enum_string! {
-pub enum DeviceCapabilityKind {
-    OnOff = "devices.capabilities.on_off",
-    Toggle = "devices.capabilities.toggle",
-    Range = "devices.capabilities.range",
-    Mode = "devices.capabilities.mode",
-    ColorSetting = "devices.capabilities.color_setting",
-    SegmentColorSetting = "devices.capabilities.segment_color_setting",
-    MusicSetting = "devices.capabilities.music_setting",
-    DynamicScene = "devices.capabilities.dynamic_scene",
-    WorkMode = "devices.capabilities.work_mode",
-    DynamicSetting = "devices.capabilities.dynamic_setting",
-    TemperatureSetting = "devices.capabilities.temperature_setting",
-    Online = "devices.capabilities.online",
-    Property = "devices.capabilities.property",
-    Event = "devices.capabilities.event",
-}
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct DeviceCapability {
-    #[serde(rename = "type")]
-    pub kind: DeviceCapabilityKind,
-    pub instance: String,
-    pub parameters: Option<DeviceParameters>,
-    #[serde(rename = "alarmType")]
-    pub alarm_type: Option<u32>,
-    #[serde(rename = "eventState")]
-    pub event_state: Option<JsonValue>,
-}
-
-impl DeviceCapability {
-    pub fn enum_parameter_by_name(&self, name: &str) -> Option<u32> {
-        self.parameters
-            .as_ref()
-            .and_then(|p| p.enum_parameter_by_name(name))
-    }
-
-    pub fn struct_field_by_name(&self, name: &str) -> Option<&StructField> {
-        match &self.parameters {
-            Some(DeviceParameters::Struct { fields }) => {
-                fields.iter().find(|f| f.field_name == name)
-            }
-            _ => None,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(tag = "dataType")]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub enum DeviceParameters {
-    #[serde(rename = "ENUM")]
-    Enum { options: Vec<EnumOption> },
-    #[serde(rename = "INTEGER")]
-    Integer {
-        unit: Option<String>,
-        range: IntegerRange,
-    },
-    #[serde(rename = "STRUCT")]
-    Struct { fields: Vec<StructField> },
-    #[serde(rename = "Array")]
-    Array {
-        size: Option<ArraySize>,
-        #[serde(rename = "elementRange")]
-        element_range: Option<ElementRange>,
-        #[serde(rename = "elementType")]
-        element_type: Option<String>,
-        #[serde(default)]
-        options: Vec<ArrayOption>,
-    },
-}
-
-impl DeviceParameters {
-    pub fn enum_parameter_by_name(&self, name: &str) -> Option<u32> {
-        match self {
-            DeviceParameters::Enum { options } => options
-                .iter()
-                .find(|e| e.name == name && e.value.is_i64())
-                .map(|e| e.value.as_i64().expect("i64") as u32),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-// No deny_unknown_fields here, because we embed via flatten
-pub struct StructField {
-    #[serde(rename = "fieldName")]
-    pub field_name: String,
-
-    #[serde(flatten)]
-    pub field_type: DeviceParameters,
-
-    #[serde(rename = "defaultValue")]
-    pub default_value: Option<JsonValue>,
-
-    #[serde(default)]
-    pub required: bool,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct ElementRange {
-    pub min: u32,
-    pub max: u32,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct ArraySize {
-    pub min: u32,
-    pub max: u32,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct IntegerRange {
-    pub min: u32,
-    pub max: u32,
-    pub precision: u32,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct EnumOption {
-    pub name: String,
-    #[serde(default)]
-    pub value: JsonValue,
-    #[serde(flatten)]
-    pub extras: HashMap<String, JsonValue>,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct ArrayOption {
-    pub value: u32,
-}
-
-pub fn from_json<T: serde::de::DeserializeOwned, S: AsRef<[u8]>>(text: S) -> anyhow::Result<T> {
-    let text = text.as_ref();
-    serde_json_path_to_error::from_slice(text).map_err(|err| {
-        anyhow::anyhow!(
-            "{} {err}. Input: {}",
-            std::any::type_name::<T>(),
-            String::from_utf8_lossy(text)
-        )
-    })
-}
-
-#[derive(Deserialize, Debug)]
-struct EmbeddedRequestStatus {
-    #[serde(alias = "msg")]
-    message: String,
-    #[serde(alias = "code")]
-    status: u16,
-}
-
-#[derive(Error, Debug)]
-#[error("Failed with status {status} {}: {content}", .status.canonical_reason().unwrap_or(""))]
-pub struct HttpRequestFailed {
-    status: reqwest::StatusCode,
-    content: String,
-}
-
-pub async fn json_body<T: serde::de::DeserializeOwned>(
-    response: reqwest::Response,
-) -> anyhow::Result<T> {
-    let url = response.url().clone();
-    let data = response
-        .bytes()
-        .await
-        .with_context(|| format!("read {url} response body"))?;
-
-    if let Ok(status) = from_json::<EmbeddedRequestStatus, _>(&data)
-        && status.status != reqwest::StatusCode::OK.as_u16()
-    {
-        if let Ok(code) = reqwest::StatusCode::from_u16(status.status) {
-            return Err(HttpRequestFailed {
-                status: code,
-                content: format!(
-                    "Request to {url} failed with code {code} {message}. Full response: {}",
-                    String::from_utf8_lossy(&data),
-                    message = status.message
-                ),
-            })
-            .with_context(|| format!("parsing {url} response"));
-        }
-
-        anyhow::bail!(
-            "Request to {url} failed with status={status} {message}. Full response was: {}",
-            String::from_utf8_lossy(&data),
-            status = status.status,
-            message = status.message,
-        );
-    }
-
-    from_json(&data).with_context(|| format!("parsing {url} response"))
-}
-
-pub async fn http_response_body<R: serde::de::DeserializeOwned>(
-    response: reqwest::Response,
-) -> anyhow::Result<R> {
-    let url = response.url().clone();
-
-    let status = response.status();
-    if !status.is_success() {
-        let body_bytes = response.bytes().await.with_context(|| {
-            format!(
-                "request {url} status {}: {}, and failed to read response body",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("")
-            )
-        })?;
-
-        anyhow::bail!(
-            "request {url} status {}: {}. Response body: {}",
-            status.as_u16(),
-            status.canonical_reason().unwrap_or(""),
-            String::from_utf8_lossy(&body_bytes)
-        );
-    }
-    json_body(response).await.with_context(|| {
-        format!(
-            "request {url} status {}: {}",
-            status.as_u16(),
-            status.canonical_reason().unwrap_or("")
-        )
-    })
-}
-
 impl GoveeApiClient {
     async fn get_request_with_json_response<T: reqwest::IntoUrl, R: serde::de::DeserializeOwned>(
         &self,
@@ -1160,6 +866,7 @@ pub fn parse_temperature_constraints(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::http::from_json;
 
     const SCENE_LIST: &str = include_str!("../test-data/scenes.json");
 
@@ -1196,17 +903,5 @@ mod test {
     fn list_devices() {
         let resp: GetDevicesResponse = from_json(LIST_DEVICES_EXAMPLE).expect("parse");
         assert!(!resp.data.is_empty());
-    }
-
-    #[test]
-    fn enum_repr() {
-        assert_eq!(
-            serde_json::to_string(&DeviceType::Light).unwrap(),
-            "\"devices.types.light\""
-        );
-        assert_eq!(
-            serde_json::to_string(&DeviceType::Other("something".to_string())).unwrap(),
-            "\"something\""
-        );
     }
 }

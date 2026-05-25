@@ -1,3 +1,4 @@
+pub mod control;
 pub mod coordinator;
 pub mod device;
 pub mod hass;

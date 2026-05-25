@@ -258,7 +258,8 @@ impl WorkMode {
 #[cfg(test)]
 mod test {
     use super::*;
-    use govee_api::platform_api::{DeviceCapabilityKind, StructField, from_json};
+    use govee_api::http::from_json;
+    use govee_api::platform_api::{DeviceCapabilityKind, StructField};
     use serde_json::json;
     use std::collections::HashMap;
 

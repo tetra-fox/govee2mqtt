@@ -1,10 +1,10 @@
 use crate::hass_mqtt::topic::Topics;
+use crate::service::control::controller_for;
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
 use crate::service::hass::{HassClient, topic_safe_id};
 use crate::service::iot::IotClient;
 use anyhow::Context;
-use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
 use govee_api::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::{
     DeviceCapability, DeviceType, GoveeApiClient, sort_and_dedup_scenes,
@@ -316,13 +316,103 @@ impl State {
         device: &Device,
         on: bool,
     ) -> anyhow::Result<()> {
-        if self
-            .try_humidifier_set_nightlight(device, |p| p.on = on)
-            .await?
-        {
-            return Ok(());
-        }
+        controller_for(device)
+            .light_power_on(self, device, on)
+            .await
+    }
 
+    pub async fn device_power_on(
+        self: &Arc<Self>,
+        device: &Device,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        controller_for(device).power_on(self, device, on).await
+    }
+
+    pub async fn device_set_brightness(
+        self: &Arc<Self>,
+        device: &Device,
+        percent: u8,
+    ) -> anyhow::Result<()> {
+        controller_for(device)
+            .set_brightness(self, device, percent)
+            .await
+    }
+
+    pub async fn device_set_color_temperature(
+        self: &Arc<Self>,
+        device: &Device,
+        kelvin: u32,
+    ) -> anyhow::Result<()> {
+        controller_for(device)
+            .set_color_temperature(self, device, kelvin)
+            .await
+    }
+
+    pub async fn device_set_color_rgb(
+        self: &Arc<Self>,
+        device: &Device,
+        r: u8,
+        g: u8,
+        b: u8,
+    ) -> anyhow::Result<()> {
+        controller_for(device)
+            .set_color_rgb(self, device, r, g, b)
+            .await
+    }
+
+    pub async fn humidifier_set_parameter(
+        self: &Arc<Self>,
+        device: &Device,
+        work_mode: i64,
+        value: i64,
+    ) -> anyhow::Result<()> {
+        crate::service::control::humidifier_set_parameter(self, device, work_mode, value).await
+    }
+
+    /// Switch a single outlet of a multi-outlet socket (eg: H5082).
+    /// <https://github.com/wez/govee2mqtt/issues/65>
+    pub async fn device_set_socket_outlet(
+        self: &Arc<Self>,
+        device: &Device,
+        index: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        self.socket_turn(device, index, on).await
+    }
+
+    /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the
+    /// zero-based outlet index, or 15 for all outlets. Transport selection
+    /// (REST relay for shared devices, direct MQTT for owned ones) is handled
+    /// by [`IotClient::set_socket_power`].
+    pub(crate) async fn socket_turn(
+        &self,
+        device: &Device,
+        outlet: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        let info = device.undoc_device_info.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("{device} has no undoc metadata; cannot control socket")
+        })?;
+        let iot = self
+            .get_iot_client()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
+
+        log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
+        iot.set_socket_power(&info.entry, outlet, on).await
+    }
+
+    // The generic transport cascade for each control verb: LAN, then IoT, then
+    // platform API, taking the first available. Device types with bespoke
+    // control (humidifier, socket) override the relevant verb in
+    // [`crate::service::control`] and fall back here for the rest.
+
+    pub(crate) async fn light_power_on_generic(
+        self: &Arc<Self>,
+        device: &Device,
+        on: bool,
+    ) -> anyhow::Result<()> {
         let instance_name = device
             .get_light_power_toggle_instance_name()
             .ok_or_else(|| {
@@ -359,7 +449,7 @@ impl State {
         anyhow::bail!("Unable to control light power state for {device}");
     }
 
-    pub async fn device_power_on(
+    pub(crate) async fn power_on_generic(
         self: &Arc<Self>,
         device: &Device,
         on: bool,
@@ -369,14 +459,6 @@ impl State {
             lan_dev.send_turn(on).await?;
             self.poll_lan_api(lan_dev, |status| status.on == on).await?;
             return Ok(());
-        }
-
-        // Wi-Fi smart plugs/switches use a packed `turn` val (high nibble
-        // selects the outlet, low nibble its on/off bit) rather than a plain
-        // boolean. 15 addresses all outlets, the form the app uses for a
-        // single-outlet plug. Shared vs owned transport is handled downstream.
-        if device.device_type() == DeviceType::Socket {
-            return self.device_socket_turn(device, 15, on).await;
         }
 
         if device.iot_api_supported()
@@ -399,54 +481,11 @@ impl State {
         anyhow::bail!("Unable to control power state for {device}");
     }
 
-    /// Switch a single outlet of a multi-outlet socket (eg: H5082).
-    /// <https://github.com/wez/govee2mqtt/issues/65>
-    pub async fn device_set_socket_outlet(
-        self: &Arc<Self>,
-        device: &Device,
-        index: u8,
-        on: bool,
-    ) -> anyhow::Result<()> {
-        self.device_socket_turn(device, index, on).await
-    }
-
-    /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the
-    /// zero-based outlet index, or 15 for all outlets. Transport selection
-    /// (REST relay for shared devices, direct MQTT for owned ones) is handled
-    /// by [`IotClient::set_socket_power`].
-    async fn device_socket_turn(
-        &self,
-        device: &Device,
-        outlet: u8,
-        on: bool,
-    ) -> anyhow::Result<()> {
-        let info = device.undoc_device_info.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("{device} has no undoc metadata; cannot control socket")
-        })?;
-        let iot = self
-            .get_iot_client()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
-
-        log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
-        iot.set_socket_power(&info.entry, outlet, on).await
-    }
-
-    pub async fn device_set_brightness(
+    pub(crate) async fn set_brightness_generic(
         self: &Arc<Self>,
         device: &Device,
         percent: u8,
     ) -> anyhow::Result<()> {
-        if self
-            .try_humidifier_set_nightlight(device, |p| {
-                p.brightness = percent;
-                p.on = true;
-            })
-            .await?
-        {
-            return Ok(());
-        }
-
         if let Some(lan_dev) = &device.lan_device {
             log::info!("Using LAN API to set {device} brightness");
             lan_dev.send_brightness(percent).await?;
@@ -474,7 +513,7 @@ impl State {
         anyhow::bail!("Unable to control brightness for {device}");
     }
 
-    pub async fn device_set_color_temperature(
+    pub(crate) async fn set_color_temperature_generic(
         self: &Arc<Self>,
         device: &Device,
         kelvin: u32,
@@ -512,75 +551,13 @@ impl State {
         anyhow::bail!("Unable to control color temperature for {device}");
     }
 
-    // FIXME: this function probably shouldn't exist here
-    async fn try_humidifier_set_nightlight<F: Fn(&mut SetHumidifierNightlightParams)>(
-        self: &Arc<Self>,
-        device: &Device,
-        apply: F,
-    ) -> anyhow::Result<bool> {
-        let mut params: SetHumidifierNightlightParams =
-            device.nightlight_state.unwrap_or_default().into();
-        (apply)(&mut params);
-
-        if let Ok(command) = Base64HexBytes::encode_for_sku(&device.sku, &params)
-            && let Some(iot) = self.get_iot_client().await
-            && let Some(info) = &device.undoc_device_info
-        {
-            log::info!("Using IoT API to set {device} color");
-            iot.send_real(&info.entry, command.base64()).await?;
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    pub async fn humidifier_set_parameter(
-        self: &Arc<Self>,
-        device: &Device,
-        work_mode: i64,
-        value: i64,
-    ) -> anyhow::Result<()> {
-        if let Ok(command) = Base64HexBytes::encode_for_sku(
-            &device.sku,
-            &SetHumidifierMode {
-                mode: work_mode as u8,
-                param: value as u8,
-            },
-        ) && let Some(iot) = self.get_iot_client().await
-            && let Some(info) = &device.undoc_device_info
-        {
-            iot.send_real(&info.entry, command.base64()).await?;
-            return Ok(());
-        }
-
-        if let Some(client) = self.get_platform_client().await
-            && let Some(info) = &device.http_device_info
-        {
-            client.set_work_mode(info, work_mode, value).await?;
-            return Ok(());
-        }
-        anyhow::bail!("Unable to control humidifier parameter work_mode={work_mode} for {device}");
-    }
-
-    pub async fn device_set_color_rgb(
+    pub(crate) async fn set_color_rgb_generic(
         self: &Arc<Self>,
         device: &Device,
         r: u8,
         g: u8,
         b: u8,
     ) -> anyhow::Result<()> {
-        if self
-            .try_humidifier_set_nightlight(device, |p| {
-                p.r = r;
-                p.g = g;
-                p.b = b;
-                p.on = true;
-            })
-            .await?
-        {
-            return Ok(());
-        }
-
         if let Some(lan_dev) = &device.lan_device {
             let color = govee_api::lan_api::DeviceColor { r, g, b };
             log::info!("Using LAN API to set {device} color");

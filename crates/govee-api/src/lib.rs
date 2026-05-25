@@ -18,8 +18,9 @@ pub(crate) fn http_client() -> &'static reqwest::Client {
 
 pub mod ble;
 pub mod cache;
+pub mod http;
 pub mod lan_api;
-#[macro_use]
+pub mod model;
 pub mod platform_api;
 pub mod temperature;
 pub mod undoc_api;

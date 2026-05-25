@@ -1,6 +1,6 @@
 use crate::ble::{Base64HexBytes, SetSceneCode};
+use crate::http::from_json;
 use crate::opt_env_var;
-use crate::platform_api::from_json;
 use crate::undoc_api::GoveeUndocumentedApi;
 use anyhow::Context;
 use if_addrs::IfAddr;
