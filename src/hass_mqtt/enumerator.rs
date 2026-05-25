@@ -215,9 +215,7 @@ pub async fn enumerate_entities_for_device(
         entities.add(Humidifier::new(&topics, d, state).await?);
     }
 
-    if wants_scene_select
-        && let Some(select) = SceneModeSelect::new(&topics, d, &scenes)
-    {
+    if wants_scene_select && let Some(select) = SceneModeSelect::new(&topics, d, &scenes) {
         entities.add(select);
     }
 

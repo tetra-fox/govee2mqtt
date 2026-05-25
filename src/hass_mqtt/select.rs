@@ -198,11 +198,7 @@ pub struct CapabilityModeSelect {
 
 impl CapabilityModeSelect {
     /// Returns None if the capability isn't an enum we can present as options.
-    pub fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        cap: &DeviceCapability,
-    ) -> Option<Self> {
+    pub fn new(topics: &Topics, device: &ServiceDevice, cap: &DeviceCapability) -> Option<Self> {
         let options: Vec<String> = match &cap.parameters {
             Some(DeviceParameters::Enum { options }) => {
                 options.iter().map(|o| o.name.to_string()).collect()
