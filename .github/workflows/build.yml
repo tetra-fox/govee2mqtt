@@ -1,0 +1,217 @@
+name: Build images
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.*"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.*"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/build.yml"
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  DAEMON_IMAGE: govee2mqtt
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # only collapse rapid edge builds; never cancel a release
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      # raw facts build.rs composes the embedded version from: release_tag on a
+      # release (v stripped), build_sha otherwise.
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      build_sha: ${{ steps.meta.outputs.build_sha }}
+      image_tags: ${{ steps.meta.outputs.image_tags }}
+      # the add-on variant published this run: stable manifest + version/latest
+      # tags on a release, edge otherwise
+      addon_image: ${{ steps.meta.outputs.addon_image }}
+      addon_tags: ${{ steps.meta.outputs.addon_tags }}
+    steps:
+      - name: Compute version facts and image tags
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "release" ]; then
+            # release.yml tags are v<semver>; build.rs wants the bare semver
+            release_tag="${RELEASE_TAG#v}"
+            build_sha=""
+            image_tags="${release_tag}"$'\n'"latest"
+            addon_image="govee2mqtt-addon"
+            addon_tags="${release_tag}"$'\n'"latest"
+          else
+            release_tag=""
+            build_sha="${SHA}"
+            image_tags="edge"
+            addon_image="govee2mqtt-addon-edge"
+            addon_tags="edge"
+          fi
+          {
+            echo "release_tag=${release_tag}"
+            echo "build_sha=${build_sha}"
+            echo "addon_image=${addon_image}"
+            echo "image_tags<<EOF"
+            echo "${image_tags}"
+            echo "EOF"
+            echo "addon_tags<<EOF"
+            echo "${addon_tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  daemon-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.DAEMON_IMAGE }}
+
+  daemon:
+    needs: [init, daemon-matrix]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.daemon-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the daemon image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: standalone
+          platforms: linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
+          build-args: |
+            GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
+            GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
+          # one tag per per-arch image: the manifest job stitches them, so all
+          # per-arch images share the primary tag the manifest action looks up
+          tags: ${{ matrix.image }}:${{ github.event_name == 'release' && needs.init.outputs.release_tag || 'edge' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+  daemon-manifest:
+    needs: [init, daemon]
+    # PRs only validate the per-arch builds; nothing is pushed to stitch
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.DAEMON_IMAGE }}
+          image-tags: ${{ needs.init.outputs.image_tags }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  addon-matrix:
+    # the add-on is not built on PRs
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: init
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ needs.init.outputs.addon_image }}
+
+  addon:
+    # run after the daemon images so the shared builder layers are cached
+    needs: [init, addon-matrix, daemon]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.addon-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the add-on image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          target: addon
+          platforms: linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
+          # BUILD_ARCH selects the matching HA alpine base in the Dockerfile;
+          # build.rs composes the embedded version from the release tag or sha
+          build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
+            GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
+            GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
+          # the manifest action looks up per-arch images by the primary tag: the
+          # release version, or edge
+          tags: ${{ matrix.image }}:${{ needs.init.outputs.release_tag || 'edge' }}
+          push: true
+          cache-from: type=gha,scope=addon-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=addon-${{ matrix.arch }}
+
+  addon-manifest:
+    needs: [init, addon]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ needs.init.outputs.addon_image }}
+          image-tags: ${{ needs.init.outputs.addon_tags }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}

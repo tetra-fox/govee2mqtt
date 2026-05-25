@@ -2,7 +2,9 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # strict vN.N.N semver (optional -suffix); ignores stray/test tags like
+    # vdevtest or vfoo so they don't spin up a draft release
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: write

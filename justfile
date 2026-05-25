@@ -45,7 +45,7 @@ docker:
 
 # build the add-on image locally for a quick sanity check. BUILD_ARCH selects
 # the HA alpine base in the Dockerfile; this builds for the host arch only. CI
-# (addon.yml) does the real per-arch multi-arch build and publish
+# (build.yml) does the real per-arch multi-arch build and publish
 addon arch="amd64":
     docker build --target addon --build-arg BUILD_ARCH={{arch}} .
 

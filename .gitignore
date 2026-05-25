@@ -1,6 +1,7 @@
 target
 .*sw?
 .env
+core.*
 docker-target
 node_modules
 package.json
