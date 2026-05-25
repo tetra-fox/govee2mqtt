@@ -12,20 +12,20 @@ To deploy in docker:
 
 ```bash
 # Optional, but strongly recommended
-GOVEE_EMAIL=user@example.com
-GOVEE_PASSWORD=secret
+GOVEE2MQTT_EMAIL=user@example.com
+GOVEE2MQTT_PASSWORD=secret
 # Optional, but recommended
-GOVEE_API_KEY=UUID
+GOVEE2MQTT_API_KEY=UUID
 
-GOVEE_MQTT_HOST=mqtt
-GOVEE_MQTT_PORT=1883
+GOVEE2MQTT_MQTT_HOST=mqtt
+GOVEE2MQTT_MQTT_PORT=1883
 # Uncomment if your mqtt broker requires authentication
-#GOVEE_MQTT_USER=user
-#GOVEE_MQTT_PASSWORD=password
+#GOVEE2MQTT_MQTT_USER=user
+#GOVEE2MQTT_MQTT_PASSWORD=password
 
 # Specify the temperature scale to use, either C for Celsius
 # or F for Fahrenheit
-GOVEE_TEMPERATURE_SCALE=C
+GOVEE2MQTT_TEMPERATURE_SCALE=C
 
 # Always use colorized output
 RUST_LOG_STYLE=always

@@ -41,13 +41,13 @@ pub fn ms_timestamp() -> String {
 pub struct UndocApiArguments {
     /// The email address you registered with Govee.
     /// If not passed here, it will be read from
-    /// the GOVEE_EMAIL environment variable.
+    /// the GOVEE2MQTT_EMAIL environment variable.
     #[arg(long, global = true)]
     pub govee_email: Option<String>,
 
     /// The password for your Govee account.
     /// If not passed here, it will be read from
-    /// the GOVEE_PASSWORD environment variable.
+    /// the GOVEE2MQTT_PASSWORD environment variable.
     #[arg(long, global = true)]
     pub govee_password: Option<String>,
 
@@ -66,7 +66,7 @@ impl UndocApiArguments {
     pub fn opt_email(&self) -> anyhow::Result<Option<String>> {
         match &self.govee_email {
             Some(key) => Ok(Some(key.to_string())),
-            None => opt_env_var("GOVEE_EMAIL"),
+            None => opt_env_var("GOVEE2MQTT_EMAIL"),
         }
     }
 
@@ -74,7 +74,7 @@ impl UndocApiArguments {
         self.opt_email()?.ok_or_else(|| {
             anyhow::anyhow!(
                 "Please specify the govee account email either via the \
-                --govee-email parameter or by setting $GOVEE_EMAIL"
+                --govee-email parameter or by setting $GOVEE2MQTT_EMAIL"
             )
         })
     }
@@ -82,7 +82,7 @@ impl UndocApiArguments {
     pub fn opt_password(&self) -> anyhow::Result<Option<String>> {
         match &self.govee_password {
             Some(key) => Ok(Some(key.to_string())),
-            None => opt_env_var("GOVEE_PASSWORD"),
+            None => opt_env_var("GOVEE2MQTT_PASSWORD"),
         }
     }
 
@@ -90,7 +90,7 @@ impl UndocApiArguments {
         self.opt_password()?.ok_or_else(|| {
             anyhow::anyhow!(
                 "Please specify the govee account password either via the \
-                --govee-password parameter or by setting $GOVEE_PASSWORD"
+                --govee-password parameter or by setting $GOVEE2MQTT_PASSWORD"
             )
         })
     }

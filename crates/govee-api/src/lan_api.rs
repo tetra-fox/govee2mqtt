@@ -29,29 +29,29 @@ const MULTICAST: IpAddr = IpAddr::V4(Ipv4Addr::new(239, 255, 255, 250));
 #[derive(clap::Parser, Debug)]
 pub struct LanDiscoArguments {
     /// Prevent the use of the default multicast broadcast address.
-    /// You may also set GOVEE_LAN_NO_MULTICAST=true via the environment.
+    /// You may also set GOVEE2MQTT_LAN_NO_MULTICAST=true via the environment.
     #[arg(long, global = true)]
     pub no_multicast: bool,
 
     /// Enumerate all interfaces, and for each one that has
     /// a broadcast address, broadcast to it
-    /// You may also set GOVEE_LAN_BROADCAST_ALL=true via the environment.
+    /// You may also set GOVEE2MQTT_LAN_BROADCAST_ALL=true via the environment.
     #[arg(long, global = true)]
     pub broadcast_all: bool,
 
     /// Broadcast to the global broadcast address 255.255.255.255
-    /// You may also set GOVEE_LAN_BROADCAST_GLOBAL=true via the environment.
+    /// You may also set GOVEE2MQTT_LAN_BROADCAST_GLOBAL=true via the environment.
     #[arg(long, global = true)]
     pub global_broadcast: bool,
 
     /// Addresses to scan. May be broadcast addresses or individual
     /// IP addresses. Can be specified multiple times.
-    /// You may also set GOVEE_LAN_SCAN=10.0.0.1,10.0.0.2 via the environment.
+    /// You may also set GOVEE2MQTT_LAN_SCAN=10.0.0.1,10.0.0.2 via the environment.
     #[arg(long, global = true)]
     pub scan: Vec<String>,
 
     /// How long to wait for discovery to complete, in seconds
-    /// You may also set GOVEE_LAN_DISCO_TIMEOUT via the environment.
+    /// You may also set GOVEE2MQTT_LAN_DISCO_TIMEOUT via the environment.
     #[arg(long, default_value_t = 3, global = true)]
     disco_timeout: u64,
 }
@@ -84,19 +84,19 @@ impl LanDiscoArguments {
             global_broadcast: self.global_broadcast,
         };
 
-        if let Some(v) = opt_env_var::<String>("GOVEE_LAN_NO_MULTICAST")? {
+        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_NO_MULTICAST")? {
             options.enable_multicast = !truthy(&v)?;
         }
 
-        if let Some(v) = opt_env_var::<String>("GOVEE_LAN_BROADCAST_ALL")? {
+        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_BROADCAST_ALL")? {
             options.broadcast_all_interfaces = truthy(&v)?;
         }
 
-        if let Some(v) = opt_env_var::<String>("GOVEE_LAN_BROADCAST_GLOBAL")? {
+        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_BROADCAST_GLOBAL")? {
             options.global_broadcast = truthy(&v)?;
         }
 
-        if let Some(v) = opt_env_var::<String>("GOVEE_LAN_SCAN")? {
+        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_SCAN")? {
             for addr in v.split(',') {
                 scan_names.push(addr.trim().to_string());
             }
@@ -127,7 +127,7 @@ impl LanDiscoArguments {
     }
 
     pub fn disco_timeout(&self) -> anyhow::Result<u64> {
-        if let Some(v) = opt_env_var("GOVEE_LAN_DISCO_TIMEOUT")? {
+        if let Some(v) = opt_env_var("GOVEE2MQTT_LAN_DISCO_TIMEOUT")? {
             Ok(v)
         } else {
             Ok(self.disco_timeout)

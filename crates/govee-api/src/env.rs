@@ -7,7 +7,7 @@ where
     <T as FromStr>::Err: std::fmt::Display,
 {
     // Take care: should_log_sensitive_data can recursively call us
-    // with name="GOVEE_LOG_SENSITIVE_DATA".  We only need to
+    // with name="GOVEE2MQTT_LOG_SENSITIVE_DATA".  We only need to
     // redact values if they are sensitive, and at the time of writing
     // only variables with PASSWORD in their name match this criteria
     let log_sensitive_data = !name.contains("PASSWORD") || should_log_sensitive_data();

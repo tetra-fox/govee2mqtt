@@ -20,7 +20,7 @@ use serde_json::Value as JsonValue;
 pub struct Redacted<T: std::fmt::Debug>(T);
 
 pub fn should_log_sensitive_data() -> bool {
-    if let Ok(Some(v)) = opt_env_var::<String>("GOVEE_LOG_SENSITIVE_DATA") {
+    if let Ok(Some(v)) = opt_env_var::<String>("GOVEE2MQTT_LOG_SENSITIVE_DATA") {
         truthy(&v).unwrap_or(false)
     } else {
         false

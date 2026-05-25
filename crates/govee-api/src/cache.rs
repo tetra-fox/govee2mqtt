@@ -14,7 +14,7 @@ pub static CACHE: Lazy<ArcSwap<Cache>> =
     Lazy::new(|| open_cache().expect("failed to initialize cache").into());
 
 fn cache_file_name() -> PathBuf {
-    let cache_dir = std::env::var("GOVEE_CACHE_DIR")
+    let cache_dir = std::env::var("GOVEE2MQTT_CACHE_DIR")
         .ok()
         .map(PathBuf::from)
         .or_else(dirs_next::cache_dir)

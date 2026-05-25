@@ -7,10 +7,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # build.rs embeds this as the version string; use the tag we're releasing
-  GOVEE_CI_TAG: ${{ github.ref_name }}
-
 jobs:
   build:
     strategy:
@@ -38,7 +34,7 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       # musl linker for the static target; cmake/perl/pkg-config (needed by
-      # mosquitto-rs vendored-openssl and rusqlite bundled) ship on the runner
+      # aws-lc-sys and rusqlite bundled) ship on the runner
       - name: Install musl tools
         run: |
           sudo apt-get update
@@ -48,7 +44,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} --bin govee2mqtt
+        # build.rs embeds the version; strip the leading v from the v* tag so it
+        # is the bare semver (v1.2.3 -> 1.2.3)
+        env:
+          GOVEE2MQTT_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          export GOVEE2MQTT_RELEASE_TAG="${GOVEE2MQTT_RELEASE_TAG#v}"
+          cargo build --release --target ${{ matrix.target }} --bin govee2mqtt
 
       - name: Rename binary
         run: mv "target/${{ matrix.target }}/release/govee2mqtt" "${{ matrix.artifact }}"

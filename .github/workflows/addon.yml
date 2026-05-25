@@ -15,29 +15,47 @@ permissions:
 
 jobs:
   init:
-    # only on a successful release or main-push build, not PR builds
-    if: ${{ github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'release' || github.event.workflow_run.event == 'push') }}
+    # only on a successful release, main-push, or manual dispatch of the daemon
+    # build, not PR builds
+    if: ${{ github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'release' || github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       image_name: ${{ steps.sel.outputs.image_name }}
-      tag: ${{ steps.sel.outputs.tag }}
+      image_tags: ${{ steps.sel.outputs.image_tags }}
+      release_tag: ${{ steps.sel.outputs.release_tag }}
+      build_sha: ${{ steps.sel.outputs.build_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      # release publishes the stable add-on manifest, a main push publishes edge
+      # a release publishes the stable add-on manifest tagged with the version
+      # (read from addon/config.yaml, which mirrors the Cargo.toml version) plus
+      # latest; anything else publishes the edge add-on
       - name: Select add-on variant
         id: sel
         env:
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           if [ "$TRIGGER_EVENT" = "release" ]; then
-            echo "image_name=govee2mqtt-addon" >> "$GITHUB_OUTPUT"
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
+            version=$(grep -m1 '^version:' addon/config.yaml | sed -E 's/^version:[[:space:]]*"?([^"]*)"?/\1/')
+            {
+              echo "image_name=govee2mqtt-addon"
+              echo "image_tags<<EOF"
+              echo "${version}"
+              echo "latest"
+              echo "EOF"
+              echo "release_tag=${version}"
+              echo "build_sha="
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "image_name=govee2mqtt-addon-edge" >> "$GITHUB_OUTPUT"
-            echo "tag=edge" >> "$GITHUB_OUTPUT"
+            {
+              echo "image_name=govee2mqtt-addon-edge"
+              echo "image_tags=edge"
+              echo "release_tag="
+              echo "build_sha=${SHA}"
+            } >> "$GITHUB_OUTPUT"
           fi
       - name: Build matrix
         id: matrix
@@ -73,12 +91,15 @@ jobs:
           file: Dockerfile
           target: addon
           platforms: linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
-          # BUILD_ARCH selects the matching HA debian base in the Dockerfile;
-          # GOVEE_CI_TAG is the version string build.rs embeds
+          # BUILD_ARCH selects the matching HA alpine base in the Dockerfile;
+          # build.rs composes the embedded version from the release tag or sha
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
-            GOVEE_CI_TAG=${{ github.event.workflow_run.head_sha }}
-          tags: ${{ matrix.image }}:${{ needs.init.outputs.tag }}
+            GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
+            GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
+          # the manifest action looks up per-arch images by the primary tag: the
+          # release version, or edge
+          tags: ${{ matrix.image }}:${{ needs.init.outputs.release_tag || 'edge' }}
           push: true
           cache-from: type=gha,scope=addon-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=addon-${{ matrix.arch }}
@@ -95,5 +116,5 @@ jobs:
         with:
           architectures: ${{ env.ARCHITECTURES }}
           image-name: ${{ needs.init.outputs.image_name }}
-          image-tags: ${{ needs.init.outputs.tag }}
+          image-tags: ${{ needs.init.outputs.image_tags }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}

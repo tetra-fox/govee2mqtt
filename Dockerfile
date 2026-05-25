@@ -19,10 +19,13 @@ RUN apk add --no-cache musl-dev cmake make perl clang clang-dev nasm pkgconf
 RUN adduser -D -H -u 1000 -s /sbin/nologin govee \
     && install -d -o govee -g govee /seed-data
 
-# build.rs embeds this as the version string. the docker.yml workflow builds
-# from a git context with no .git to fall back to, so the version is passed in.
-ARG GOVEE_CI_TAG=""
-ENV GOVEE_CI_TAG=${GOVEE_CI_TAG}
+# build.rs composes the embedded version from these. the build context has no
+# .git, so CI passes the release tag (release builds) or the commit sha (edge
+# builds); both default empty so a plain local build reports the Cargo version.
+ARG GOVEE2MQTT_RELEASE_TAG=""
+ARG GOVEE2MQTT_BUILD_SHA=""
+ENV GOVEE2MQTT_RELEASE_TAG=${GOVEE2MQTT_RELEASE_TAG}
+ENV GOVEE2MQTT_BUILD_SHA=${GOVEE2MQTT_BUILD_SHA}
 
 # map the HA build arch to the rust musl target
 ARG BUILD_ARCH

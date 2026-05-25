@@ -37,7 +37,7 @@ fn endpoint(url: &str) -> String {
 #[derive(clap::Parser, Debug)]
 pub struct GoveeApiArguments {
     /// The Govee API Key. If not passed here, it will be read from
-    /// the GOVEE_API_KEY environment variable.
+    /// the GOVEE2MQTT_API_KEY environment variable.
     #[arg(long, global = true)]
     pub api_key: Option<String>,
 }
@@ -46,7 +46,7 @@ impl GoveeApiArguments {
     pub fn opt_api_key(&self) -> anyhow::Result<Option<String>> {
         match &self.api_key {
             Some(key) => Ok(Some(key.to_string())),
-            None => opt_env_var("GOVEE_API_KEY"),
+            None => opt_env_var("GOVEE2MQTT_API_KEY"),
         }
     }
 
@@ -54,7 +54,7 @@ impl GoveeApiArguments {
         self.opt_api_key()?.ok_or_else(|| {
             anyhow::anyhow!(
                 "Please specify the api key either via the \
-                --api-key parameter or by setting $GOVEE_API_KEY"
+                --api-key parameter or by setting $GOVEE2MQTT_API_KEY"
             )
         })
     }

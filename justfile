@@ -19,7 +19,24 @@ fmt-check:
     cargo fmt --all --check
 
 # pre-merge sweep, mirrors .github/workflows/ci.yml. ordered cheapest-fail-first
-ci: fmt-check check clippy test
+ci: fmt-check check clippy test version-check
+
+# the root package version in Cargo.toml is the single source of truth for the
+# version. read it for the recipes below
+cargo-version := `cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='govee2mqtt'))"`
+
+# sync the add-on configs to the Cargo.toml version: write it into
+# addon/config.yaml and regenerate addon-edge. run after bumping the version in
+# Cargo.toml
+version-sync: addon-edge-config
+    sed -i 's/^version:.*/version: "{{cargo-version}}"/' addon/config.yaml
+
+# fail if the add-on configs have drifted from the Cargo.toml version. runs the
+# same generation as version-sync, then checks the tree is unchanged, so the
+# generation logic lives in one place. mirrors the check in ci.yml
+version-check: version-sync
+    git diff --exit-code -- addon/config.yaml addon-edge/config.yaml \
+      || { echo "add-on configs are stale; run 'just version-sync' and commit" >&2; exit 1; }
 
 # build the standalone daemon image (the distroless target the docker-compose
 # deployment uses)
@@ -27,7 +44,7 @@ docker:
     docker build --target standalone .
 
 # build the add-on image locally for a quick sanity check. BUILD_ARCH selects
-# the HA debian base in the Dockerfile; this builds for the host arch only. CI
+# the HA alpine base in the Dockerfile; this builds for the host arch only. CI
 # (addon.yml) does the real per-arch multi-arch build and publish
 addon arch="amd64":
     docker build --target addon --build-arg BUILD_ARCH={{arch}} .

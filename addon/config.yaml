@@ -1,6 +1,6 @@
 name: Govee2MQTT
 image: ghcr.io/tetra-fox/govee2mqtt-addon
-version: "2026.03.25-ab9deb66"
+version: "0.1.0"
 slug: govee2mqtt
 description: Control Govee Devices
 url: https://github.com/tetra-fox/govee2mqtt

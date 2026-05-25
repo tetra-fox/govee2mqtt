@@ -26,29 +26,29 @@ const HASS_REGISTER_DELAY: tokio::time::Duration = tokio::time::Duration::from_s
 #[derive(clap::Parser, Debug)]
 pub struct HassArguments {
     /// The mqtt broker hostname or address.
-    /// You may also set this via the GOVEE_MQTT_HOST environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_HOST environment variable.
     #[arg(long, global = true)]
     mqtt_host: Option<String>,
 
     /// The mqtt broker port
-    /// You may also set this via the GOVEE_MQTT_PORT environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_PORT environment variable.
     /// If unspecified, uses 1883
     #[arg(long, global = true)]
     mqtt_port: Option<u16>,
 
     /// The username to authenticate against the broker
-    /// You may also set this via the GOVEE_MQTT_USER environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_USER environment variable.
     #[arg(long, global = true)]
     mqtt_username: Option<String>,
 
     /// The password to authenticate against the broker
-    /// You may also set this via the GOVEE_MQTT_PASSWORD environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_PASSWORD environment variable.
     #[arg(long, global = true)]
     mqtt_password: Option<String>,
 
     /// The base topic, used as the prefix for all MQTT topics and as the
     /// prefix for the Home Assistant entity unique ids.
-    /// You may also set this via the GOVEE_MQTT_BASE_TOPIC environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_BASE_TOPIC environment variable.
     #[arg(long, global = true)]
     mqtt_base_topic: Option<String>,
 
@@ -58,7 +58,7 @@ pub struct HassArguments {
     /// The temperature scale to use when showing temperature values as
     /// entities in home assistant. Can be either "C" or "F" for Celsius
     /// or Fahrenheit respectively.
-    /// You may also set this vai the GOVEE_TEMPERATURE_SCALE environment
+    /// You may also set this vai the GOVEE2MQTT_TEMPERATURE_SCALE environment
     /// variable.
     #[arg(long, global = true)]
     temperature_scale: Option<String>,
@@ -68,7 +68,7 @@ impl HassArguments {
     pub fn opt_mqtt_host(&self) -> anyhow::Result<Option<String>> {
         match &self.mqtt_host {
             Some(h) => Ok(Some(h.to_string())),
-            None => opt_env_var("GOVEE_MQTT_HOST"),
+            None => opt_env_var("GOVEE2MQTT_MQTT_HOST"),
         }
     }
 
@@ -76,7 +76,7 @@ impl HassArguments {
         self.opt_mqtt_host()?.ok_or_else(|| {
             anyhow::anyhow!(
                 "Please specify the mqtt broker either via the \
-                --mqtt-host parameter or by setting $GOVEE_MQTT_HOST"
+                --mqtt-host parameter or by setting $GOVEE2MQTT_MQTT_HOST"
             )
         })
     }
@@ -84,31 +84,29 @@ impl HassArguments {
     pub fn mqtt_port(&self) -> anyhow::Result<u16> {
         match self.mqtt_port {
             Some(p) => Ok(p),
-            None => Ok(opt_env_var("GOVEE_MQTT_PORT")?.unwrap_or(1883)),
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_PORT")?.unwrap_or(1883)),
         }
     }
 
     pub fn mqtt_username(&self) -> anyhow::Result<Option<String>> {
         match self.mqtt_username.clone() {
             Some(u) => Ok(Some(u)),
-            None => opt_env_var("GOVEE_MQTT_USER"),
+            None => opt_env_var("GOVEE2MQTT_MQTT_USER"),
         }
     }
 
     pub fn mqtt_password(&self) -> anyhow::Result<Option<String>> {
         match self.mqtt_password.clone() {
             Some(u) => Ok(Some(u)),
-            None => opt_env_var("GOVEE_MQTT_PASSWORD"),
+            None => opt_env_var("GOVEE2MQTT_MQTT_PASSWORD"),
         }
     }
 
     pub fn base_topic(&self) -> anyhow::Result<String> {
         match &self.mqtt_base_topic {
             Some(t) => Ok(t.to_string()),
-            None => {
-                Ok(opt_env_var("GOVEE_MQTT_BASE_TOPIC")?
-                    .unwrap_or_else(|| "govee2mqtt".to_string()))
-            }
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_BASE_TOPIC")?
+                .unwrap_or_else(|| "govee2mqtt".to_string())),
         }
     }
 
@@ -116,7 +114,8 @@ impl HassArguments {
         match &self.temperature_scale {
             Some(s) => Ok(s.parse()?),
             None => {
-                Ok(opt_env_var("GOVEE_TEMPERATURE_SCALE")?.unwrap_or(TemperatureScale::Celsius))
+                Ok(opt_env_var("GOVEE2MQTT_TEMPERATURE_SCALE")?
+                    .unwrap_or(TemperatureScale::Celsius))
             }
         }
     }
