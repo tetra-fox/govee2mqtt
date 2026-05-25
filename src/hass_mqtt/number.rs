@@ -71,7 +71,7 @@ impl WorkModeNumber {
         let command_topic = topics.number_command(device, mode_name, &mode_num);
         let state_topic = topics.number_state(device, mode_name);
 
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(
             device,
             &format!("{mode}-number", mode = topic_safe_string(mode_name)),
@@ -80,7 +80,8 @@ impl WorkModeNumber {
         Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic,
+                    availability,
+                    availability_mode,
                     name: Some(label),
                     device_class: None,
                     origin: Origin::default(),
@@ -192,11 +193,13 @@ impl CapabilityNumber {
             device,
             &format!("{inst}-number", inst = topic_safe_string(&cap.instance)),
         );
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
         Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(camel_case_to_space_separated(&cap.instance)),
                     device_class: None,
                     origin: Origin::default(),
@@ -296,10 +299,12 @@ pub struct MusicSensitivityNumber {
 
 impl MusicSensitivityNumber {
     pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some("Music Sensitivity".to_string()),
                     device_class: None,
                     origin: Origin::default(),

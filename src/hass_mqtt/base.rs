@@ -8,7 +8,13 @@ const URL: &str = "https://github.com/tetra-fox/govee2mqtt";
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct EntityConfig {
-    pub availability_topic: String,
+    /// The availability topics an entity tracks. Bridge-owned entities list
+    /// only the global topic; real-device entities additionally list their
+    /// per-device topic, with `availability_mode: all` so the entity is online
+    /// only when both the bridge and the device are.
+    pub availability: Vec<Availability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability_mode: Option<&'static str>,
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_class: Option<&'static str>,
@@ -19,6 +25,45 @@ pub struct EntityConfig {
     pub entity_category: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct Availability {
+    pub topic: String,
+}
+
+impl EntityConfig {
+    /// Availability for an entity owned by the bridge device itself (Version,
+    /// Purge Caches, scenes): just the global topic, which the broker last-will
+    /// flips offline when the bridge dies.
+    pub fn global_availability(topics: &Topics) -> (Vec<Availability>, Option<&'static str>) {
+        (
+            vec![Availability {
+                topic: topics.availability(),
+            }],
+            None,
+        )
+    }
+
+    /// Availability for a real-device entity: the global bridge topic plus the
+    /// device's own topic, both required (`availability_mode: all`). The device
+    /// topic is driven by Device::availability_status.
+    pub fn device_availability(
+        topics: &Topics,
+        device: &ServiceDevice,
+    ) -> (Vec<Availability>, Option<&'static str>) {
+        (
+            vec![
+                Availability {
+                    topic: topics.availability(),
+                },
+                Availability {
+                    topic: topics.device_availability(device),
+                },
+            ],
+            Some("all"),
+        )
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]

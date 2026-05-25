@@ -11,6 +11,38 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+/// How reachable a device is, based on how recently it last reported state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reachability {
+    /// Reported state recently; reachable.
+    Available,
+    /// Had state once, but it has gone stale past the poll threshold.
+    Missing,
+    /// Never reported any state.
+    Unknown,
+}
+
+impl Reachability {
+    /// The text shown by the Status diagnostic sensor.
+    pub fn as_status_text(self) -> &'static str {
+        match self {
+            Self::Available => "Available",
+            Self::Missing => "Missing",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    /// The MQTT availability payload. Only a device we have heard from recently
+    /// is online; stale or never-seen devices are offline so home assistant
+    /// greys out their entities.
+    pub fn as_mqtt_payload(self) -> &'static str {
+        match self {
+            Self::Available => "online",
+            Self::Missing | Self::Unknown => "offline",
+        }
+    }
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Device {
     pub sku: String,
@@ -416,6 +448,24 @@ impl Device {
         candidates.sort_by_key(|state| state.updated);
 
         candidates.pop()
+    }
+
+    /// Reachability of the device, derived from how recently any transport
+    /// (LAN, IoT, platform) last reported state. This is the single source of
+    /// truth for both the Status diagnostic sensor text and the per-device MQTT
+    /// availability topic, so the two always agree.
+    pub fn availability_status(&self) -> Reachability {
+        match self.device_state() {
+            None => Reachability::Unknown,
+            Some(state) => {
+                let threshold = *POLL_INTERVAL + chrono::Duration::seconds(30);
+                if Utc::now() - state.updated > threshold {
+                    Reachability::Missing
+                } else {
+                    Reachability::Available
+                }
+            }
+        }
     }
 
     /// Records the active scene name

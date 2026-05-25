@@ -42,13 +42,14 @@ impl WorkModeSelect {
     ) -> Self {
         let command_topic = topics.set_work_mode(device);
         let state_topic = topics.notify_work_mode(device);
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(device, "workMode");
 
         Self {
             select: SelectConfig {
                 base: EntityConfig {
-                    availability_topic,
+                    availability,
+                    availability_mode,
                     name: Some("Mode".to_string()),
                     device_class: None,
                     origin: Origin::default(),
@@ -124,13 +125,14 @@ impl SceneModeSelect {
 
         let command_topic = topics.set_mode_scene(device);
         let state_topic = topics.notify_mode_scene(device);
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(device, "mode-scene");
 
         Ok(Some(Self {
             select: SelectConfig {
                 base: EntityConfig {
-                    availability_topic,
+                    availability,
+                    availability_mode,
                     name: Some("Mode/Scene".to_string()),
                     device_class: None,
                     origin: Origin::default(),
@@ -222,11 +224,13 @@ impl CapabilityModeSelect {
         let command_topic = topics.capability_mode_command(device, &cap.instance);
         let state_topic = topics.capability_mode_state(device, &cap.instance);
         let unique_id = topics.entity_id(device, &format!("{}-mode", cap.instance));
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
         Some(Self {
             select: SelectConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(camel_case_to_space_separated(&cap.instance)),
                     device_class: None,
                     origin: Origin::default(),

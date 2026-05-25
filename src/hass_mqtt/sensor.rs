@@ -1,4 +1,3 @@
-use crate::commands::serve::POLL_INTERVAL;
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
 use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
@@ -8,7 +7,6 @@ use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
 use crate::service::quirks::HumidityUnits;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
-use chrono::Utc;
 use govee_api::platform_api::DeviceCapability;
 use govee_api::temperature::{DEVICE_CLASS_TEMPERATURE, TemperatureUnits, TemperatureValue};
 use serde::Serialize;
@@ -74,11 +72,13 @@ impl GlobalFixedDiagnostic {
     ) -> Self {
         let name = name.into();
         let unique_id = format!("global-{}", topic_safe_string(&name));
+        let (availability, availability_mode) = EntityConfig::global_availability(topics);
 
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
@@ -143,10 +143,13 @@ impl CapabilitySensor {
             _ => instance.instance.to_string(),
         };
 
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
+
         Ok(Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
@@ -255,10 +258,13 @@ impl CapabilityEventSensor {
             inst = topic_safe_string(&instance.instance)
         );
 
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
+
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(crate::service::hass::camel_case_to_space_separated(
                         &instance.instance,
                     )),
@@ -339,11 +345,13 @@ pub struct DeviceStatusDiagnostic {
 impl DeviceStatusDiagnostic {
     pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
         let unique_id = topics.status_sensor_id(device);
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some("Status".to_string()),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
@@ -383,20 +391,7 @@ impl EntityInstance for DeviceStatusDiagnostic {
         let platform_state = &device.http_device_state;
         let device_state = device.device_state();
 
-        let now = Utc::now();
-
-        let threshold = *POLL_INTERVAL + chrono::Duration::seconds(30);
-
-        let summary = match &device_state {
-            Some(state) => {
-                if now - state.updated > threshold {
-                    "Missing".to_string()
-                } else {
-                    "Available".to_string()
-                }
-            }
-            None => "Unknown".to_string(),
-        };
+        let summary = device.availability_status().as_status_text().to_string();
 
         let attributes = json!({
             "iot": iot_state,

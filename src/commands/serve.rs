@@ -101,6 +101,23 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
             }
         }
 
+        // Republish per-device availability after the poll cycle. A successful
+        // poll already publishes it via the state-change path, but a device
+        // that stops responding never fires a state change, so without this
+        // sweep its availability would stay "online" after its state went
+        // stale. Publishing the current status for every device here flips
+        // those to offline.
+        if let Some(hass) = state.get_hass_client().await {
+            for d in state.devices().await {
+                if !d.is_controllable() {
+                    continue;
+                }
+                if let Err(err) = hass.publish_device_availability(&d, &state).await {
+                    log::error!("while publishing availability for {d}: {err:#}");
+                }
+            }
+        }
+
         sleep(Duration::from_secs(30)).await;
     }
 }

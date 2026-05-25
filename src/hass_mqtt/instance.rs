@@ -19,15 +19,17 @@ pub async fn publish_entity_config<T: Serialize>(
     base: &EntityConfig,
     config: &T,
 ) -> anyhow::Result<()> {
-    // TODO: remember all published topics for future GC
-
     let disco = state.get_hass_disco_prefix().await;
     let topic = format!(
         "{disco}/{integration}/{unique_id}/config",
         unique_id = base.unique_id
     );
 
-    client.publish_obj(topic, config).await
+    // Record the topic so the next registration can remove this entity if it
+    // is no longer produced (see HassClient::register_with_hass).
+    state.record_published_config_topic(topic.clone()).await;
+
+    client.publish_config(topic, config).await
 }
 
 #[derive(Default, Clone)]

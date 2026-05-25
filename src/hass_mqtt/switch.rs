@@ -26,12 +26,13 @@ impl SwitchConfig {
     ) -> anyhow::Result<Self> {
         let command_topic = topics.switch_command(device, &instance.instance);
         let state_topic = topics.switch_instance_state(device, &instance.instance);
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(device, &instance.instance);
 
         Ok(Self {
             base: EntityConfig {
-                availability_topic,
+                availability,
+                availability_mode,
                 name: Some(camel_case_to_space_separated(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
@@ -96,9 +97,11 @@ impl OutletSwitch {
         state: &StateHandle,
         outlet_index: u8,
     ) -> Self {
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some(
                     device
                         .socket_outlet_name(outlet_index)
@@ -159,9 +162,11 @@ pub struct PowerSwitch {
 
 impl PowerSwitch {
     pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some("Power".to_string()),
                 device_class: Some("outlet"),
                 origin: Origin::default(),
@@ -219,9 +224,11 @@ pub struct MusicAutoColorSwitch {
 
 impl MusicAutoColorSwitch {
     pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some("Music Auto Color".to_string()),
                 device_class: None,
                 origin: Origin::default(),

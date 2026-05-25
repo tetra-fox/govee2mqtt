@@ -42,11 +42,13 @@ impl TargetTemperatureEntity {
         let name = "Target Temperature".to_string();
         let command_topic = topics.set_temperature(device, &instance.instance, &units.to_string());
         let state_topic = topics.advise_set_temperature(device);
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
         Ok(Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: Some(name),
                     entity_category: None,
                     origin: Origin::default(),

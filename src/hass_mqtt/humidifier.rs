@@ -103,10 +103,13 @@ impl Humidifier {
             max_humidity.replace(*max as u8);
         }
 
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
+
         Ok(Self {
             humidifier: HumidifierConfig {
                 base: EntityConfig {
-                    availability_topic: topics.availability(),
+                    availability,
+                    availability_mode,
                     name: if matches!(
                         device.device_type(),
                         DeviceType::Humidifier | DeviceType::Dehumidifier

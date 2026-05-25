@@ -26,12 +26,13 @@ impl ButtonConfig {
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
         let command_topic = topics.switch_command(device, &instance.instance);
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(device, &instance.instance);
 
         Ok(Self {
             base: EntityConfig {
-                availability_topic,
+                availability,
+                availability_mode,
                 name: Some(camel_case_to_space_separated(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
@@ -52,9 +53,11 @@ impl ButtonConfig {
     ) -> Self {
         let name = name.into();
         let unique_id = format!("global-{}", topic_safe_string(&name));
+        let (availability, availability_mode) = EntityConfig::global_availability(topics);
         Self {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
@@ -84,9 +87,11 @@ impl ButtonConfig {
             ),
         );
         let command_topic = topics.number_command(device, mode_name, mode_num);
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         Self {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
@@ -103,9 +108,11 @@ impl ButtonConfig {
     pub fn request_platform_data_for_device(topics: &Topics, device: &ServiceDevice) -> Self {
         let unique_id = topics.entity_id(device, "request-platform-data");
         let command_topic = topics.request_platform_data(device);
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         Self {
             base: EntityConfig {
-                availability_topic: topics.availability(),
+                availability,
+                availability_mode,
                 name: Some("Request Platform API State".to_string()),
                 entity_category: Some("diagnostic".to_string()),
                 origin: Origin::default(),

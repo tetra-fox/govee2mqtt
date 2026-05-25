@@ -147,7 +147,7 @@ impl DeviceLight {
             Some(seg) => topics.light_segment_state(device, seg),
             None => topics.light_state(device),
         };
-        let availability_topic = topics.availability();
+        let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.light_unique_id(device, segment);
 
         let effect_list = if segment.is_some() {
@@ -199,7 +199,8 @@ impl DeviceLight {
         Ok(Self {
             light: LightConfig {
                 base: EntityConfig {
-                    availability_topic,
+                    availability,
+                    availability_mode,
                     name,
                     device_class: None,
                     origin: Origin::default(),

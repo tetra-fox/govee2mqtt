@@ -131,11 +131,29 @@ pub struct HassClient {
 
 impl HassClient {
     async fn register_with_hass(&self, state: &StateHandle) -> anyhow::Result<()> {
+        // Serialize registration passes so the snapshot/diff of published
+        // config topics below stays consistent if two passes overlap.
+        let _guard = state.lock_registration().await;
+
+        // Snapshot what we published last time and reset the recorded set; the
+        // pass below repopulates it via record_published_config_topic.
+        let previous_topics = state.take_published_config_topics().await;
+
         let entities = enumerate_all_entites(state).await?;
 
         // Register the configs
         log::trace!("register_with_hass: register entities");
         entities.publish_config(state, self).await?;
+
+        // Remove any entity we published before but no longer produce. Empty
+        // retained payload is home assistant's signal to drop the entity.
+        let current_topics = state.current_published_config_topics().await;
+        for topic in previous_topics.difference(&current_topics) {
+            log::info!("Removing stale discovery config {topic}");
+            self.remove_config(topic)
+                .await
+                .with_context(|| format!("remove stale config {topic}"))?;
+        }
 
         // Allow hass extra time to register the entities before
         // we mark them as available
@@ -146,11 +164,26 @@ impl HassClient {
         );
         tokio::time::sleep(delay).await;
 
-        // Mark as available
+        // Mark the bridge available. Retained so a late-subscribing hass (eg:
+        // one that restarts after us) sees us as online without waiting for the
+        // next registration.
         log::trace!("register_with_hass: mark as online");
-        self.publish(state.topics().await.availability(), "online")
+        self.publish_availability(state.topics().await.availability(), "online")
             .await
             .context("online -> availability_topic")?;
+
+        // Seed each device's per-device availability so entities resolve to a
+        // concrete state right after discovery instead of waiting for the first
+        // state change or the periodic sweep. Only controllable devices get
+        // entities (see enumerate_entities_for_device), so only they have an
+        // availability topic worth publishing.
+        for device in state.devices().await {
+            if device.is_controllable() {
+                self.publish_device_availability(&device, state)
+                    .await
+                    .with_context(|| format!("device availability for {device}"))?;
+            }
+        }
 
         // report initial state
         log::trace!("register_with_hass: reporting state");
@@ -186,16 +219,79 @@ impl HassClient {
         Ok(())
     }
 
+    /// Publish a discovery config retained, so home assistant re-reads it from
+    /// the broker on restart without waiting for us to notice and re-register.
+    /// QoS 1 because losing a config silently drops the entity.
+    pub async fn publish_config<T: AsRef<str> + std::fmt::Display, P: Serialize>(
+        &self,
+        topic: T,
+        payload: P,
+    ) -> anyhow::Result<()> {
+        let payload = serde_json::to_string(&payload)?;
+        log::trace!("{topic} -> {payload}");
+        self.client
+            .publish(topic.as_ref(), QoS::AtLeastOnce, true, payload)
+            .await?;
+        Ok(())
+    }
+
+    /// Publish an availability state retained, matching the retained last-will
+    /// so the broker keeps the latest online/offline status for subscribers
+    /// that connect after we do.
+    pub async fn publish_availability<
+        T: AsRef<str> + std::fmt::Display,
+        P: AsRef<[u8]> + std::fmt::Display,
+    >(
+        &self,
+        topic: T,
+        payload: P,
+    ) -> anyhow::Result<()> {
+        log::trace!("{topic} -> {payload}");
+        self.client
+            .publish(topic.as_ref(), QoS::AtLeastOnce, true, payload.as_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// Publish an empty retained payload to a discovery config topic, which is
+    /// home assistant's signal to remove the entity. Used to clean up entities
+    /// that a registration pass no longer produces.
+    pub async fn remove_config<T: AsRef<str> + std::fmt::Display>(
+        &self,
+        topic: T,
+    ) -> anyhow::Result<()> {
+        log::trace!("{topic} -> <remove>");
+        self.client
+            .publish(topic.as_ref(), QoS::AtLeastOnce, true, "")
+            .await?;
+        Ok(())
+    }
+
     pub async fn advise_hass_of_light_state(
         &self,
         device: &ServiceDevice,
         state: &StateHandle,
     ) -> anyhow::Result<()> {
+        self.publish_device_availability(device, state).await?;
+
         let mut entities = EntityList::new();
         enumerate_entities_for_device(device, state, &mut entities).await?;
         entities.notify_state(self).await?;
 
         Ok(())
+    }
+
+    /// Publish a device's reachability to its per-device availability topic.
+    /// Retained so a late-subscribing hass sees the last known status, matching
+    /// the global availability and last-will.
+    pub async fn publish_device_availability(
+        &self,
+        device: &ServiceDevice,
+        state: &StateHandle,
+    ) -> anyhow::Result<()> {
+        let topic = state.topics().await.device_availability(device);
+        let payload = device.availability_status().as_mqtt_payload();
+        self.publish_availability(topic, payload).await
     }
 }
 
@@ -737,11 +833,14 @@ pub async fn spawn_hass_integration(
         mqtt_port,
     );
     mqtt_options.set_keep_alive(Duration::from_secs(120));
+    // Retained so a hass that subscribes after we have already disconnected
+    // still sees us as offline, matching the retained "online" we publish on
+    // registration.
     mqtt_options.set_last_will(LastWill::new(
         topics.availability(),
         "offline",
-        QoS::AtMostOnce,
-        false,
+        QoS::AtLeastOnce,
+        true,
     ));
 
     match (mqtt_username, mqtt_password) {

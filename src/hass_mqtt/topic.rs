@@ -25,6 +25,12 @@ impl Topics {
         format!("{}/availability", self.base)
     }
 
+    /// Per-device availability, gated alongside the global topic so a device
+    /// the bridge hasn't heard from recently goes unavailable on its own.
+    pub fn device_availability(&self, device: &ServiceDevice) -> String {
+        format!("{}/{}/availability", self.base, topic_safe_id(device))
+    }
+
     pub fn oneclick(&self) -> String {
         format!("{}/oneclick", self.base)
     }

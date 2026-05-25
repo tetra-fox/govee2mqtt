@@ -58,31 +58,35 @@ async fn enumerate_global_entities(
 async fn enumerate_scenes(state: &StateHandle, entities: &mut EntityList) -> anyhow::Result<()> {
     if let Some(undoc) = state.get_undoc_client().await {
         let topics = state.topics().await;
-        match undoc.parse_one_clicks().await {
-            Ok(items) => {
-                for oc in items {
-                    let unique_id = topics.one_click_id(
-                        Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple(),
-                    );
-                    entities.add(SceneConfig {
-                        base: EntityConfig {
-                            availability_topic: topics.availability(),
-                            name: Some(oc.name.to_string()),
-                            entity_category: None,
-                            origin: Origin::default(),
-                            device: Device::this_service(&topics),
-                            unique_id: unique_id.clone(),
-                            device_class: None,
-                            icon: None,
-                        },
-                        command_topic: topics.oneclick(),
-                        payload_on: oc.name,
-                    });
-                }
-            }
-            Err(err) => {
-                log::warn!("Failed to parse one-clicks: {err:#}");
-            }
+        // Propagate a failure rather than producing zero scenes: this is a live
+        // network call on every registration, and registration now removes any
+        // discovery config it no longer produces. Swallowing the error here
+        // would make a transient undoc API failure delete every scene entity
+        // from home assistant, then re-add them on the next success. Failing
+        // the whole pass instead leaves the retained configs untouched.
+        let items = undoc
+            .parse_one_clicks()
+            .await
+            .context("parse_one_clicks")?;
+        for oc in items {
+            let unique_id =
+                topics.one_click_id(Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple());
+            let (availability, availability_mode) = EntityConfig::global_availability(&topics);
+            entities.add(SceneConfig {
+                base: EntityConfig {
+                    availability,
+                    availability_mode,
+                    name: Some(oc.name.to_string()),
+                    entity_category: None,
+                    origin: Origin::default(),
+                    device: Device::this_service(&topics),
+                    unique_id: unique_id.clone(),
+                    device_class: None,
+                    icon: None,
+                },
+                command_topic: topics.oneclick(),
+                payload_on: oc.name,
+            });
         }
     }
 
