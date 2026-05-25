@@ -4,6 +4,9 @@ default:
 check:
     cargo check --all
 
+clippy:
+    cargo clippy --all --all-targets -- -D warnings
+
 test:
     cargo test --all
 
@@ -11,6 +14,12 @@ test:
 # the dev shell points RUSTFMT at it
 fmt:
     cargo fmt --all
+
+fmt-check:
+    cargo fmt --all --check
+
+# pre-merge sweep, mirrors .github/workflows/ci.yml. ordered cheapest-fail-first
+ci: fmt-check check clippy test
 
 docker:
     docker build .

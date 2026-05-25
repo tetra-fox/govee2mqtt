@@ -246,6 +246,12 @@ impl PacketManager {
     }
 }
 
+impl Default for PacketManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait DecodePacketParam {
     fn decode_param<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<&'a [u8]>;
     fn encode_param(&self, target: &mut Vec<u8>);

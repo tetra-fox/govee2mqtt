@@ -406,7 +406,7 @@ impl Device {
             candidates.push(state);
         }
 
-        candidates.sort_by(|a, b| a.updated.cmp(&b.updated));
+        candidates.sort_by_key(|state| state.updated);
 
         candidates.pop()
     }

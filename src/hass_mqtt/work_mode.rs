@@ -241,12 +241,10 @@ impl WorkMode {
         let min = *values.iter().min()?;
         let max = *values.iter().max()?;
 
-        let mut expect = min;
-        for item in values {
-            if item != expect {
+        for (offset, item) in values.into_iter().enumerate() {
+            if item != min + offset as i64 {
                 return None;
             }
-            expect += 1;
         }
 
         Some(min..max + 1)
@@ -348,7 +346,7 @@ mod test {
     #[test]
     fn test_work_mode_parser2() {
         let cap: DeviceCapability =
-            from_json(&include_str!("../../test-data/work-mode-issue-81.json")).unwrap();
+            from_json(include_str!("../../test-data/work-mode-issue-81.json")).unwrap();
 
         let wm = ParsedWorkMode::with_capability(&cap).unwrap();
 
@@ -486,7 +484,7 @@ mod test {
     #[test]
     fn test_work_mode_parser4() {
         let cap: DeviceCapability =
-            from_json(&include_str!("../../test-data/work-mode-issue-93.json")).unwrap();
+            from_json(include_str!("../../test-data/work-mode-issue-93.json")).unwrap();
 
         let wm = ParsedWorkMode::with_capability(&cap).unwrap();
 
@@ -564,7 +562,7 @@ mod test {
     #[test]
     fn test_issue100() {
         let cap: DeviceCapability =
-            from_json(&include_str!("../../test-data/work-mode-issue-100.json")).unwrap();
+            from_json(include_str!("../../test-data/work-mode-issue-100.json")).unwrap();
 
         let mut wm = ParsedWorkMode::with_capability(&cap).unwrap();
         wm.adjust_for_device("H7173");
