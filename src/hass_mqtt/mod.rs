@@ -7,6 +7,7 @@ pub mod humidifier;
 pub mod instance;
 pub mod light;
 pub mod number;
+pub mod router;
 pub mod scene;
 pub mod select;
 pub mod sensor;

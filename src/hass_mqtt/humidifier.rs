@@ -1,5 +1,6 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
@@ -9,7 +10,6 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use govee_api::ble::TargetHumidity;
 use govee_api::platform_api::{DeviceParameters, DeviceType, IntegerRange};
-use mosquitto_rs::router::{Params, Payload, State};
 use serde::Serialize;
 use serde_json::json;
 

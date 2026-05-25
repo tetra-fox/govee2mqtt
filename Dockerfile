@@ -3,9 +3,10 @@
 ####################################################################################################
 FROM rust:1-bookworm AS builder
 
-# mosquitto-rs builds OpenSSL from source (vendored-openssl) via cmake + perl,
-# and rusqlite (bundled) compiles sqlite. the rust base image already carries
-# perl and pkg-config; cmake is the only one missing. matches flake.nix.
+# the openssl crate (vendored) builds OpenSSL from source via perl, and
+# rumqttc's rustls provider (aws-lc-sys) and rusqlite (bundled) build C with
+# cmake. the rust base image already carries perl and pkg-config; cmake is the
+# only one missing. matches flake.nix.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cmake \
     && rm -rf /var/lib/apt/lists/*

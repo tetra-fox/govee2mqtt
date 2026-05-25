@@ -82,14 +82,6 @@ pub struct UndocApiArguments {
     #[arg(long, global = true)]
     pub govee_password: Option<String>,
 
-    /// Where to store the AWS IoT key file.
-    #[arg(long, global = true, default_value = "/dev/shm/govee.iot.key")]
-    pub govee_iot_key: PathBuf,
-
-    /// Where to store the AWS IoT certificate file.
-    #[arg(long, global = true, default_value = "/dev/shm/govee.iot.cert")]
-    pub govee_iot_cert: PathBuf,
-
     /// Where to find the trust CA certificate used to verify the AWS IoT
     /// endpoint. Defaults to the system CA bundle, which includes the Amazon
     /// root CA that the IoT endpoint chains to.

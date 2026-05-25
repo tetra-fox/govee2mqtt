@@ -35,17 +35,13 @@ data-encoding = "2.11.0"
 clap-num = "1.2.0"
 uuid = { version = "1.23.1", features = ["v4", "v5"] }
 uncased = "0.9.10"
-openssl = "0.10.80"
+openssl = { version = "0.10.80", features = ["vendored"] }
 p12 = "0.6.3"
 axum = "0.8.9"
 tower-http = { version = "0.6.11", features = ["fs"] }
-async-channel = "2.5.0"
 async-trait = "0.1.89"
-
-[dependencies.mosquitto-rs]
-version = "0.11.2"
-features = ["vendored-openssl"]
-#path = "../mosquitto-rs/mosquitto-rs"
+rumqttc = "0.25.1"
+thiserror = "2.0.18"
 
 [dev-dependencies]
 anyhow = "1"

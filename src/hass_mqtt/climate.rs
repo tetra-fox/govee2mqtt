@@ -1,6 +1,7 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::EntityInstance;
 use crate::hass_mqtt::number::NumberConfig;
+use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
@@ -9,7 +10,6 @@ use govee_api::platform_api::{DeviceCapability, parse_temperature_constraints};
 use govee_api::temperature::{
     DEVICE_CLASS_TEMPERATURE, TemperatureScale, TemperatureUnits, TemperatureValue,
 };
-use mosquitto_rs::router::{Params, Payload, State};
 use serde::Deserialize;
 use std::str::FromStr;
 

@@ -5,18 +5,17 @@ use crate::hass_mqtt::instance::EntityList;
 use crate::hass_mqtt::number::{
     mqtt_capability_number_command, mqtt_music_sensitivity_command, mqtt_number_command,
 };
+use crate::hass_mqtt::router::{Message, MqttRouter, Params, Payload, State};
 use crate::hass_mqtt::select::{mqtt_set_capability_mode, mqtt_set_mode_scene};
 use crate::hass_mqtt::switch::mqtt_music_auto_color_command;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::state::StateHandle;
 use anyhow::Context;
-use async_channel::Receiver;
 use govee_api::lan_api::DeviceColor;
 use govee_api::opt_env_var;
 use govee_api::platform_api::{DeviceType, from_json};
 use govee_api::temperature::TemperatureScale;
-use mosquitto_rs::router::{MqttRouter, Params, Payload, State};
-use mosquitto_rs::{Client, Event, QoS};
+use rumqttc::{AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,9 +44,6 @@ pub struct HassArguments {
     /// You may also set this via the GOVEE_MQTT_PASSWORD environment variable.
     #[arg(long, global = true)]
     mqtt_password: Option<String>,
-
-    #[arg(long, global = true)]
-    mqtt_bind_address: Option<String>,
 
     /// The base topic, used as the prefix for all MQTT topics and as the
     /// prefix for the Home Assistant entity unique ids.
@@ -129,7 +125,7 @@ impl HassArguments {
 
 #[derive(Clone)]
 pub struct HassClient {
-    client: Client,
+    client: AsyncClient,
 }
 
 impl HassClient {
@@ -171,7 +167,7 @@ impl HassClient {
     ) -> anyhow::Result<()> {
         log::trace!("{topic} -> {payload}");
         self.client
-            .publish(topic, payload, QoS::AtMostOnce, false)
+            .publish(topic.as_ref(), QoS::AtMostOnce, false, payload.as_ref())
             .await?;
         Ok(())
     }
@@ -184,7 +180,7 @@ impl HassClient {
         let payload = serde_json::to_string(&payload)?;
         log::trace!("{topic} -> {payload}");
         self.client
-            .publish(topic, payload, QoS::AtMostOnce, false)
+            .publish(topic.as_ref(), QoS::AtMostOnce, false, payload)
             .await?;
         Ok(())
     }
@@ -514,15 +510,11 @@ async fn mqtt_homeassitant_status(
 
 async fn run_mqtt_loop(
     state: StateHandle,
-    subscriber: Receiver<Event>,
-    client: Client,
+    mut eventloop: EventLoop,
+    client: AsyncClient,
 ) -> anyhow::Result<()> {
-    // Give LAN disco a chance to get current state before
-    // we register with hass
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
     async fn rebuild_router(
-        client: &Client,
+        client: &AsyncClient,
         state: &StateHandle,
     ) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
         let disco_prefix = state.get_hass_disco_prefix().await;
@@ -620,47 +612,69 @@ async fn run_mqtt_loop(
         Ok(Arc::new(router))
     }
 
-    let mut router = rebuild_router(&client, &state).await?;
-    let mut need_rebuild = false;
+    // The router is (re)built on each ConnAck. rumqttc uses a clean session, so
+    // the broker drops our subscriptions across a reconnect; rebuilding
+    // re-subscribes and re-registers the entities with home assistant.
+    let mut router: Option<Arc<MqttRouter<StateHandle>>> = None;
+    let mut first_connect = true;
 
-    while let Ok(event) = subscriber.recv().await {
+    loop {
+        let event = match eventloop.poll().await {
+            Ok(event) => event,
+            Err(rumqttc::ConnectionError::RequestsDone) => {
+                log::info!("MQTT request channel closed, loop terminating");
+                return Ok(());
+            }
+            Err(err) => {
+                // rumqttc reconnects on the next poll; the subscriptions are
+                // gone until then, so drop the router and rebuild on ConnAck.
+                log::warn!("MQTT disconnected: {err:#}");
+                router = None;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
         match event {
-            Event::Message(msg) => {
-                let router = router.clone();
+            Event::Incoming(Packet::ConnAck(_)) => {
+                log::info!("MQTT connected");
+                if first_connect {
+                    // Give LAN disco a chance to get current state before we
+                    // register with hass.
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    first_connect = false;
+                }
+                router = Some(rebuild_router(&client, &state).await?);
+            }
+            Event::Incoming(Packet::Publish(publish)) => {
+                let Some(router) = router.clone() else {
+                    log::warn!(
+                        "Received publish on {} before router was ready",
+                        publish.topic
+                    );
+                    continue;
+                };
+                let message = Message {
+                    topic: publish.topic,
+                    payload: publish.payload.to_vec(),
+                };
                 let state = state.clone();
                 tokio::spawn(async move {
-                    if let Err(err) = router.dispatch(msg.clone(), state.clone()).await {
-                        log::error!("While dispatching {msg:?}: {err:#}");
+                    let topic = message.topic.clone();
+                    if let Err(err) = router.dispatch(message, state).await {
+                        log::error!("While dispatching message on {topic}: {err:#}");
                     }
                 });
             }
-            Event::Disconnected(reason) => {
-                log::warn!("MQTT disconnected with reason={reason}");
-                need_rebuild = true;
-            }
-            Event::Connected(status) => {
-                log::info!("MQTT connected with status={status}");
-                if need_rebuild {
-                    router = rebuild_router(&client, &state).await?;
-                }
-            }
+            _ => {}
         }
     }
-
-    log::info!("subscriber.recv loop terminated");
-
-    Ok(())
 }
 
 pub async fn spawn_hass_integration(
     state: StateHandle,
     args: &HassArguments,
 ) -> anyhow::Result<()> {
-    let client = Client::with_id(
-        &format!("govee2mqtt/{}", uuid::Uuid::new_v4().simple()),
-        true,
-    )?;
-
     state.set_temperature_scale(args.temperature_scale()?).await;
 
     state.set_base_topic(args.base_topic()?).await;
@@ -671,45 +685,33 @@ pub async fn spawn_hass_integration(
     let mqtt_password = args.mqtt_password()?;
     let mqtt_port = args.mqtt_port()?;
 
-    client.set_last_will(topics.availability(), "offline", QoS::AtMostOnce, false)?;
+    let mut mqtt_options = MqttOptions::new(
+        format!("govee2mqtt/{}", uuid::Uuid::new_v4().simple()),
+        &mqtt_host,
+        mqtt_port,
+    );
+    mqtt_options.set_keep_alive(Duration::from_secs(120));
+    mqtt_options.set_last_will(LastWill::new(
+        topics.availability(),
+        "offline",
+        QoS::AtMostOnce,
+        false,
+    ));
 
-    if mqtt_username.is_some() != mqtt_password.is_some() {
-        log::error!(
-            "MQTT username and password either both need to be set, or both need to be unset"
-        );
-    }
-    client.set_username_and_password(mqtt_username.as_deref(), mqtt_password.as_deref())?;
-
-    let mut connected = false;
-    for _ in 0..30 {
-        log::info!("Attempting connection to mqtt broker {mqtt_host}:{mqtt_port}...");
-        match client
-            .connect(
-                &mqtt_host,
-                mqtt_port.into(),
-                Duration::from_secs(120),
-                args.mqtt_bind_address.as_deref(),
-            )
-            .await
-        {
-            Ok(status) => {
-                log::info!("Connected to mqtt broker {mqtt_host}:{mqtt_port}, status={status}");
-                connected = true;
-                break;
-            }
-            Err(err) => {
-                log::error!("Failed to connect to mqtt broker {mqtt_host}:{mqtt_port}: {err:#}");
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
+    match (mqtt_username, mqtt_password) {
+        (Some(user), Some(pass)) => {
+            mqtt_options.set_credentials(user, pass);
+        }
+        (None, None) => {}
+        _ => {
+            log::error!(
+                "MQTT username and password either both need to be set, or both need to be unset"
+            );
         }
     }
 
-    anyhow::ensure!(
-        connected,
-        "Failed to connect to mqtt broker after several attempts"
-    );
-
-    let subscriber = client.subscriber().expect("to own the subscriber");
+    log::info!("Connecting to mqtt broker {mqtt_host}:{mqtt_port}...");
+    let (client, eventloop) = AsyncClient::new(mqtt_options, 32);
 
     state
         .set_hass_client(HassClient {
@@ -721,7 +723,7 @@ pub async fn spawn_hass_integration(
     state.set_hass_disco_prefix(disco_prefix).await;
 
     tokio::spawn(async move {
-        let res = run_mqtt_loop(state, subscriber, client).await;
+        let res = run_mqtt_loop(state, eventloop, client).await;
         if let Err(err) = res {
             log::error!("run_mqtt_loop: {err:#}");
             log::error!("FATAL: hass integration will not function.");

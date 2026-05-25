@@ -1,22 +1,27 @@
 use crate::UndocApiArguments;
 use crate::service::state::StateHandle;
 use anyhow::Context;
-use async_channel::Receiver;
 use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
 use govee_api::lan_api::{DeviceColor, DeviceStatus};
 use govee_api::platform_api::from_json;
 use govee_api::undoc_api::{
     DeviceEntry, GoveeUndocumentedApi, LoginAccountResponse, ParsedOneClick, ms_timestamp,
 };
-use mosquitto_rs::{Event, QoS};
+use rumqttc::{
+    AsyncClient, Event, EventLoop, MqttOptions, Packet as MqttPacket, QoS, TlsConfiguration,
+    Transport,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value as JsonValue, json};
 use std::time::Duration;
-use tokio::time::timeout;
+
+/// Govee IoT state packets carry effect/scene blobs that can exceed rumqttc's
+/// 10 KiB default incoming packet limit, so raise the ceiling.
+const MAX_PACKET_SIZE: usize = 256 * 1024;
 
 #[derive(Clone)]
 pub struct IotClient {
-    client: mosquitto_rs::Client,
+    client: AsyncClient,
     /// The account topic (GA/...), included as `msg.accountTopic` on every
     /// message. The Govee app sends this on all writes (see AbsCmdWrite in the
     /// app); some devices ignore messages that omit it.
@@ -67,9 +72,9 @@ impl IotClient {
         self.client
             .publish(
                 device_topic,
-                serde_json::to_string(&json!({ "msg": msg }))?,
                 QoS::AtMostOnce,
                 false,
+                serde_json::to_string(&json!({ "msg": msg }))?,
             )
             .await
             .with_context(|| format!("IotClient::send_msg {cmd} for {}", device.device))?;
@@ -156,9 +161,9 @@ impl IotClient {
                 self.client
                     .publish(
                         entry.topic.as_str(),
-                        serde_json::to_string(command)?,
                         QoS::AtMostOnce,
                         false,
+                        serde_json::to_string(command)?,
                     )
                     .await
                     .context("sending OneClick")?;
@@ -184,50 +189,52 @@ pub async fn start_iot_client(
 
     let key_bytes = data_encoding::BASE64.decode(res.p12.as_bytes())?;
 
+    // The PFX from Govee holds the per-account client certificate and private
+    // key for mutual TLS to AWS IoT. rumqttc takes PEM bytes directly, so we
+    // convert in memory rather than writing the key to disk.
     log::trace!("parsing IoT PFX key");
     let container = p12::PFX::parse(&key_bytes).context("PFX::parse")?;
+    let mut key_pem = None;
     for key in container.key_bags(&res.p12_pass).context("key_bags")? {
         let priv_key = openssl::pkey::PKey::private_key_from_der(&key).context("from_der")?;
-        let pem = priv_key
-            .private_key_to_pem_pkcs8()
-            .context("to_pem_pkcs8")?;
-        std::fs::write(&args.govee_iot_key, &pem)?;
+        key_pem = Some(
+            priv_key
+                .private_key_to_pem_pkcs8()
+                .context("to_pem_pkcs8")?,
+        );
     }
+    let mut cert_pem = None;
     for cert in container.cert_bags(&res.p12_pass).context("cert_bags")? {
         let cert = openssl::x509::X509::from_der(&cert).context("x509 from der")?;
-        let pem = cert.to_pem().context("cert.to_pem")?;
-        std::fs::write(&args.govee_iot_cert, &pem)?;
+        cert_pem = Some(cert.to_pem().context("cert.to_pem")?);
     }
+    let key_pem = key_pem.context("PFX contained no private key")?;
+    let cert_pem = cert_pem.context("PFX contained no certificate")?;
 
-    let client = mosquitto_rs::Client::with_id(
-        &format!(
+    // Server verification uses the system CA bundle (the trust anchor that the
+    // AWS IoT endpoint cert chains to). rumqttc's Simple config reads it into a
+    // fresh root store; --amazon-root-ca points at the system bundle by default.
+    let ca_pem = std::fs::read(&args.amazon_root_ca)
+        .with_context(|| format!("reading CA bundle {}", args.amazon_root_ca.display()))?;
+
+    let mut mqtt_options = MqttOptions::new(
+        format!(
             "AP/{account_id}/{id}",
             account_id = *acct.account_id,
             id = uuid::Uuid::new_v4().simple()
         ),
-        true,
-    )
-    .context("new client")?;
-    client
-        .configure_tls(
-            Some(&args.amazon_root_ca),
-            None::<&std::path::Path>,
-            Some(&args.govee_iot_cert),
-            Some(&args.govee_iot_key),
-            None,
-        )
-        .context("configure_tls")?;
-    log::trace!("Connecting to IoT {} port 8883", res.endpoint);
-    let status = timeout(
-        Duration::from_secs(60),
-        client.connect(&res.endpoint, 8883, Duration::from_secs(120), None),
-    )
-    .await
-    .with_context(|| format!("timeout connecting to IoT {}:8883 in AWS", res.endpoint))?
-    .with_context(|| format!("failed to connect to IoT {}:8883 in AWS", res.endpoint))?;
-    log::info!("Connected to IoT: {}:8883 {status}", res.endpoint);
+        res.endpoint.clone(),
+        8883,
+    );
+    mqtt_options.set_keep_alive(Duration::from_secs(120));
+    mqtt_options.set_max_packet_size(MAX_PACKET_SIZE, MAX_PACKET_SIZE);
+    mqtt_options.set_transport(Transport::Tls(TlsConfiguration::Simple {
+        ca: ca_pem,
+        alpn: None,
+        client_auth: Some((cert_pem, key_pem)),
+    }));
 
-    let subscriptions = client.subscriber().expect("first and only");
+    let (client, eventloop) = AsyncClient::new(mqtt_options, 32);
 
     state
         .set_iot_client(IotClient {
@@ -237,12 +244,12 @@ pub async fn start_iot_client(
         })
         .await;
 
+    log::trace!("Connecting to IoT {} port 8883", res.endpoint);
     tokio::spawn(async move {
-        if let Err(err) = run_iot_subscriber(subscriptions, state, client, acct).await {
+        if let Err(err) = run_iot_subscriber(eventloop, state, client, acct).await {
             log::error!("IoT loop failed: {err:#}");
         }
         log::info!("IoT loop terminated");
-        Ok::<(), anyhow::Error>(())
     });
 
     Ok(())
@@ -314,14 +321,24 @@ impl Packet {
 }
 
 async fn run_iot_subscriber(
-    subscriptions: Receiver<Event>,
+    mut eventloop: EventLoop,
     state: StateHandle,
-    client: mosquitto_rs::Client,
+    client: AsyncClient,
     acct: LoginAccountResponse,
 ) -> anyhow::Result<()> {
-    while let Ok(event) = subscriptions.recv().await {
+    loop {
+        let event = match eventloop.poll().await {
+            Ok(event) => event,
+            Err(err) => {
+                // rumqttc reconnects on the next poll; log and keep going.
+                log::warn!("IoT disconnected: {err:#}");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
         match event {
-            Event::Message(msg) => {
+            Event::Incoming(MqttPacket::Publish(msg)) => {
                 let payload = String::from_utf8_lossy(&msg.payload);
                 log::trace!("{} -> {payload}", msg.topic);
 
@@ -426,14 +443,11 @@ async fn run_iot_subscriber(
                     }
                 }
             }
-            Event::Disconnected(reason) => {
-                log::warn!("IoT disconnected with reason {reason}");
-            }
-            Event::Connected(status) => {
-                log::info!("IoT (re)connected with status {status}");
+            Event::Incoming(MqttPacket::ConnAck(_)) => {
+                log::info!("IoT (re)connected");
 
                 client
-                    .subscribe(&acct.topic, mosquitto_rs::QoS::AtMostOnce)
+                    .subscribe(acct.topic.as_str(), QoS::AtMostOnce)
                     .await
                     .context("subscribe to account topic")?;
                 // This logic tries to subscribe to the same data that is
@@ -446,16 +460,16 @@ async fn run_iot_subscriber(
                             && let Ok(topic) = undoc.entry.device_topic()
                         {
                             client
-                                .subscribe(topic, mosquitto_rs::QoS::AtMostOnce)
+                                .subscribe(topic, QoS::AtMostOnce)
                                 .await
                                 .with_context(|| format!("subscribe to device topic {topic}"))?;
                         }
                     }
                 }
             }
+            _ => {}
         }
     }
-    Ok(())
 }
 
 /// The `turn` `val` byte for a Wi-Fi smart plug/switch, matching the Govee app's
