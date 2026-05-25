@@ -262,14 +262,15 @@ impl GoveeUndocumentedApi {
         Ok(value.into_inner())
     }
 
-    /// Send a control command to a device via Govee's REST relay
-    /// (`fx-device/iot-msgs`). The app uses this instead of publishing MQTT
-    /// directly: the command is wrapped in `iotMsg` and accompanied by the
-    /// account/device topics and the `gas` token, which authorizes control of
-    /// shared devices. Devices ignore direct MQTT publishes that lack this.
+    /// Send an IoT message to a device via Govee's REST relay
+    /// (`fx-device/iot-msgs`). The app uses this for SHARED devices instead of
+    /// publishing MQTT directly: the message is wrapped in `iotMsg` and
+    /// accompanied by the account/device topics and the `gas` token, which
+    /// authorizes control of a shared device. Devices ignore direct MQTT
+    /// publishes that lack this.
     ///
-    /// `inner_msg` is the `msg` object (eg `{"cmd":"turn","data":{"val":34}}`);
-    /// we add `cmdVersion`, `type`, `transaction`, and `accountTopic`.
+    /// `inner_msg` is the complete `msg` object (cmd, data, cmdVersion, type);
+    /// we add the `transaction` and `accountTopic`.
     pub async fn control_device(
         &self,
         device: &DeviceEntry,
@@ -280,8 +281,6 @@ impl GoveeUndocumentedApi {
         let token = account.token.to_string();
         let transaction = format!("v_{}000", ms_timestamp());
 
-        inner_msg.insert("cmdVersion".into(), json!(0));
-        inner_msg.insert("type".into(), json!(1));
         inner_msg.insert("transaction".into(), json!(transaction));
         inner_msg.insert("accountTopic".into(), json!(account_topic));
         let iot_msg = serde_json::to_string(&json!({ "msg": inner_msg }))?;
@@ -851,6 +850,13 @@ pub struct DeviceEntry {
 }
 
 impl DeviceEntry {
+    /// Whether this device is shared with the account rather than owned. Shared
+    /// devices must be controlled via the REST relay (carrying `gas`), not by
+    /// publishing MQTT directly. <https://github.com/wez/govee2mqtt/issues/76>
+    pub fn is_shared(&self) -> bool {
+        self.share == Some(1)
+    }
+
     pub fn device_topic(&self) -> anyhow::Result<&str> {
         self.device_ext
             .device_settings

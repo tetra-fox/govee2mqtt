@@ -5,9 +5,12 @@ use async_channel::Receiver;
 use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
 use govee_api::lan_api::{DeviceColor, DeviceStatus};
 use govee_api::platform_api::from_json;
-use govee_api::undoc_api::{ms_timestamp, DeviceEntry, LoginAccountResponse, ParsedOneClick};
+use govee_api::undoc_api::{
+    ms_timestamp, DeviceEntry, GoveeUndocumentedApi, LoginAccountResponse, ParsedOneClick,
+};
 use mosquitto_rs::{Event, QoS};
 use serde::Deserialize;
+use serde_json::{json, Map, Value as JsonValue};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -15,9 +18,12 @@ use tokio::time::timeout;
 pub struct IotClient {
     client: mosquitto_rs::Client,
     /// The account topic (GA/...), included as `msg.accountTopic` on every
-    /// command. The Govee app sends this on all writes (see AbsCmdWrite in the
-    /// app); some devices ignore commands that omit it.
+    /// message. The Govee app sends this on all writes (see AbsCmdWrite in the
+    /// app); some devices ignore messages that omit it.
     account_topic: String,
+    /// Used to relay messages for shared devices via the REST API; see
+    /// [`IotClient::send_msg`].
+    undoc: GoveeUndocumentedApi,
 }
 
 impl IotClient {
@@ -25,85 +31,85 @@ impl IotClient {
         device.device_ext.device_settings.topic.is_some()
     }
 
-    pub async fn request_status_update(&self, device: &DeviceEntry) -> anyhow::Result<()> {
-        let device_topic = device.device_topic()?;
+    /// Send an IoT message (cmd + optional data) to a device, choosing the
+    /// transport the Govee app uses for it: shared devices go through the REST
+    /// relay (which carries the `gas` authorization), owned devices publish
+    /// MQTT directly to the device topic. `cmd_type` is 0 for reads (status)
+    /// and 1 for writes (control).
+    async fn send_msg(
+        &self,
+        device: &DeviceEntry,
+        cmd: &str,
+        data: Option<JsonValue>,
+        cmd_type: u8,
+        cmd_version: u8,
+    ) -> anyhow::Result<()> {
+        let mut msg = Map::new();
+        msg.insert("cmd".into(), json!(cmd));
+        if let Some(data) = data {
+            msg.insert("data".into(), data);
+        }
+        msg.insert("cmdVersion".into(), json!(cmd_version));
+        msg.insert("type".into(), json!(cmd_type));
 
+        if device.is_shared() {
+            // The device ignores direct MQTT publishes from a guest account;
+            // relay through Govee's REST API, which carries the gas token.
+            return self.undoc.control_device(device, msg).await;
+        }
+
+        let device_topic = device.device_topic()?;
+        msg.insert(
+            "transaction".into(),
+            json!(format!("v_{}000", ms_timestamp())),
+        );
+        msg.insert("accountTopic".into(), json!(self.account_topic));
         self.client
             .publish(
                 device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "status",
-                        "cmdVersion": 2,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 0,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
+                serde_json::to_string(&json!({ "msg": msg }))?,
                 QoS::AtMostOnce,
                 false,
             )
-            .await?;
-
+            .await
+            .with_context(|| format!("IotClient::send_msg {cmd} for {}", device.device))?;
         Ok(())
+    }
+
+    pub async fn request_status_update(&self, device: &DeviceEntry) -> anyhow::Result<()> {
+        // cmdVersion 0 matches the Govee app (AbsCmd default) for status across
+        // the device fleet; only a few legacy SKUs override it.
+        self.send_msg(device, "status", None, 0, 0).await
     }
 
     pub async fn set_power_state(&self, device: &DeviceEntry, on: bool) -> anyhow::Result<()> {
         log::trace!("set_power_state for {} to {on}", device.device);
-        let val = if on { 1 } else { 0 };
-        self.publish_turn(device, val).await
+        self.send_msg(device, "turn", Some(json!({ "val": on as u8 })), 1, 0)
+            .await
     }
 
-    /// Publish a `turn` command with a raw `val` byte.
-    async fn publish_turn(&self, device: &DeviceEntry, val: u8) -> anyhow::Result<()> {
-        let device_topic = device.device_topic()?;
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "turn",
-                        "data": {
-                            "val": val,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
+    /// Set the power state of a Wi-Fi smart plug/switch. `outlet` is the
+    /// zero-based outlet index, or 15 to address all outlets (single-outlet
+    /// plugs). The packed `val` matches the Govee app's CmdTurn.getCmd.
+    pub async fn set_socket_power(
+        &self,
+        device: &DeviceEntry,
+        outlet: u8,
+        on: bool,
+    ) -> anyhow::Result<()> {
+        let val = socket_turn_val(outlet, on);
+        log::trace!(
+            "set_socket_power for {} outlet={outlet} on={on} val={val}",
+            device.device
+        );
+        self.send_msg(device, "turn", Some(json!({ "val": val })), 1, 0)
             .await
-            .context("IotClient::publish_turn")?;
-        Ok(())
     }
 
     pub async fn set_brightness(&self, device: &DeviceEntry, percent: u8) -> anyhow::Result<()> {
         log::trace!("set_brightness for {} to {percent}", device.device);
-        let device_topic = device.device_topic()?;
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "brightness",
-                        "data": {
-                            "val": percent,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
+        self.send_msg(device, "brightness", Some(json!({ "val": percent })), 1, 0)
             .await
-            .context("IotClient::set_brightness")?;
-        Ok(())
     }
 
     pub async fn set_color_temperature(
@@ -112,34 +118,11 @@ impl IotClient {
         kelvin: u32,
     ) -> anyhow::Result<()> {
         log::trace!("set_color_temperature for {} to {kelvin}", device.device);
-        let device_topic = device.device_topic()?;
-
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "colorwc",
-                        "data": {
-                            "color": {
-                                "r": 0,
-                                "g": 0,
-                                "b": 0,
-                            },
-                            "colorTemInKelvin": kelvin,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
-            .await
-            .context("IotClient::set_color_temperature")?;
-        Ok(())
+        let data = json!({
+            "color": { "r": 0, "g": 0, "b": 0 },
+            "colorTemInKelvin": kelvin,
+        });
+        self.send_msg(device, "colorwc", Some(data), 1, 0).await
     }
 
     pub async fn set_color_rgb(
@@ -150,34 +133,11 @@ impl IotClient {
         b: u8,
     ) -> anyhow::Result<()> {
         log::trace!("set_color_rgb for {} to {r},{g},{b}", device.device);
-        let device_topic = device.device_topic()?;
-
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "colorwc",
-                        "data": {
-                            "color":{
-                                "r": r,
-                                "g": g,
-                                "b": b,
-                            },
-                            "colorTemInKelvin": 0,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
-            .await
-            .context("IotClient::set_color_rgb")?;
-        Ok(())
+        let data = json!({
+            "color": { "r": r, "g": g, "b": b },
+            "colorTemInKelvin": 0,
+        });
+        self.send_msg(device, "colorwc", Some(data), 1, 0).await
     }
 
     pub async fn send_real(
@@ -186,29 +146,8 @@ impl IotClient {
         commands: Vec<String>,
     ) -> anyhow::Result<()> {
         log::trace!("send_real for {} to {commands:?}", device.device);
-        let device_topic = device.device_topic()?;
-
-        self.client
-            .publish(
-                device_topic,
-                serde_json::to_string(&serde_json::json!({
-                    "msg": {
-                        "cmd": "ptReal",
-                        "data": {
-                            "command": commands,
-                        },
-                        "cmdVersion": 0,
-                        "transaction": format!("v_{}000", ms_timestamp()),
-                        "type": 1,
-                        "accountTopic": self.account_topic,
-                    }
-                }))?,
-                QoS::AtMostOnce,
-                false,
-            )
+        self.send_msg(device, "ptReal", Some(json!({ "command": commands })), 1, 0)
             .await
-            .context("IotClient::send_real")?;
-        Ok(())
     }
 
     pub async fn activate_one_click(&self, item: &ParsedOneClick) -> anyhow::Result<()> {
@@ -234,13 +173,13 @@ pub async fn start_iot_client(
     state: StateHandle,
     acct: Option<LoginAccountResponse>,
 ) -> anyhow::Result<()> {
-    let client = args.api_client()?;
+    let undoc_api = args.api_client()?;
     let acct = match acct {
         Some(a) => a,
-        None => client.login_account_cached().await?,
+        None => undoc_api.login_account_cached().await?,
     };
     log::trace!("{acct:#?}");
-    let res = client.get_iot_key(&acct.token).await?;
+    let res = undoc_api.get_iot_key(&acct.token).await?;
     log::trace!("{res:#?}");
 
     let key_bytes = data_encoding::BASE64.decode(res.p12.as_bytes())?;
@@ -294,6 +233,7 @@ pub async fn start_iot_client(
         .set_iot_client(IotClient {
             client: client.clone(),
             account_topic: acct.topic.to_string(),
+            undoc: undoc_api,
         })
         .await;
 
@@ -525,7 +465,7 @@ async fn run_iot_subscriber(
 /// the low nibble carries their on/off bits. `outlet` is the zero-based outlet
 /// index; pass 15 to address all outlets (used for single-outlet plugs, which
 /// the app sends as 0xFF/0xF0).
-pub fn socket_turn_val(outlet: u8, on: bool) -> u8 {
+fn socket_turn_val(outlet: u8, on: bool) -> u8 {
     let (select, bit) = match outlet {
         0 => (0x10, 0x01),
         1 => (0x20, 0x02),

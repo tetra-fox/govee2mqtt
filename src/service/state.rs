@@ -1,7 +1,7 @@
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
 use crate::service::hass::{topic_safe_id, HassClient};
-use crate::service::iot::{socket_turn_val, IotClient};
+use crate::service::iot::IotClient;
 use anyhow::Context;
 use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
 use govee_api::lan_api::{Client as LanClient, DeviceStatus as LanDeviceStatus, LanDevice};
@@ -362,10 +362,10 @@ impl State {
             return Ok(());
         }
 
-        // Wi-Fi smart plugs/switches don't honor a direct MQTT `turn` publish;
-        // the command must go through Govee's REST relay (which carries the
-        // `gas` token authorizing control). 15 addresses all outlets, the form
-        // the app uses for a single-outlet plug.
+        // Wi-Fi smart plugs/switches use a packed `turn` val (high nibble
+        // selects the outlet, low nibble its on/off bit) rather than a plain
+        // boolean. 15 addresses all outlets, the form the app uses for a
+        // single-outlet plug. Shared vs owned transport is handled downstream.
         if device.device_type() == DeviceType::Socket {
             return self.device_socket_turn(device, 15, on).await;
         }
@@ -402,10 +402,10 @@ impl State {
         self.device_socket_turn(device, index, on).await
     }
 
-    /// Control a Wi-Fi smart plug/switch outlet via Govee's REST relay
-    /// (`fx-device/iot-msgs`). Direct MQTT publishes are ignored by these
-    /// devices; the relay carries the `gas` token that authorizes control.
-    /// `outlet` is the zero-based outlet index, or 15 for all outlets.
+    /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the
+    /// zero-based outlet index, or 15 for all outlets. Transport selection
+    /// (REST relay for shared devices, direct MQTT for owned ones) is handled
+    /// by [`IotClient::set_socket_power`].
     async fn device_socket_turn(
         &self,
         device: &Device,
@@ -415,18 +415,13 @@ impl State {
         let info = device.undoc_device_info.as_ref().ok_or_else(|| {
             anyhow::anyhow!("{device} has no undoc metadata; cannot control socket")
         })?;
-        let undoc = self
-            .get_undoc_client()
+        let iot = self
+            .get_iot_client()
             .await
-            .ok_or_else(|| anyhow::anyhow!("undoc API client unavailable for {device}"))?;
+            .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
 
-        let val = socket_turn_val(outlet, on);
-        log::info!("Using REST relay to set {device} outlet {outlet} -> {on} (val {val})");
-
-        let mut msg = serde_json::Map::new();
-        msg.insert("cmd".into(), serde_json::json!("turn"));
-        msg.insert("data".into(), serde_json::json!({ "val": val }));
-        undoc.control_device(&info.entry, msg).await
+        log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
+        iot.set_socket_power(&info.entry, outlet, on).await
     }
 
     pub async fn device_set_brightness(
