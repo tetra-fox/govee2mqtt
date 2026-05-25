@@ -29,7 +29,7 @@ cargo-version := `cargo metadata --no-deps --format-version 1 | python3 -c "impo
 # addon/config.yaml and regenerate addon-edge. run after bumping the version in
 # Cargo.toml
 version-sync: addon-edge-config
-    sed -i 's/^version:.*/version: "{{cargo-version}}"/' addon/config.yaml
+    sed -i 's/^version:.*/version: "{{ cargo-version }}"/' addon/config.yaml
 
 # fail if the add-on configs have drifted from the Cargo.toml version. runs the
 # same generation as version-sync, then checks the tree is unchanged, so the
@@ -47,7 +47,7 @@ docker:
 # the HA alpine base in the Dockerfile; this builds for the host arch only. CI
 # (build.yml) does the real per-arch multi-arch build and publish
 addon arch="amd64":
-    docker build --target addon --build-arg BUILD_ARCH={{arch}} .
+    docker build --target addon --build-arg BUILD_ARCH={{ arch }} .
 
 # regenerate addon-edge/config.yaml from the canonical addon/config.yaml. only
 # the identity, image, and version differ; schema/options/map are shared. rerun

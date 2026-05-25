@@ -16,13 +16,13 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
   API](https://developer.govee.com/reference/get-you-devices) in case the AWS
   IoT or LAN control is unavailable.
 
-| Feature                      | Requires       | Notes                                                                                             |
-| ---------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| DIY Scenes                   | API Key        | Find in the list of Effects for the light in Home Assistant                                       |
-| Music Modes                  | API Key        | Find in the list of Effects for the light in Home Assistant                                       |
-| Tap-to-Run / One Click Scene | IoT            | Find in the overall list of Scenes in Home Assistant, as well as under the `Govee2MQTT` device    |
-| Live Device Status Updates   | LAN and/or IoT | Devices typically report most changes within a couple of seconds.                                 |
-| Segment Color                | API Key        | Find the `Segment 00X` light entities associated with your main light device in Home Assistant    |
+| Feature                      | Requires       | Notes                                                                                          |
+| ---------------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
+| DIY Scenes                   | API Key        | Find in the list of Effects for the light in Home Assistant                                    |
+| Music Modes                  | API Key        | Find in the list of Effects for the light in Home Assistant                                    |
+| Tap-to-Run / One Click Scene | IoT            | Find in the overall list of Scenes in Home Assistant, as well as under the `Govee2MQTT` device |
+| Live Device Status Updates   | LAN and/or IoT | Devices typically report most changes within a couple of seconds.                              |
+| Segment Color                | API Key        | Find the `Segment 00X` light entities associated with your main light device in Home Assistant |
 
 - `API Key` means that you have [applied for a key from Govee](https://developer.govee.com/reference/apply-you-govee-api-key)
   and have configured it for use in govee2mqtt
@@ -45,9 +45,10 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 
 ## Credits
 
-This is a fork of [wez/govee2mqtt](https://github.com/wez/govee2mqtt) by Wez
-Furlong, which builds on his [Govee LAN
-Control](https://github.com/wez/govee-lan-hass/).
+This project began as a hard fork of [wez/govee2mqtt](https://github.com/wez/govee2mqtt) by Wez Furlong and has since significantly diverged in architecture, tooling, APIs, licensing, and project direction. It builds on his [Govee LAN Control](https://github.com/wez/govee-lan-hass/).
 
-The AWS IoT support was made possible by the work of @bwp91 in
-[homebridge-govee](https://github.com/bwp91/homebridge-govee/).
+The AWS IoT support was made possible by the work of @bwp91 in [homebridge-govee](https://github.com/bwp91/homebridge-govee/).
+
+## License
+
+This fork is licensed under the GNU General Public License version 3 or later; see [LICENSE](LICENSE). Portions originate from wez/govee2mqtt under the MIT License, preserved in [LICENSE.MIT](LICENSE.MIT).

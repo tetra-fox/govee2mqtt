@@ -5,6 +5,7 @@ members = ["crates/govee-api"]
 name = "govee2mqtt"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 govee-api = { path = "crates/govee-api" }

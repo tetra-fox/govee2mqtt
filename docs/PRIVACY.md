@@ -13,4 +13,3 @@ with Govee's cloud servers and are not used for any other purpose.
 Information about your list of Govee devices and their configuration is cached
 on the local filesystem to avoid exhausting API limits with the Govee cloud
 service.
-

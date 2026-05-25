@@ -3,10 +3,9 @@
 To deploy in docker:
 
 1. Ensure that you have configured the MQTT integration in Home Assistant.
+   - [follow these steps](https://www.home-assistant.io/integrations/mqtt/#configuration)
 
-    * [follow these steps](https://www.home-assistant.io/integrations/mqtt/#configuration)
-
-2. Set up a `.env` file.  Here's a skeleton file; you will need to populate
+2. Set up a `.env` file. Here's a skeleton file; you will need to populate
    the values with things that make sense in your environment.
    See [CONFIG.md](CONFIG.md) for more details.
 
@@ -37,7 +36,7 @@ RUST_LOG_STYLE=always
 TZ=America/Phoenix
 ```
 
-3. Set up your `docker-compose.yml`:
+1. Set up your `docker-compose.yml`:
 
 ```yaml
 name: govee2mqtt
@@ -55,15 +54,14 @@ services:
 #      - '/path/to/data:/data'
 ```
 
-4. Launch it:
+1. Launch it:
 
 ```console
-$ docker compose up -d
+docker compose up -d
 ```
 
-5. If you need to review the logs:
+1. If you need to review the logs:
 
 ```console
-$ docker logs govee2mqtt --follow
+docker logs govee2mqtt --follow
 ```
-

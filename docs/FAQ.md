@@ -16,7 +16,7 @@ removed from the Home Assistant UI for the light entity.
 
 Govee2MQTT merely passes your control requests on to the Govee device,
 and what happens next depends upon Govee. Some devices are more flexible
-than others.  For example, some devices cannot set a segment brightness to 0,
+than others. For example, some devices cannot set a segment brightness to 0,
 while others have their individual brightness bound to the brightness of
 the overall light entity.
 
@@ -34,16 +34,16 @@ that activates the desired mode for the device.
 Then, go to the "Govee2MQTT" device in the MQTT integration in Home
 Assistant and click the "Purge Caches" button.
 
-* Tap-to-Run will be mapped into Home Assistant as a Scene entity.
-* Snapshots will appear in the list of Effects on the device itself.
+- Tap-to-Run will be mapped into Home Assistant as a Scene entity.
+- Snapshots will appear in the list of Effects on the device itself.
 
 ## My Device(s) appear as Greyed Out and Unavailable in Home Assistant
 
 This suggests that there is a problem with (re)registering the entity
 in Home Assistant.
 
-There may be more information available in the Home Assistant logs.  Look for
-log entries that reference `govee2mqtt` or `mqtt`.  Please make a point of
+There may be more information available in the Home Assistant logs. Look for
+log entries that reference `govee2mqtt` or `mqtt`. Please make a point of
 collecting that and reporting an issue.
 
 You may also wish to try deleting the device(s) from the MQTT integration
@@ -76,8 +76,5 @@ Look at [this page](LAN.md) for more details on the LAN API and things you can t
 ## "devices not belong you" error in logs
 
 This error appears to be returned from Govee when trying to use the Platform
-API with devices that are BLE-only and have no WiFi support.  Please file an
+API with devices that are BLE-only and have no WiFi support. Please file an
 issue about this so that we can add an entry to the quirks database.
-
-
-
