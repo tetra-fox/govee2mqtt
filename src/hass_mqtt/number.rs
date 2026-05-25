@@ -174,12 +174,22 @@ pub struct CapabilityNumber {
 
 impl CapabilityNumber {
     pub fn new(topics: &Topics, device: &ServiceDevice, cap: &DeviceCapability) -> Self {
-        let (min, max, unit) = match &cap.parameters {
+        let (min, max, step, unit) = match &cap.parameters {
             Some(DeviceParameters::Integer {
-                range: IntegerRange { min, max, .. },
+                range:
+                    IntegerRange {
+                        min,
+                        max,
+                        precision,
+                    },
                 unit,
-            }) => (*min as f32, *max as f32, unit.clone()),
-            _ => (0., 255., None),
+            }) => {
+                // Govee reports the increment the device accepts; a precision
+                // of 0 would be a nonsensical step, so fall back to 1.
+                let step = if *precision == 0 { 1. } else { *precision as f32 };
+                (*min as f32, *max as f32, step, unit.clone())
+            }
+            _ => (0., 255., 1., None),
         };
 
         let command_topic = topics.capability_number_command(device, &cap.instance);
@@ -207,7 +217,7 @@ impl CapabilityNumber {
                 state_topic: Some(state_topic),
                 min: Some(min),
                 max: Some(max),
-                step: 1f32,
+                step,
                 unit_of_measurement: unit,
             },
             device_id: device.id.to_string(),
