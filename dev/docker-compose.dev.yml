@@ -1,0 +1,37 @@
+# Development stack for testing govee2mqtt against a real Home Assistant.
+#
+# This brings up only the infrastructure: a mosquitto broker and a Home
+# Assistant instance. govee2mqtt itself runs on the host via `cargo run` so it
+# has direct LAN access for device discovery, reading creds and the broker
+# address from govee.env (see dev/README.md).
+#
+#   docker compose -f dev/docker-compose.dev.yml up -d
+#
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: g2m-dev-mosquitto
+    restart: unless-stopped
+    ports:
+      # Published to the host so the host-run govee2mqtt can reach the broker
+      # at localhost:1883. Home Assistant reaches it over the compose network.
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: g2m-dev-homeassistant
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "8123:8123"
+    volumes:
+      - ha-config:/config
+      - /etc/localtime:/etc/localtime:ro
+
+volumes:
+  mosquitto-data:
+  ha-config:

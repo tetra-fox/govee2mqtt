@@ -11,5 +11,3 @@ package-lock.json
 
 # the devcontainer bootstrap stages a source-building dev add-on here
 /addon-dev/
-
-govee.env
