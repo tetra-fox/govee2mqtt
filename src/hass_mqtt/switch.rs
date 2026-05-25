@@ -54,7 +54,6 @@ impl SwitchConfig {
 pub struct CapabilitySwitch {
     switch: SwitchConfig,
     device_id: String,
-    state: StateHandle,
     instance_name: String,
 }
 
@@ -62,14 +61,12 @@ impl CapabilitySwitch {
     pub async fn new(
         topics: &Topics,
         device: &ServiceDevice,
-        state: &StateHandle,
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
         let switch = SwitchConfig::for_device(topics, device, instance).await?;
         Ok(Self {
             switch,
             device_id: device.id.to_string(),
-            state: state.clone(),
             instance_name: instance.instance.to_string(),
         })
     }
@@ -86,17 +83,11 @@ impl CapabilitySwitch {
 pub struct OutletSwitch {
     switch: SwitchConfig,
     device_id: String,
-    state: StateHandle,
     outlet_index: u8,
 }
 
 impl OutletSwitch {
-    pub fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        state: &StateHandle,
-        outlet_index: u8,
-    ) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice, outlet_index: u8) -> Self {
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
@@ -120,7 +111,6 @@ impl OutletSwitch {
         Self {
             switch,
             device_id: device.id.to_string(),
-            state: state.clone(),
             outlet_index,
         }
     }
@@ -132,12 +122,16 @@ impl EntityInstance for OutletSwitch {
         self.switch.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         // No reported state yet; leave the entity unknown rather than guessing
         if let Some(on) = device.socket_outlet_state(self.outlet_index) {
@@ -157,11 +151,10 @@ impl EntityInstance for OutletSwitch {
 pub struct PowerSwitch {
     switch: SwitchConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl PowerSwitch {
-    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice) -> Self {
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
@@ -181,7 +174,6 @@ impl PowerSwitch {
         Self {
             switch,
             device_id: device.id.to_string(),
-            state: state.clone(),
         }
     }
 }
@@ -192,12 +184,16 @@ impl EntityInstance for PowerSwitch {
         self.switch.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         // Leave the entity unknown until we have a reported state
         if let Some(device_state) = device.device_state() {
@@ -219,11 +215,10 @@ impl EntityInstance for PowerSwitch {
 pub struct MusicAutoColorSwitch {
     switch: SwitchConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl MusicAutoColorSwitch {
-    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice) -> Self {
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let switch = SwitchConfig {
             base: EntityConfig {
@@ -243,7 +238,6 @@ impl MusicAutoColorSwitch {
         Self {
             switch,
             device_id: device.id.to_string(),
-            state: state.clone(),
         }
     }
 }
@@ -254,12 +248,16 @@ impl EntityInstance for MusicAutoColorSwitch {
         self.switch.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
         client
             .publish(
                 &self.switch.state_topic,
@@ -299,12 +297,16 @@ impl EntityInstance for CapabilitySwitch {
         self.switch.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         if self.instance_name == "powerSwitch" {
             if let Some(state) = device.device_state() {

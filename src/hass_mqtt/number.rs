@@ -49,7 +49,6 @@ impl NumberConfig {
 pub struct WorkModeNumber {
     number: NumberConfig,
     device_id: String,
-    state: StateHandle,
     mode_name: String,
     work_mode: JsonValue,
 }
@@ -58,7 +57,6 @@ impl WorkModeNumber {
     pub fn new(
         topics: &Topics,
         device: &ServiceDevice,
-        state: &StateHandle,
         label: String,
         mode_name: &str,
         work_mode: JsonValue,
@@ -101,7 +99,6 @@ impl WorkModeNumber {
                 unit_of_measurement: None,
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
             mode_name: mode_name.to_string(),
             work_mode,
         }
@@ -114,18 +111,22 @@ impl EntityInstance for WorkModeNumber {
         self.number.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
         let state_topic = self
             .number
             .state_topic
             .as_ref()
             .ok_or_else(|| anyhow!("state_topic is None!?"))?;
 
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+        let device = device.expect("device to exist");
 
         if let Some(cap) = device.get_state_capability_by_instance("workMode")
             && let Some(work_mode) = cap.state.pointer("/value/workMode")
@@ -168,17 +169,11 @@ impl EntityInstance for WorkModeNumber {
 pub struct CapabilityNumber {
     number: NumberConfig,
     device_id: String,
-    state: StateHandle,
     instance_name: String,
 }
 
 impl CapabilityNumber {
-    pub fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        state: &StateHandle,
-        cap: &DeviceCapability,
-    ) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice, cap: &DeviceCapability) -> Self {
         let (min, max, unit) = match &cap.parameters {
             Some(DeviceParameters::Integer {
                 range: IntegerRange { min, max, .. },
@@ -216,7 +211,6 @@ impl CapabilityNumber {
                 unit_of_measurement: unit,
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
             instance_name: cap.instance.to_string(),
         }
     }
@@ -228,18 +222,22 @@ impl EntityInstance for CapabilityNumber {
         self.number.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
         let state_topic = self
             .number
             .state_topic
             .as_ref()
             .ok_or_else(|| anyhow!("state_topic is None!?"))?;
 
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+        let device = device.expect("device to exist");
 
         if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name)
             && let Some(n) = cap.state.pointer("/value").and_then(|v| v.as_f64())
@@ -294,11 +292,10 @@ use crate::service::hass::IdParameter;
 pub struct MusicSensitivityNumber {
     number: NumberConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl MusicSensitivityNumber {
-    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice) -> Self {
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         Self {
             number: NumberConfig {
@@ -321,7 +318,6 @@ impl MusicSensitivityNumber {
                 unit_of_measurement: Some("%".to_string()),
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
         }
     }
 }
@@ -332,12 +328,16 @@ impl EntityInstance for MusicSensitivityNumber {
         self.number.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
         self.number
             .notify_state(client, &device.music_sensitivity().to_string())
             .await

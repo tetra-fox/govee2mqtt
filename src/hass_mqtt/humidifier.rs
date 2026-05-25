@@ -157,12 +157,16 @@ impl EntityInstance for Humidifier {
         .await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         match device.device_state() {
             Some(device_state) => {
@@ -205,7 +209,7 @@ impl EntityInstance for Humidifier {
         }
 
         if let Some(mode_value) = device.humidifier_work_mode {
-            if let Ok(work_mode) = ParsedWorkMode::with_device(&device) {
+            if let Ok(work_mode) = ParsedWorkMode::with_device(device) {
                 let mode_value_json = json!(mode_value);
                 if let Some(mode) = work_mode.mode_for_value(&mode_value_json) {
                     client
@@ -214,7 +218,7 @@ impl EntityInstance for Humidifier {
                 }
             }
         } else {
-            let work_modes = ParsedWorkMode::with_device(&device)?;
+            let work_modes = ParsedWorkMode::with_device(device)?;
 
             if let Some(cap) = device.get_state_capability_by_instance("workMode")
                 && let Some(mode_num) = cap.state.pointer("/value/workMode")

@@ -30,16 +30,10 @@ impl SelectConfig {
 pub struct WorkModeSelect {
     select: SelectConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl WorkModeSelect {
-    pub fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        work_modes: &ParsedWorkMode,
-        state: &StateHandle,
-    ) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice, work_modes: &ParsedWorkMode) -> Self {
         let command_topic = topics.set_work_mode(device);
         let state_topic = topics.notify_work_mode(device);
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
@@ -63,7 +57,6 @@ impl WorkModeSelect {
                 options: work_modes.get_mode_names(),
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
         }
     }
 }
@@ -74,15 +67,19 @@ impl EntityInstance for WorkModeSelect {
         self.select.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         if let Some(mode_value) = device.humidifier_work_mode {
-            if let Ok(work_mode) = ParsedWorkMode::with_device(&device) {
+            if let Ok(work_mode) = ParsedWorkMode::with_device(device) {
                 let mode_value_json = json!(mode_value);
                 if let Some(mode) = work_mode.mode_for_value(&mode_value_json) {
                     client
@@ -91,7 +88,7 @@ impl EntityInstance for WorkModeSelect {
                 }
             }
         } else {
-            let work_modes = ParsedWorkMode::with_device(&device)?;
+            let work_modes = ParsedWorkMode::with_device(device)?;
 
             if let Some(cap) = device.get_state_capability_by_instance("workMode")
                 && let Some(mode_num) = cap.state.pointer("/value/workMode")
@@ -109,18 +106,12 @@ impl EntityInstance for WorkModeSelect {
 pub struct SceneModeSelect {
     select: SelectConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl SceneModeSelect {
-    pub async fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        state: &StateHandle,
-    ) -> anyhow::Result<Option<Self>> {
-        let scenes = state.device_list_scenes(device).await?;
+    pub fn new(topics: &Topics, device: &ServiceDevice, scenes: &[String]) -> Option<Self> {
         if scenes.is_empty() {
-            return Ok(None);
+            return None;
         }
 
         let command_topic = topics.set_mode_scene(device);
@@ -128,7 +119,7 @@ impl SceneModeSelect {
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.entity_id(device, "mode-scene");
 
-        Ok(Some(Self {
+        Some(Self {
             select: SelectConfig {
                 base: EntityConfig {
                     availability,
@@ -143,11 +134,10 @@ impl SceneModeSelect {
                 },
                 command_topic,
                 state_topic,
-                options: scenes,
+                options: scenes.to_vec(),
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
-        }))
+        })
     }
 }
 
@@ -157,12 +147,16 @@ impl EntityInstance for SceneModeSelect {
         self.select.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         if let Some(device_state) = device.device_state() {
             client
@@ -199,7 +193,6 @@ pub async fn mqtt_set_mode_scene(
 pub struct CapabilityModeSelect {
     select: SelectConfig,
     device_id: String,
-    state: StateHandle,
     instance_name: String,
 }
 
@@ -208,7 +201,6 @@ impl CapabilityModeSelect {
     pub fn new(
         topics: &Topics,
         device: &ServiceDevice,
-        state: &StateHandle,
         cap: &DeviceCapability,
     ) -> Option<Self> {
         let options: Vec<String> = match &cap.parameters {
@@ -244,7 +236,6 @@ impl CapabilityModeSelect {
                 options,
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
             instance_name: cap.instance.to_string(),
         })
     }
@@ -256,12 +247,16 @@ impl EntityInstance for CapabilityModeSelect {
         self.select.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         // Map the reported enum value back to its option name, if Govee
         // reports state for this instance.

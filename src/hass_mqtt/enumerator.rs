@@ -162,7 +162,6 @@ async fn entities_for_work_mode(
             entities.add(WorkModeNumber::new(
                 &topics,
                 d,
-                state,
                 label,
                 &work_mode.name,
                 work_mode.value.clone(),
@@ -171,7 +170,7 @@ async fn entities_for_work_mode(
         }
     }
 
-    entities.add(WorkModeSelect::new(&topics, d, &work_modes, state));
+    entities.add(WorkModeSelect::new(&topics, d, &work_modes));
 
     Ok(())
 }
@@ -187,11 +186,26 @@ pub async fn enumerate_entities_for_device(
 
     let topics = state.topics().await;
 
-    entities.add(DeviceStatusDiagnostic::new(&topics, d, state));
+    entities.add(DeviceStatusDiagnostic::new(&topics, d));
     entities.add(ButtonConfig::request_platform_data_for_device(&topics, d));
 
-    if d.supports_rgb() || d.get_color_temperature_range().is_some() || d.supports_brightness() {
-        entities.add(DeviceLight::for_device(&topics, d, state, None).await?);
+    let is_light_capable =
+        d.supports_rgb() || d.get_color_temperature_range().is_some() || d.supports_brightness();
+    let wants_scene_select = d.device_type() != DeviceType::Light;
+
+    // The light entity's effect_list and the Mode/Scene select's options are the
+    // same scene list; fetch it once and share it between them.
+    let scenes = if is_light_capable || wants_scene_select {
+        state.device_list_scenes(d).await.unwrap_or_else(|err| {
+            log::error!("Unable to list scenes for {d}: {err:#}");
+            vec![]
+        })
+    } else {
+        vec![]
+    };
+
+    if is_light_capable {
+        entities.add(DeviceLight::for_device(&topics, d, None, &scenes));
     }
 
     if matches!(
@@ -201,10 +215,10 @@ pub async fn enumerate_entities_for_device(
         entities.add(Humidifier::new(&topics, d, state).await?);
     }
 
-    if d.device_type() != DeviceType::Light
-        && let Some(scenes) = SceneModeSelect::new(&topics, d, state).await?
+    if wants_scene_select
+        && let Some(select) = SceneModeSelect::new(&topics, d, &scenes)
     {
-        entities.add(scenes);
+        entities.add(select);
     }
 
     // Multi-outlet sockets only expose a single combined powerSwitch via the
@@ -214,7 +228,7 @@ pub async fn enumerate_entities_for_device(
     // <https://github.com/wez/govee2mqtt/issues/65>
     if let Some(count) = d.socket_outlet_count() {
         for index in 0..count {
-            entities.add(OutletSwitch::new(&topics, d, state, index));
+            entities.add(OutletSwitch::new(&topics, d, index));
         }
     }
 
@@ -225,14 +239,14 @@ pub async fn enumerate_entities_for_device(
         && d.socket_outlet_count().is_none()
         && d.http_device_info.is_none()
     {
-        entities.add(PowerSwitch::new(&topics, d, state));
+        entities.add(PowerSwitch::new(&topics, d));
     }
 
     if let Some(info) = &d.http_device_info {
         for cap in &info.capabilities {
             match &cap.kind {
                 DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff => {
-                    entities.add(CapabilitySwitch::new(&topics, d, state, cap).await?);
+                    entities.add(CapabilitySwitch::new(&topics, d, cap).await?);
                 }
                 // Color and scene capabilities are surfaced through the light
                 // entity and the Mode/Scene select, not as their own entities.
@@ -247,17 +261,17 @@ pub async fn enumerate_entities_for_device(
                 DeviceCapabilityKind::Range if cap.instance == "brightness" => {}
                 DeviceCapabilityKind::Range if cap.instance == "humidity" => {}
                 DeviceCapabilityKind::Range => {
-                    entities.add(CapabilityNumber::new(&topics, d, state, cap));
+                    entities.add(CapabilityNumber::new(&topics, d, cap));
                 }
 
                 DeviceCapabilityKind::Mode => {
-                    if let Some(select) = CapabilityModeSelect::new(&topics, d, state, cap) {
+                    if let Some(select) = CapabilityModeSelect::new(&topics, d, cap) {
                         entities.add(select);
                     }
                 }
 
                 DeviceCapabilityKind::Event => {
-                    entities.add(CapabilityEventSensor::new(&topics, d, state, cap));
+                    entities.add(CapabilityEventSensor::new(&topics, d, cap));
                 }
 
                 DeviceCapabilityKind::WorkMode => {
@@ -286,13 +300,13 @@ pub async fn enumerate_entities_for_device(
         // as adjustable preferences; Govee doesn't report them back so they only
         // take effect on the next music-scene selection.
         if info.capability_by_instance("musicMode").is_some() {
-            entities.add(MusicSensitivityNumber::new(&topics, d, state));
-            entities.add(MusicAutoColorSwitch::new(&topics, d, state));
+            entities.add(MusicSensitivityNumber::new(&topics, d));
+            entities.add(MusicAutoColorSwitch::new(&topics, d));
         }
 
         if let Some(segments) = info.supports_segmented_rgb() {
             for n in segments {
-                entities.add(DeviceLight::for_device(&topics, d, state, Some(n)).await?);
+                entities.add(DeviceLight::for_device(&topics, d, Some(n), &[]));
             }
         }
     }

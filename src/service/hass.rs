@@ -203,7 +203,10 @@ impl HassClient {
 
         // report initial state
         log::trace!("register_with_hass: reporting state");
-        entities.notify_state(self).await.context("notify_state")?;
+        entities
+            .notify_state(state, self)
+            .await
+            .context("notify_state")?;
 
         log::trace!("register_with_hass: done");
 
@@ -292,7 +295,7 @@ impl HassClient {
 
         let mut entities = EntityList::new();
         enumerate_entities_for_device(device, state, &mut entities).await?;
-        entities.notify_state(self).await?;
+        entities.notify_state(state, self).await?;
 
         Ok(())
     }

@@ -77,12 +77,16 @@ impl EntityInstance for TargetTemperatureEntity {
         self.number.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         let quirk = device.resolve_quirk();
 

@@ -143,7 +143,11 @@ impl EntityInstance for ButtonConfig {
         publish_entity_config("button", state, client, &self.base, self).await
     }
 
-    async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
+    async fn notify_state(
+        &self,
+        _device: Option<&ServiceDevice>,
+        _client: &HassClient,
+    ) -> anyhow::Result<()> {
         // Buttons have no state
         Ok(())
     }

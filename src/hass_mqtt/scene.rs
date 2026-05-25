@@ -1,5 +1,6 @@
 use crate::hass_mqtt::base::EntityConfig;
 use crate::hass_mqtt::instance::{EntityInstance, publish_entity_config};
+use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::HassClient;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
@@ -26,7 +27,11 @@ impl EntityInstance for SceneConfig {
         self.publish(state, client).await
     }
 
-    async fn notify_state(&self, _client: &HassClient) -> anyhow::Result<()> {
+    async fn notify_state(
+        &self,
+        _device: Option<&ServiceDevice>,
+        _client: &HassClient,
+    ) -> anyhow::Result<()> {
         // Scenes have no state
         Ok(())
     }

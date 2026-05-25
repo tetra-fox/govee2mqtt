@@ -59,7 +59,11 @@ impl EntityInstance for GlobalFixedDiagnostic {
         self.sensor.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+    async fn notify_state(
+        &self,
+        _device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
         self.sensor.notify_state(client, &self.value).await
     }
 }
@@ -176,12 +180,16 @@ impl EntityInstance for CapabilitySensor {
         self.sensor.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         let quirk = device.resolve_quirk();
 
@@ -241,17 +249,11 @@ impl EntityInstance for CapabilitySensor {
 pub struct CapabilityEventSensor {
     sensor: SensorConfig,
     device_id: String,
-    state: StateHandle,
     instance_name: String,
 }
 
 impl CapabilityEventSensor {
-    pub fn new(
-        topics: &Topics,
-        device: &ServiceDevice,
-        state: &StateHandle,
-        instance: &DeviceCapability,
-    ) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice, instance: &DeviceCapability) -> Self {
         let unique_id = format!(
             "sensor-{id}-event-{inst}",
             id = topic_safe_id(device),
@@ -281,7 +283,6 @@ impl CapabilityEventSensor {
                 json_attributes_topic: Some(topics.sensor_attributes(&unique_id)),
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
             instance_name: instance.instance.to_string(),
         }
     }
@@ -293,12 +294,16 @@ impl EntityInstance for CapabilityEventSensor {
         self.sensor.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name) {
             // Prefer a scalar /value for the sensor state, falling back to the
@@ -339,11 +344,10 @@ impl EntityInstance for CapabilityEventSensor {
 pub struct DeviceStatusDiagnostic {
     sensor: SensorConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 impl DeviceStatusDiagnostic {
-    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+    pub fn new(topics: &Topics, device: &ServiceDevice) -> Self {
         let unique_id = topics.status_sensor_id(device);
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
@@ -366,7 +370,6 @@ impl DeviceStatusDiagnostic {
                 unit_of_measurement: None,
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
         }
     }
 }
@@ -377,12 +380,16 @@ impl EntityInstance for DeviceStatusDiagnostic {
         self.sensor.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
+        let device = device.expect("device to exist");
 
         let iot_state = device.compute_iot_device_state();
         let lan_state = device.compute_lan_device_state();

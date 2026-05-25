@@ -60,7 +60,6 @@ impl LightConfig {
 pub struct DeviceLight {
     light: LightConfig,
     device_id: String,
-    state: StateHandle,
 }
 
 #[async_trait]
@@ -69,16 +68,20 @@ impl EntityInstance for DeviceLight {
         self.light.publish(state, client).await
     }
 
-    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.device_id)
+    }
+
+    async fn notify_state(
+        &self,
+        device: Option<&ServiceDevice>,
+        client: &HassClient,
+    ) -> anyhow::Result<()> {
         if self.light.optimistic {
             return Ok(());
         }
 
-        let device = self
-            .state
-            .device_by_id(&self.device_id)
-            .await
-            .expect("device to exist");
+        let device = device.expect("device to exist");
 
         match device.device_state() {
             Some(device_state) => {
@@ -129,12 +132,12 @@ impl EntityInstance for DeviceLight {
 }
 
 impl DeviceLight {
-    pub async fn for_device(
+    pub fn for_device(
         topics: &Topics,
         device: &ServiceDevice,
-        state: &StateHandle,
         segment: Option<u32>,
-    ) -> anyhow::Result<Self> {
+        effect_list: &[String],
+    ) -> Self {
         let quirk = device.resolve_quirk();
         let device_type = device.device_type();
 
@@ -155,18 +158,6 @@ impl DeviceLight {
         };
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
         let unique_id = topics.light_unique_id(device, segment);
-
-        let effect_list = if segment.is_some() {
-            vec![]
-        } else {
-            match state.device_list_scenes(device).await {
-                Ok(scenes) => scenes,
-                Err(err) => {
-                    log::error!("Unable to list scenes for {device}: {err:#}");
-                    vec![]
-                }
-            }
-        };
 
         let mut supported_color_modes = vec![];
 
@@ -200,7 +191,7 @@ impl DeviceLight {
             None => None,
         };
 
-        Ok(Self {
+        Self {
             light: LightConfig {
                 base: EntityConfig {
                     availability,
@@ -220,7 +211,7 @@ impl DeviceLight {
                 brightness,
                 brightness_scale: 100,
                 effect: true,
-                effect_list,
+                effect_list: effect_list.to_vec(),
                 payload_available: "online".to_string(),
                 max_kelvin,
                 min_kelvin,
@@ -229,7 +220,6 @@ impl DeviceLight {
                 icon,
             },
             device_id: device.id.to_string(),
-            state: state.clone(),
-        })
+        }
     }
 }
