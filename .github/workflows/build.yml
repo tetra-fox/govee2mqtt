@@ -119,7 +119,11 @@ jobs:
           file: Dockerfile
           target: standalone
           platforms: linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
+          # BUILD_ARCH picks the rust musl target in the builder stage; it must
+          # match the emulated build platform or the aarch64 build cross-compiles
+          # to x86_64 and fails for want of an x86_64-linux-musl-gcc toolchain
           build-args: |
+            BUILD_ARCH=${{ matrix.arch }}
             GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
             GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
           # one tag per per-arch image: the manifest job stitches them, so all
