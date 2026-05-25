@@ -7,3 +7,11 @@ package.json
 package-lock.json
 /hatest/
 .direnv/
+
+# add-on build inputs are sourced from common/ at build time, never committed
+addon/Dockerfile
+addon/build.yaml
+addon/run.sh
+addon-edge/Dockerfile
+addon-edge/build.yaml
+addon-edge/run.sh

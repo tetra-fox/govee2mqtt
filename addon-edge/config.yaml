@@ -1,0 +1,46 @@
+name: Govee2MQTT Edge
+image: ghcr.io/tetra-fox/govee2mqtt-edge-{arch}
+version: "edge"
+slug: govee2mqtt_edge
+description: Control Govee Devices
+url: https://github.com/tetra-fox/govee2mqtt
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: services
+services:
+  - mqtt:need
+
+apparmor: true
+
+webui: http://[HOST]:[PORT:8056]/assets/index.html
+#ingress: true
+#ingress_port: 8056
+
+# Host network access is required for LAN discovery
+host_network: true
+
+map:
+  - type: addon_config
+    read_only: false
+    path: /app/config
+
+options:
+  temperature_scale: "C"
+
+schema:
+  temperature_scale: "str?"
+  govee_email: "str?"
+  govee_password: "password?"
+  govee_api_key: "password?"
+  mqtt_host: "str?"
+  mqtt_port: "int?"
+  mqtt_username: "str?"
+  mqtt_password: "password?"
+  base_topic: "str?"
+  debug_level: "str?"
+  no_multicast: "bool?"
+  broadcast_all: "bool?"
+  global_broadcast: "bool?"
+  scan: "str?"

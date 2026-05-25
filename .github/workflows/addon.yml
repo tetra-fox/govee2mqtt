@@ -1,75 +1,55 @@
 name: Home Assistant add-on
 
 on:
-  # the add-on image is built FROM ghcr.io/.../govee2mqtt:latest, so it has to
-  # publish after the release image build pushed that tag
+  # build after the app image so the wrapper can pull the tag it references:
+  # the stable add-on wraps the release version, the edge add-on wraps :edge
   workflow_run:
     workflows: ["Build Docker image"]
     types: [completed]
-  # validate the add-on build config without publishing
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  publish:
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
+  build:
+    # only on a successful release or main-push image build, not PR builds
+    if: ${{ github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.event == 'release' || github.event.workflow_run.event == 'push') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, aarch64]
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0 # need tags to resolve the release version
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: https://ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set add-on version from release tag
+      - name: Select add-on
+        id: sel
+        env:
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
         run: |
-          tag=$(git tag --points-at HEAD | head -n1)
-          echo "TAG_NAME=${tag#v}" >> "$GITHUB_ENV" # strip v to match the image's semver tag
-      - name: Apply tag to version
-        run: ./scripts/apply-tag.sh
-      - name: Build and Publish Home Assistant Add On
-        uses: home-assistant/builder@2026.02.1
-        with:
-          args: |
-            --amd64 \
-            --aarch64 \
-            --cosign \
-            --target /data/addon
-
-  test:
-    if: ${{ github.event_name != 'workflow_run' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      packages: read
-    steps:
-      - uses: actions/checkout@v6
+          if [ "$TRIGGER_EVENT" = "release" ]; then
+            echo "dir=addon" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=addon-edge" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Assemble build inputs from common/
+        env:
+          ADDON_DIR: ${{ steps.sel.outputs.dir }}
+        run: cp common/Dockerfile common/build.yaml common/run.sh "$ADDON_DIR/"
       - name: Login to GHCR
         uses: docker/login-action@v4
         with:
-          registry: https://ghcr.io
+          registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Test Build Home Assistant Add On
+      - name: Build and publish
         uses: home-assistant/builder@2026.02.1
         with:
           args: |
-            --test \
-            --amd64 \
-            --aarch64 \
-            --cosign \
-            --target /data/addon
+            --${{ matrix.arch }} \
+            --target ${{ steps.sel.outputs.dir }} \
+            --no-latest
