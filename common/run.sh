@@ -107,7 +107,10 @@ if bashio::config.has_value temperature_scale ; then
   export GOVEE2MQTT_TEMPERATURE_SCALE
 fi
 
-env | grep GOVEE_ | sed -r 's/_(EMAIL|KEY|PASSWORD)=.*/_\1=REDACTED/'
+# log the resolved config with secrets redacted. this is diagnostic only, so it
+# must not abort startup: grep exits non-zero when nothing matches, and the
+# script runs under bashio's set -e, so swallow that.
+env | grep GOVEE2MQTT_ | sed -r 's/_(EMAIL|KEY|PASSWORD)=.*/_\1=REDACTED/' || true
 set -x
 
 cd /app || bashio::exit.nok "could not cd to /app"
