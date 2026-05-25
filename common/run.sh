@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
 
 export RUST_BACKTRACE=full
 export RUST_LOG_STYLE=always
@@ -28,71 +29,86 @@ wait_for_mqtt() {
 }
 
 if bashio::config.has_value mqtt_host ; then
-  export GOVEE_MQTT_HOST="$(bashio::config mqtt_host)"
+  GOVEE_MQTT_HOST="$(bashio::config mqtt_host)"
+  export GOVEE_MQTT_HOST
 else
   if ! wait_for_mqtt ; then
     bashio::exit.nok "Mosquitto MQTT broker is not available"
   fi
-  export GOVEE_MQTT_HOST="$(bashio::services mqtt 'host')"
-  export GOVEE_MQTT_PORT="$(bashio::services mqtt 'port')"
-  export GOVEE_MQTT_USER="$(bashio::services mqtt 'username')"
-  export GOVEE_MQTT_PASSWORD="$(bashio::services mqtt 'password')"
+  GOVEE_MQTT_HOST="$(bashio::services mqtt 'host')"
+  GOVEE_MQTT_PORT="$(bashio::services mqtt 'port')"
+  GOVEE_MQTT_USER="$(bashio::services mqtt 'username')"
+  GOVEE_MQTT_PASSWORD="$(bashio::services mqtt 'password')"
+  export GOVEE_MQTT_HOST GOVEE_MQTT_PORT GOVEE_MQTT_USER GOVEE_MQTT_PASSWORD
 fi
 
 if bashio::config.has_value mqtt_port ; then
-  export GOVEE_MQTT_PORT="$(bashio::config mqtt_port)"
+  GOVEE_MQTT_PORT="$(bashio::config mqtt_port)"
+  export GOVEE_MQTT_PORT
 fi
 
 if bashio::config.has_value mqtt_username ; then
-  export GOVEE_MQTT_USER="$(bashio::config mqtt_username)"
+  GOVEE_MQTT_USER="$(bashio::config mqtt_username)"
+  export GOVEE_MQTT_USER
 fi
 
 if bashio::config.has_value mqtt_password ; then
-  export GOVEE_MQTT_PASSWORD="$(bashio::config mqtt_password)"
+  GOVEE_MQTT_PASSWORD="$(bashio::config mqtt_password)"
+  export GOVEE_MQTT_PASSWORD
 fi
 
 if bashio::config.has_value base_topic ; then
-  export GOVEE_MQTT_BASE_TOPIC="$(bashio::config base_topic)"
+  GOVEE_MQTT_BASE_TOPIC="$(bashio::config base_topic)"
+  export GOVEE_MQTT_BASE_TOPIC
 fi
 
 if bashio::config.has_value debug_level ; then
-  export RUST_LOG="$(bashio::config debug_level)"
+  RUST_LOG="$(bashio::config debug_level)"
+  export RUST_LOG
 fi
 
 if bashio::config.has_value govee_email ; then
-  export GOVEE_EMAIL="$(bashio::config govee_email)"
+  GOVEE_EMAIL="$(bashio::config govee_email)"
+  export GOVEE_EMAIL
 fi
 
 if bashio::config.has_value govee_password ; then
-  export GOVEE_PASSWORD="$(bashio::config govee_password)"
+  GOVEE_PASSWORD="$(bashio::config govee_password)"
+  export GOVEE_PASSWORD
 fi
 
 if bashio::config.has_value govee_api_key ; then
-  export GOVEE_API_KEY="$(bashio::config govee_api_key)"
+  GOVEE_API_KEY="$(bashio::config govee_api_key)"
+  export GOVEE_API_KEY
 fi
 
 if bashio::config.has_value no_multicast ; then
-  export GOVEE_LAN_NO_MULTICAST="$(bashio::config no_multicast)"
+  GOVEE_LAN_NO_MULTICAST="$(bashio::config no_multicast)"
+  export GOVEE_LAN_NO_MULTICAST
 fi
 
 if bashio::config.has_value broadcast_all ; then
-  export GOVEE_LAN_BROADCAST_ALL="$(bashio::config broadcast_all)"
+  GOVEE_LAN_BROADCAST_ALL="$(bashio::config broadcast_all)"
+  export GOVEE_LAN_BROADCAST_ALL
 fi
 
 if bashio::config.has_value global_broadcast ; then
-  export GOVEE_LAN_BROADCAST_GLOBAL="$(bashio::config global_broadcast)"
+  GOVEE_LAN_BROADCAST_GLOBAL="$(bashio::config global_broadcast)"
+  export GOVEE_LAN_BROADCAST_GLOBAL
 fi
 
 if bashio::config.has_value scan ; then
-  export GOVEE_LAN_SCAN="$(bashio::config scan)"
+  GOVEE_LAN_SCAN="$(bashio::config scan)"
+  export GOVEE_LAN_SCAN
 fi
 
 if bashio::config.has_value temperature_scale ; then
-  export GOVEE_TEMPERATURE_SCALE="$(bashio::config temperature_scale)"
+  GOVEE_TEMPERATURE_SCALE="$(bashio::config temperature_scale)"
+  export GOVEE_TEMPERATURE_SCALE
 fi
 
 env | grep GOVEE_ | sed -r 's/_(EMAIL|KEY|PASSWORD)=.*/_\1=REDACTED/'
 set -x
 
-cd /app
+cd /app || bashio::exit.nok "could not cd to /app"
 exec /app/govee2mqtt serve
