@@ -330,6 +330,20 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         scene: &str,
     ) -> anyhow::Result<ControlDeviceResponseCapability> {
+        self.set_scene_by_name_with_music(device, scene, 100, true)
+            .await
+    }
+
+    /// Like set_scene_by_name, but for the "Music: X" scenes lets the caller
+    /// choose the sensitivity (0-100) and auto-color values that get sent with
+    /// the music struct. For non-music scenes those arguments are ignored.
+    pub async fn set_scene_by_name_with_music(
+        &self,
+        device: &HttpDeviceInfo,
+        scene: &str,
+        sensitivity: u8,
+        auto_color: bool,
+    ) -> anyhow::Result<ControlDeviceResponseCapability> {
         if scene.is_empty() {
             // Can't set no scene
             anyhow::bail!("Cannot set scene to no-scene");
@@ -341,8 +355,8 @@ impl GoveeApiClient {
                     if let Some(value) = field.field_type.enum_parameter_by_name(music_mode) {
                         let value = serde_json::json!({
                             "musicMode": value,
-                            "sensitivity": 100,
-                            "autoColor": 1,
+                            "sensitivity": sensitivity.min(100),
+                            "autoColor": if auto_color { 1 } else { 0 },
                         });
                         return self.control_device(device, cap, value).await;
                     }

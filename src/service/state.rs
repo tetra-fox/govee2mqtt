@@ -709,7 +709,14 @@ impl State {
             if let Some(client) = self.get_platform_client().await {
                 if let Some(info) = &device.http_device_info {
                     log::info!("Using Platform API to set {device} to scene {scene}");
-                    client.set_scene_by_name(info, scene).await?;
+                    client
+                        .set_scene_by_name_with_music(
+                            info,
+                            scene,
+                            device.music_sensitivity(),
+                            device.music_auto_color(),
+                        )
+                        .await?;
                     self.device_mut(&device.sku, &device.id)
                         .await
                         .set_active_scene(Some(scene));

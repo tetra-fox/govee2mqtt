@@ -156,6 +156,84 @@ impl Topics {
         )
     }
 
+    /// Command topic for a generic platform-API Range capability exposed as a
+    /// number. The instance name is part of the path so multiple range
+    /// capabilities on one device don't collide.
+    pub fn capability_number_command(&self, device: &ServiceDevice, instance: &str) -> String {
+        format!(
+            "{}/number/{}/capability/{inst}/command",
+            self.base,
+            topic_safe_id(device),
+            inst = topic_safe_string(instance),
+        )
+    }
+
+    pub fn capability_number_state(&self, device: &ServiceDevice, instance: &str) -> String {
+        format!(
+            "{}/number/{}/capability/{inst}/state",
+            self.base,
+            topic_safe_id(device),
+            inst = topic_safe_string(instance),
+        )
+    }
+
+    // ---- generic mode / music ----
+
+    /// Command topic for a generic platform-API Mode capability exposed as a
+    /// select. The instance name is part of the path so multiple mode
+    /// capabilities on one device don't collide.
+    pub fn capability_mode_command(&self, device: &ServiceDevice, instance: &str) -> String {
+        format!(
+            "{}/select/{}/capability/{inst}/command",
+            self.base,
+            topic_safe_id(device),
+            inst = topic_safe_string(instance),
+        )
+    }
+
+    pub fn capability_mode_state(&self, device: &ServiceDevice, instance: &str) -> String {
+        format!(
+            "{}/select/{}/capability/{inst}/state",
+            self.base,
+            topic_safe_id(device),
+            inst = topic_safe_string(instance),
+        )
+    }
+
+    /// Command/state for the user's preferred music sensitivity, sent with the
+    /// "Music: X" scenes.
+    pub fn music_sensitivity_command(&self, device: &ServiceDevice) -> String {
+        format!(
+            "{}/number/{}/music-sensitivity/command",
+            self.base,
+            topic_safe_id(device)
+        )
+    }
+
+    pub fn music_sensitivity_state(&self, device: &ServiceDevice) -> String {
+        format!(
+            "{}/number/{}/music-sensitivity/state",
+            self.base,
+            topic_safe_id(device)
+        )
+    }
+
+    pub fn music_auto_color_command(&self, device: &ServiceDevice) -> String {
+        format!(
+            "{}/switch/{}/music-auto-color/command",
+            self.base,
+            topic_safe_id(device)
+        )
+    }
+
+    pub fn music_auto_color_state(&self, device: &ServiceDevice) -> String {
+        format!(
+            "{}/switch/{}/music-auto-color/state",
+            self.base,
+            topic_safe_id(device)
+        )
+    }
+
     pub fn set_work_mode(&self, device: &ServiceDevice) -> String {
         format!("{}/{}/set-work-mode", self.base, topic_safe_id(device))
     }
@@ -271,6 +349,22 @@ impl Topics {
 
     pub fn route_number_command(&self) -> String {
         format!("{}/number/:id/command/:mode_name/:work_mode", self.base)
+    }
+
+    pub fn route_capability_number_command(&self) -> String {
+        format!("{}/number/:id/capability/:instance/command", self.base)
+    }
+
+    pub fn route_capability_mode_command(&self) -> String {
+        format!("{}/select/:id/capability/:instance/command", self.base)
+    }
+
+    pub fn route_music_sensitivity_command(&self) -> String {
+        format!("{}/number/:id/music-sensitivity/command", self.base)
+    }
+
+    pub fn route_music_auto_color_command(&self) -> String {
+        format!("{}/switch/:id/music-auto-color/command", self.base)
     }
 
     pub fn route_humidifier_set_mode(&self) -> String {

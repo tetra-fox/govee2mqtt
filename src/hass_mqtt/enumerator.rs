@@ -4,11 +4,13 @@ use crate::hass_mqtt::climate::TargetTemperatureEntity;
 use crate::hass_mqtt::humidifier::Humidifier;
 use crate::hass_mqtt::instance::EntityList;
 use crate::hass_mqtt::light::DeviceLight;
-use crate::hass_mqtt::number::WorkModeNumber;
+use crate::hass_mqtt::number::{CapabilityNumber, MusicSensitivityNumber, WorkModeNumber};
 use crate::hass_mqtt::scene::SceneConfig;
-use crate::hass_mqtt::select::{SceneModeSelect, WorkModeSelect};
-use crate::hass_mqtt::sensor::{CapabilitySensor, DeviceStatusDiagnostic, GlobalFixedDiagnostic};
-use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch, PowerSwitch};
+use crate::hass_mqtt::select::{CapabilityModeSelect, SceneModeSelect, WorkModeSelect};
+use crate::hass_mqtt::sensor::{
+    CapabilityEventSensor, CapabilitySensor, DeviceStatusDiagnostic, GlobalFixedDiagnostic,
+};
+use crate::hass_mqtt::switch::{CapabilitySwitch, MusicAutoColorSwitch, OutletSwitch, PowerSwitch};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::state::StateHandle;
@@ -214,15 +216,32 @@ pub async fn enumerate_entities_for_device(
                 DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff => {
                     entities.add(CapabilitySwitch::new(&topics, d, state, cap).await?);
                 }
+                // Color and scene capabilities are surfaced through the light
+                // entity and the Mode/Scene select, not as their own entities.
+                // The music mode itself is one of those scene options; its
+                // sensitivity/auto-color preferences are added below.
                 DeviceCapabilityKind::ColorSetting
                 | DeviceCapabilityKind::SegmentColorSetting
                 | DeviceCapabilityKind::MusicSetting
-                | DeviceCapabilityKind::Event
-                | DeviceCapabilityKind::Mode
                 | DeviceCapabilityKind::DynamicScene => {}
 
+                // brightness is the light entity; humidity is the humidifier.
                 DeviceCapabilityKind::Range if cap.instance == "brightness" => {}
                 DeviceCapabilityKind::Range if cap.instance == "humidity" => {}
+                DeviceCapabilityKind::Range => {
+                    entities.add(CapabilityNumber::new(&topics, d, state, cap));
+                }
+
+                DeviceCapabilityKind::Mode => {
+                    if let Some(select) = CapabilityModeSelect::new(&topics, d, state, cap) {
+                        entities.add(select);
+                    }
+                }
+
+                DeviceCapabilityKind::Event => {
+                    entities.add(CapabilityEventSensor::new(&topics, d, state, cap));
+                }
+
                 DeviceCapabilityKind::WorkMode => {
                     entities_for_work_mode(d, state, cap, entities).await?;
                 }
@@ -242,6 +261,15 @@ pub async fn enumerate_entities_for_device(
                     );
                 }
             }
+        }
+
+        // When the device has a music mode, the "Music: X" scenes send a
+        // sensitivity and auto-color value alongside the mode. Expose those two
+        // as adjustable preferences; Govee doesn't report them back so they only
+        // take effect on the next music-scene selection.
+        if info.capability_by_instance("musicMode").is_some() {
+            entities.add(MusicSensitivityNumber::new(&topics, d, state));
+            entities.add(MusicAutoColorSwitch::new(&topics, d, state));
         }
 
         if let Some(segments) = info.supports_segmented_rgb() {

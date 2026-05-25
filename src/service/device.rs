@@ -49,6 +49,13 @@ pub struct Device {
     pub last_polled: Option<DateTime<Utc>>,
 
     active_scene: Option<ActiveSceneInfo>,
+
+    /// User-chosen sensitivity/auto-color for the "Music: X" scenes. Govee
+    /// requires these to be sent together with the music mode and never reports
+    /// them back, so we hold the user's preference here and send it when a music
+    /// scene is selected. None means use the defaults (100 / on).
+    music_sensitivity: Option<u8>,
+    music_auto_color: Option<bool>,
 }
 
 impl std::fmt::Display for Device {
@@ -429,6 +436,24 @@ impl Device {
                 });
             }
         }
+    }
+
+    /// The user's chosen music sensitivity, defaulting to 100.
+    pub fn music_sensitivity(&self) -> u8 {
+        self.music_sensitivity.unwrap_or(100)
+    }
+
+    pub fn set_music_sensitivity(&mut self, value: u8) {
+        self.music_sensitivity = Some(value.min(100));
+    }
+
+    /// The user's chosen music auto-color, defaulting to on.
+    pub fn music_auto_color(&self) -> bool {
+        self.music_auto_color.unwrap_or(true)
+    }
+
+    pub fn set_music_auto_color(&mut self, value: bool) {
+        self.music_auto_color = Some(value);
     }
 
     pub fn clear_scene_if_color_changed(&mut self) {

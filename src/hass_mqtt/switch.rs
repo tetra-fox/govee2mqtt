@@ -2,10 +2,11 @@ use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{camel_case_to_space_separated, HassClient};
+use crate::service::hass::{camel_case_to_space_separated, HassClient, IdParameter};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceCapability;
+use mosquitto_rs::router::{Params, Payload, State};
 use serde::Serialize;
 use serde_json::json;
 
@@ -204,6 +205,85 @@ impl EntityInstance for PowerSwitch {
         }
         Ok(())
     }
+}
+
+/// The user's preferred music auto-color toggle, exposed as a switch. Like the
+/// sensitivity number, Govee never reports this back, so the published state is
+/// whatever the user last set (defaulting to on). It takes effect the next time
+/// a "Music: X" scene is selected.
+pub struct MusicAutoColorSwitch {
+    switch: SwitchConfig,
+    device_id: String,
+    state: StateHandle,
+}
+
+impl MusicAutoColorSwitch {
+    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let switch = SwitchConfig {
+            base: EntityConfig {
+                availability_topic: topics.availability(),
+                name: Some("Music Auto Color".to_string()),
+                device_class: None,
+                origin: Origin::default(),
+                device: Device::for_device(topics, device),
+                unique_id: topics.entity_id(device, "music-auto-color"),
+                entity_category: Some("config".to_string()),
+                icon: Some("mdi:palette".to_string()),
+            },
+            command_topic: topics.music_auto_color_command(device),
+            state_topic: topics.music_auto_color_state(device),
+        };
+        Self {
+            switch,
+            device_id: device.id.to_string(),
+            state: state.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl EntityInstance for MusicAutoColorSwitch {
+    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
+        self.switch.publish(state, client).await
+    }
+
+    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+        let device = self
+            .state
+            .device_by_id(&self.device_id)
+            .await
+            .expect("device to exist");
+        client
+            .publish(
+                &self.switch.state_topic,
+                if device.music_auto_color() {
+                    "ON"
+                } else {
+                    "OFF"
+                },
+            )
+            .await
+    }
+}
+
+pub async fn mqtt_music_auto_color_command(
+    Payload(command): Payload<String>,
+    Params(IdParameter { id }): Params<IdParameter>,
+    State(state): State<StateHandle>,
+) -> anyhow::Result<()> {
+    log::info!("music auto color for {id}: {command}");
+    let on = match command.as_str() {
+        "ON" | "on" => true,
+        "OFF" | "off" => false,
+        _ => anyhow::bail!("invalid {command} for {id}"),
+    };
+    let device = state.resolve_device_for_control(&id).await?;
+    state
+        .device_mut(&device.sku, &device.id)
+        .await
+        .set_music_auto_color(on);
+    state.notify_of_state_change(&device.id).await?;
+    Ok(())
 }
 
 #[async_trait]

@@ -231,6 +231,105 @@ impl EntityInstance for CapabilitySensor {
     }
 }
 
+/// A read-only sensor for a platform-API Event capability (eg: a leak or filter
+/// alarm). Govee gives no way to set these, so there's no command path. The
+/// latest reported value is the sensor state; the alarm type and the raw event
+/// payload are exposed as attributes for full granularity.
+pub struct CapabilityEventSensor {
+    sensor: SensorConfig,
+    device_id: String,
+    state: StateHandle,
+    instance_name: String,
+}
+
+impl CapabilityEventSensor {
+    pub fn new(
+        topics: &Topics,
+        device: &ServiceDevice,
+        state: &StateHandle,
+        instance: &DeviceCapability,
+    ) -> Self {
+        let unique_id = format!(
+            "sensor-{id}-event-{inst}",
+            id = topic_safe_id(device),
+            inst = topic_safe_string(&instance.instance)
+        );
+
+        Self {
+            sensor: SensorConfig {
+                base: EntityConfig {
+                    availability_topic: topics.availability(),
+                    name: Some(crate::service::hass::camel_case_to_space_separated(
+                        &instance.instance,
+                    )),
+                    entity_category: Some("diagnostic".to_string()),
+                    origin: Origin::default(),
+                    device: Device::for_device(topics, device),
+                    unique_id: unique_id.clone(),
+                    device_class: None,
+                    icon: Some("mdi:bell-alert".to_string()),
+                },
+                state_topic: topics.sensor_state(&unique_id),
+                state_class: None,
+                unit_of_measurement: None,
+                json_attributes_topic: Some(topics.sensor_attributes(&unique_id)),
+            },
+            device_id: device.id.to_string(),
+            state: state.clone(),
+            instance_name: instance.instance.to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl EntityInstance for CapabilityEventSensor {
+    async fn publish_config(&self, state: &StateHandle, client: &HassClient) -> anyhow::Result<()> {
+        self.sensor.publish(state, client).await
+    }
+
+    async fn notify_state(&self, client: &HassClient) -> anyhow::Result<()> {
+        let device = self
+            .state
+            .device_by_id(&self.device_id)
+            .await
+            .expect("device to exist");
+
+        if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name) {
+            // Prefer a scalar /value for the sensor state, falling back to the
+            // whole state as a string when there isn't one.
+            let summary = match cap.state.pointer("/value") {
+                Some(v) if v.is_string() => v.as_str().unwrap_or_default().to_string(),
+                Some(v) if !v.is_null() => v.to_string(),
+                _ => cap.state.to_string(),
+            };
+            self.sensor.notify_state(client, &summary).await?;
+            if let Some(topic) = &self.sensor.json_attributes_topic {
+                client
+                    .publish_obj(topic, json!({ "raw_state": cap.state }))
+                    .await?;
+            }
+            return Ok(());
+        }
+
+        // No event reported yet, also expose the static metadata (alarm type)
+        // from the capability definition so the entity carries some context.
+        if let Some(cap) = device.get_capability_by_instance(&self.instance_name) {
+            if let Some(topic) = &self.sensor.json_attributes_topic {
+                client
+                    .publish_obj(
+                        topic,
+                        json!({
+                            "alarm_type": cap.alarm_type,
+                            "event_state": cap.event_state,
+                        }),
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct DeviceStatusDiagnostic {
     sensor: SensorConfig,
     device_id: String,
@@ -306,6 +405,8 @@ impl EntityInstance for DeviceStatusDiagnostic {
             "platform_metadata": platform_metadata,
             "platform_state": platform_state,
             "overall": device_state,
+            "room_name": device.undoc_device_info.as_ref().and_then(|i| i.room_name.clone()),
+            "nightlight": device.nightlight_state,
         });
 
         self.sensor.notify_state(client, &summary).await?;

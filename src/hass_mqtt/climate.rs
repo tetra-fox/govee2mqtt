@@ -60,7 +60,7 @@ impl TargetTemperatureEntity {
                 min: Some(constraints.min.value().floor() as f32),
                 max: Some(constraints.max.value().ceil() as f32),
                 step: 1.0,
-                unit_of_measurement: Some(units.unit_of_measurement()),
+                unit_of_measurement: Some(units.unit_of_measurement().to_string()),
             },
             device_id: device.id.to_string(),
             state: state.clone(),

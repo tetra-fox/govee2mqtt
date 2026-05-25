@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use once_cell::sync::Lazy;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -289,7 +289,7 @@ impl From<NotifyHumidifierNightlightParams> for SetHumidifierNightlightParams {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize)]
 pub struct NotifyHumidifierNightlightParams {
     pub on: bool,
     pub r: u8,

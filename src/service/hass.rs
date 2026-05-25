@@ -2,8 +2,11 @@ use crate::hass_mqtt::climate::mqtt_set_temperature;
 use crate::hass_mqtt::enumerator::{enumerate_all_entites, enumerate_entities_for_device};
 use crate::hass_mqtt::humidifier::{mqtt_device_set_work_mode, mqtt_humidifier_set_target};
 use crate::hass_mqtt::instance::EntityList;
-use crate::hass_mqtt::number::mqtt_number_command;
-use crate::hass_mqtt::select::mqtt_set_mode_scene;
+use crate::hass_mqtt::number::{
+    mqtt_capability_number_command, mqtt_music_sensitivity_command, mqtt_number_command,
+};
+use crate::hass_mqtt::select::{mqtt_set_capability_mode, mqtt_set_mode_scene};
+use crate::hass_mqtt::switch::mqtt_music_auto_color_command;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::state::StateHandle;
 use anyhow::Context;
@@ -577,6 +580,30 @@ async fn run_mqtt_loop(
             .await?;
         router
             .route(topics.route_set_mode_scene(), mqtt_set_mode_scene)
+            .await?;
+        router
+            .route(
+                topics.route_capability_number_command(),
+                mqtt_capability_number_command,
+            )
+            .await?;
+        router
+            .route(
+                topics.route_capability_mode_command(),
+                mqtt_set_capability_mode,
+            )
+            .await?;
+        router
+            .route(
+                topics.route_music_sensitivity_command(),
+                mqtt_music_sensitivity_command,
+            )
+            .await?;
+        router
+            .route(
+                topics.route_music_auto_color_command(),
+                mqtt_music_auto_color_command,
+            )
             .await?;
 
         tokio::time::sleep(HASS_REGISTER_DELAY).await;
