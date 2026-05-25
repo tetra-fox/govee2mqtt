@@ -3,7 +3,9 @@ use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
 use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{HassClient, topic_safe_id, topic_safe_string};
+use crate::service::hass::{
+    HassClient, camel_case_to_space_separated, topic_safe_id, topic_safe_string,
+};
 use crate::service::quirks::HumidityUnits;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
@@ -44,6 +46,60 @@ impl SensorConfig {
 
     pub async fn notify_state(&self, client: &HassClient, value: &str) -> anyhow::Result<()> {
         client.publish(&self.state_topic, value).await
+    }
+}
+
+/// Home Assistant metadata for a Govee property/sensor capability, keyed by its
+/// instance name. device_class drives the icon and unit handling, state_class
+/// tells HA to keep long-term statistics, and name overrides the default
+/// camel-case-derived label where a nicer one exists.
+struct SensorMeta {
+    device_class: Option<&'static str>,
+    state_class: Option<StateClass>,
+    unit: Option<&'static str>,
+    name: String,
+}
+
+impl SensorMeta {
+    fn for_instance(instance: &str) -> Self {
+        let (device_class, state_class, unit, name) = match instance {
+            // sensorTemperature's unit follows the configured scale and is set
+            // by the caller; device_class/state_class are still fixed here.
+            "sensorTemperature" => (
+                Some(DEVICE_CLASS_TEMPERATURE),
+                Some(StateClass::Measurement),
+                None,
+                "Temperature",
+            ),
+            "humidity" | "sensorHumidity" => (
+                Some(DEVICE_CLASS_HUMIDITY),
+                Some(StateClass::Measurement),
+                Some("%"),
+                "Humidity",
+            ),
+            // airQuality and filterLifeTime are reported by Govee without a
+            // declared unit, and the device_class differs by model (pm2.5
+            // concentration vs an index, percent-remaining vs hours), so we
+            // only mark them as measurements and let HA infer the rest.
+            "airQuality" => (None, Some(StateClass::Measurement), None, "Air Quality"),
+            "filterLifeTime" => (None, Some(StateClass::Measurement), None, "Filter Life"),
+            "online" => (None, None, None, "Connected to Govee Cloud"),
+            _ => {
+                return Self {
+                    device_class: None,
+                    state_class: None,
+                    unit: None,
+                    name: camel_case_to_space_separated(instance),
+                };
+            }
+        };
+
+        Self {
+            device_class,
+            state_class,
+            unit,
+            name: name.to_string(),
+        }
     }
 }
 
@@ -122,30 +178,18 @@ impl CapabilitySensor {
             inst = topic_safe_string(&instance.instance)
         );
 
-        let unit_of_measurement = match instance.instance.as_str() {
-            "sensorTemperature" => Some(state.get_temperature_scale().await.unit_of_measurement()),
-            "sensorHumidity" => Some("%"),
-            _ => None,
-        };
+        let meta = SensorMeta::for_instance(&instance.instance);
 
-        let device_class = match instance.instance.as_str() {
-            "sensorTemperature" => Some(DEVICE_CLASS_TEMPERATURE),
-            "sensorHumidity" => Some(DEVICE_CLASS_HUMIDITY),
-            _ => None,
+        // Temperature unit follows the user's configured scale, so it can't be
+        // a static table entry like the others.
+        let unit_of_measurement = if instance.instance == "sensorTemperature" {
+            Some(state.get_temperature_scale().await.unit_of_measurement())
+        } else {
+            meta.unit
         };
-
-        let state_class = match instance.instance.as_str() {
-            "sensorTemperature" => Some(StateClass::Measurement),
-            "sensorHumidity" => Some(StateClass::Measurement),
-            _ => None,
-        };
-
-        let name = match instance.instance.as_str() {
-            "sensorTemperature" => "Temperature".to_string(),
-            "sensorHumidity" => "Humidity".to_string(),
-            "online" => "Connected to Govee Cloud".to_string(),
-            _ => instance.instance.to_string(),
-        };
+        let device_class = meta.device_class;
+        let state_class = meta.state_class;
+        let name = meta.name;
 
         let (availability, availability_mode) = EntityConfig::device_availability(topics, device);
 
