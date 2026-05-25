@@ -10,7 +10,7 @@ on:
       - "**/Cargo.*"
       - "Dockerfile"
       - ".dockerignore"
-      - ".github/workflows/build.yml"
+      - ".github/workflows/docker.yml"
   pull_request:
     branches: [main]
     paths:
@@ -18,7 +18,11 @@ on:
       - "**/Cargo.*"
       - "Dockerfile"
       - ".dockerignore"
-      - ".github/workflows/build.yml"
+      - ".github/workflows/docker.yml"
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+  IMAGE_NAME: govee2mqtt
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,86 +31,96 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
+  init:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.meta.outputs.version }}
+      tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+      # version is the release tag, or edge-<sha> off main. tags is a
+      # newline-separated list for build-push-action / the manifest action:
+      # the release version plus latest, or just edge.
+      - name: Compute version and tags
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "release" ]; then
+            version="$RELEASE_TAG"
+            tags="${RELEASE_TAG}"$'\n'"latest"
+          else
+            version="edge-${SHA}"
+            tags="edge"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
   build:
-    if: ${{ github.event_name == 'release' }}
-    uses: docker/github-builder/.github/workflows/build.yml@v1
+    needs: init
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
       packages: write
-      id-token: write
-    with:
-      output: image
-      push: true
-      platforms: linux/amd64,linux/arm64
-      build-args: |
-        GOVEE_CI_TAG=${{ github.event.release.tag_name }}
-      set-meta-labels: true
-      set-meta-annotations: true
-      meta-images: ghcr.io/${{ github.repository }}
-      meta-tags: |
-        type=semver,pattern={{version}}
-        type=semver,pattern={{major}}.{{minor}}
-        type=semver,pattern={{major}}
-        type=raw,value=latest
-      cache: true
-      cache-mode: max
-    secrets:
-      registry-auths: |
-        - registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-  # push an :edge image from main so the dev add-on can track unreleased code
-  edge:
-    if: ${{ github.event_name == 'push' }}
-    uses: docker/github-builder/.github/workflows/build.yml@v1
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    with:
-      output: image
-      push: true
-      platforms: linux/amd64,linux/arm64
-      build-args: |
-        GOVEE_CI_TAG=edge-${{ github.sha }}
-      set-meta-labels: true
-      set-meta-annotations: true
-      meta-images: ghcr.io/${{ github.repository }}
-      meta-tags: |
-        type=raw,value=edge
-      cache: true
-      cache-mode: max
-    secrets:
-      registry-auths: |
-        - registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-  # build the image on PRs without pushing, one platform per native runner, to
-  # catch a broken Dockerfile before a release is cut
-  pr-build:
-    if: ${{ github.event_name == 'pull_request' }}
-    permissions:
-      contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux/amd64
-          - os: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.os }}
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v7
+      - name: Login to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the daemon image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: false
+          target: standalone
+          platforms: linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }}
+          # build.rs has no .git to read in the CI context, so the version is
+          # passed in
+          build-args: |
+            GOVEE_CI_TAG=${{ needs.init.outputs.version }}
+          # one tag per per-arch image: the manifest job stitches them, so all
+          # per-arch images share the primary tag the manifest action looks up
+          tags: ${{ matrix.image }}:${{ github.event_name == 'release' && needs.init.outputs.version || 'edge' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+  manifest:
+    needs: [init, build]
+    # PRs only validate the per-arch builds; nothing is pushed to stitch
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+    steps:
+      - name: Publish multi-arch manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.03.2
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: ${{ env.IMAGE_NAME }}
+          image-tags: ${{ needs.init.outputs.tags }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
