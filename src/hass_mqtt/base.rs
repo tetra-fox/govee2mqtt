@@ -91,6 +91,8 @@ pub struct Device {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sw_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub hw_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_area: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via_device: Option<String>,
@@ -102,11 +104,16 @@ pub struct Device {
 
 impl Device {
     pub fn for_device(topics: &Topics, device: &ServiceDevice) -> Self {
+        // Firmware/hardware versions come from the undoc device list
+        // (versionSoft/versionHard); devices known only via the platform API
+        // don't carry them.
+        let entry = device.undoc_device_info.as_ref().map(|info| &info.entry);
         Self {
             name: device.name(),
             manufacturer: "Govee".to_string(),
             model: device.sku.to_string(),
-            sw_version: None,
+            sw_version: entry.map(|e| e.version_soft.clone()),
+            hw_version: entry.map(|e| e.version_hard.clone()),
             suggested_area: device.room_name().map(|s| s.to_string()),
             via_device: Some(topics.service_id()),
             identifiers: vec![
@@ -126,6 +133,7 @@ impl Device {
             manufacturer: "tetra-fox".to_string(),
             model: "govee2mqtt".to_string(),
             sw_version: Some(govee_version().to_string()),
+            hw_version: None,
             suggested_area: None,
             via_device: None,
             identifiers: vec![topics.service_id()],

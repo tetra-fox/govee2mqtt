@@ -592,5 +592,9 @@ mod test {
             from_json(include_str!("../../test-data/undoc-device-list-bff.json")).expect("parse");
         assert_eq!(resp.data.devices.len(), 1);
         assert_eq!(resp.data.devices[0].card_type, Some(1));
+        // These feed the hass device registry hw_version/sw_version, so lock in
+        // that we read them from the top-level versionHard/versionSoft.
+        assert_eq!(resp.data.devices[0].version_hard, "3.03.01");
+        assert_eq!(resp.data.devices[0].version_soft, "1.00.11");
     }
 }
