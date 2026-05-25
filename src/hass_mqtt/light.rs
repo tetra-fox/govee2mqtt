@@ -1,10 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{
-    availability_topic, kelvin_to_mired, light_segment_state_topic, light_state_topic,
-    topic_safe_id, HassClient,
-};
+use crate::service::hass::{kelvin_to_mired, HassClient};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceType;
@@ -126,7 +124,7 @@ impl EntityInstance for DeviceLight {
 
 impl DeviceLight {
     pub async fn for_device(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
         segment: Option<u32>,
@@ -135,14 +133,8 @@ impl DeviceLight {
         let device_type = device.device_type();
 
         let command_topic = match segment {
-            None => format!(
-                "{base_topic}/light/{id}/command",
-                id = topic_safe_id(device)
-            ),
-            Some(seg) => format!(
-                "{base_topic}/light/{id}/command/{seg}",
-                id = topic_safe_id(device)
-            ),
+            None => topics.light_command(device),
+            Some(seg) => topics.light_segment_command(device, seg),
         };
 
         let icon = match segment {
@@ -152,15 +144,11 @@ impl DeviceLight {
         };
 
         let state_topic = match segment {
-            Some(seg) => light_segment_state_topic(base_topic, device, seg),
-            None => light_state_topic(base_topic, device),
+            Some(seg) => topics.light_segment_state(device, seg),
+            None => topics.light_state(device),
         };
-        let availability_topic = availability_topic(base_topic);
-        let unique_id = format!(
-            "{base_topic}-{id}{seg}",
-            id = topic_safe_id(device),
-            seg = segment.map(|n| format!("-{n}")).unwrap_or_default()
-        );
+        let availability_topic = topics.availability();
+        let unique_id = topics.light_unique_id(device, segment);
 
         let effect_list = if segment.is_some() {
             vec![]
@@ -215,7 +203,7 @@ impl DeviceLight {
                     name,
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

@@ -148,8 +148,7 @@ impl HassClient {
 
         // Mark as available
         log::trace!("register_with_hass: mark as online");
-        let base_topic = state.get_base_topic().await;
-        self.publish(availability_topic(&base_topic), "online")
+        self.publish(state.topics().await.availability(), "online")
             .await
             .context("online -> availability_topic")?;
 
@@ -217,42 +216,6 @@ pub fn topic_safe_id(device: &ServiceDevice) -> String {
     id.retain(|c| c != ':');
     id.retain(|c| c != ' ');
     id
-}
-
-pub fn switch_instance_state_topic(
-    base_topic: &str,
-    device: &ServiceDevice,
-    instance: &str,
-) -> String {
-    format!(
-        "{base_topic}/switch/{id}/{instance}/state",
-        id = topic_safe_id(device)
-    )
-}
-
-pub fn light_state_topic(base_topic: &str, device: &ServiceDevice) -> String {
-    format!("{base_topic}/light/{id}/state", id = topic_safe_id(device))
-}
-
-pub fn light_segment_state_topic(base_topic: &str, device: &ServiceDevice, segment: u32) -> String {
-    format!(
-        "{base_topic}/light/{id}/state/{segment}",
-        id = topic_safe_id(device)
-    )
-}
-
-/// All entities use the same topic so that we can mark unavailable
-/// via last-will
-pub fn availability_topic(base_topic: &str) -> String {
-    format!("{base_topic}/availability")
-}
-
-pub fn oneclick_topic(base_topic: &str) -> String {
-    format!("{base_topic}/oneclick")
-}
-
-pub fn purge_cache_topic(base_topic: &str) -> String {
-    format!("{base_topic}/purge-caches")
 }
 
 #[derive(Deserialize)]
@@ -558,7 +521,7 @@ async fn run_mqtt_loop(
         state: &StateHandle,
     ) -> anyhow::Result<Arc<MqttRouter<StateHandle>>> {
         let disco_prefix = state.get_hass_disco_prefix().await;
-        let base = state.get_base_topic().await;
+        let topics = state.topics().await;
         let mut router: MqttRouter<StateHandle> = MqttRouter::new(client.clone());
 
         router
@@ -566,69 +529,54 @@ async fn run_mqtt_loop(
             .await?;
 
         router
-            .route(format!("{base}/light/:id/command"), mqtt_light_command)
+            .route(topics.route_light_command(), mqtt_light_command)
             .await?;
         router
             .route(
-                format!("{base}/light/:id/command/:segment"),
+                topics.route_light_segment_command(),
                 mqtt_light_segment_command,
             )
             .await?;
         router
-            .route(
-                format!("{base}/switch/:id/command/:instance"),
-                mqtt_switch_command,
-            )
+            .route(topics.route_switch_command(), mqtt_switch_command)
             .await?;
         router
-            .route(
-                format!("{base}/switch/:id/outlet/:index/command"),
-                mqtt_outlet_command,
-            )
+            .route(topics.route_outlet_command(), mqtt_outlet_command)
             .await?;
 
-        router.route(oneclick_topic(&base), mqtt_oneclick).await?;
+        router.route(topics.oneclick(), mqtt_oneclick).await?;
         router
-            .route(purge_cache_topic(&base), mqtt_purge_caches)
+            .route(topics.purge_caches(), mqtt_purge_caches)
             .await?;
         router
             .route(
-                format!("{base}/:id/request-platform-data"),
+                topics.route_request_platform_data(),
                 mqtt_request_platform_data,
             )
             .await?;
         router
-            .route(
-                format!("{base}/number/:id/command/:mode_name/:work_mode"),
-                mqtt_number_command,
-            )
+            .route(topics.route_number_command(), mqtt_number_command)
             .await?;
         router
             .route(
-                format!("{base}/humidifier/:id/set-mode"),
+                topics.route_humidifier_set_mode(),
                 mqtt_device_set_work_mode,
             )
             .await?;
         router
-            .route(
-                format!("{base}/:id/set-work-mode"),
-                mqtt_device_set_work_mode,
-            )
+            .route(topics.route_set_work_mode(), mqtt_device_set_work_mode)
             .await?;
         router
             .route(
-                format!("{base}/humidifier/:id/set-target"),
+                topics.route_humidifier_set_target(),
                 mqtt_humidifier_set_target,
             )
             .await?;
         router
-            .route(
-                format!("{base}/:id/set-temperature/:instance/:units"),
-                mqtt_set_temperature,
-            )
+            .route(topics.route_set_temperature(), mqtt_set_temperature)
             .await?;
         router
-            .route(format!("{base}/:id/set-mode-scene"), mqtt_set_mode_scene)
+            .route(topics.route_set_mode_scene(), mqtt_set_mode_scene)
             .await?;
 
         tokio::time::sleep(HASS_REGISTER_DELAY).await;
@@ -686,20 +634,15 @@ pub async fn spawn_hass_integration(
 
     state.set_temperature_scale(args.temperature_scale()?).await;
 
-    let base_topic = args.base_topic()?;
-    state.set_base_topic(base_topic.clone()).await;
+    state.set_base_topic(args.base_topic()?).await;
+    let topics = state.topics().await;
 
     let mqtt_host = args.mqtt_host()?;
     let mqtt_username = args.mqtt_username()?;
     let mqtt_password = args.mqtt_password()?;
     let mqtt_port = args.mqtt_port()?;
 
-    client.set_last_will(
-        availability_topic(&base_topic),
-        "offline",
-        QoS::AtMostOnce,
-        false,
-    )?;
+    client.set_last_will(topics.availability(), "offline", QoS::AtMostOnce, false)?;
 
     if mqtt_username.is_some() != mqtt_password.is_some() {
         log::error!(

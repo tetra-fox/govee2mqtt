@@ -2,8 +2,9 @@ use crate::commands::serve::POLL_INTERVAL;
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::humidifier::DEVICE_CLASS_HUMIDITY;
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, topic_safe_string, HassClient};
+use crate::service::hass::{topic_safe_id, topic_safe_string, HassClient};
 use crate::service::quirks::HumidityUnits;
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
@@ -67,7 +68,7 @@ impl EntityInstance for GlobalFixedDiagnostic {
 
 impl GlobalFixedDiagnostic {
     pub fn new<NAME: Into<String>, VALUE: Into<String>>(
-        base_topic: &str,
+        topics: &Topics,
         name: NAME,
         value: VALUE,
     ) -> Self {
@@ -77,16 +78,16 @@ impl GlobalFixedDiagnostic {
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(base_topic),
+                    availability_topic: topics.availability(),
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::this_service(base_topic),
+                    device: Device::this_service(topics),
                     unique_id: unique_id.clone(),
                     device_class: None,
                     icon: None,
                 },
-                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
+                state_topic: topics.sensor_state(&unique_id),
                 state_class: None,
                 unit_of_measurement: None,
                 json_attributes_topic: None,
@@ -106,7 +107,7 @@ pub struct CapabilitySensor {
 
 impl CapabilitySensor {
     pub async fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
         instance: &DeviceCapability,
@@ -145,16 +146,16 @@ impl CapabilitySensor {
         Ok(Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(base_topic),
+                    availability_topic: topics.availability(),
                     name: Some(name),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id: unique_id.clone(),
                     device_class,
                     icon: None,
                 },
-                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
+                state_topic: topics.sensor_state(&unique_id),
                 state_class,
                 unit_of_measurement,
                 json_attributes_topic: None,
@@ -237,27 +238,24 @@ pub struct DeviceStatusDiagnostic {
 }
 
 impl DeviceStatusDiagnostic {
-    pub fn new(base_topic: &str, device: &ServiceDevice, state: &StateHandle) -> Self {
-        let unique_id = format!(
-            "sensor-{id}-{base_topic}-status",
-            id = topic_safe_id(device),
-        );
+    pub fn new(topics: &Topics, device: &ServiceDevice, state: &StateHandle) -> Self {
+        let unique_id = topics.status_sensor_id(device);
 
         Self {
             sensor: SensorConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(base_topic),
+                    availability_topic: topics.availability(),
                     name: Some("Status".to_string()),
                     entity_category: Some("diagnostic".to_string()),
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id: unique_id.clone(),
                     device_class: None,
                     icon: None,
                 },
-                state_topic: format!("{base_topic}/sensor/{unique_id}/state"),
+                state_topic: topics.sensor_state(&unique_id),
                 state_class: None,
-                json_attributes_topic: Some(format!("{base_topic}/sensor/{unique_id}/attributes")),
+                json_attributes_topic: Some(topics.sensor_attributes(&unique_id)),
                 unit_of_measurement: None,
             },
             device_id: device.id.to_string(),

@@ -11,4 +11,5 @@ pub mod scene;
 pub mod select;
 pub mod sensor;
 pub mod switch;
+pub mod topic;
 pub mod work_mode;

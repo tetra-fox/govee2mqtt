@@ -1,9 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{
-    availability_topic, camel_case_to_space_separated, topic_safe_id, topic_safe_string, HassClient,
-};
+use crate::service::hass::{camel_case_to_space_separated, topic_safe_string, HassClient};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceCapability;
@@ -22,21 +21,13 @@ pub struct ButtonConfig {
 impl ButtonConfig {
     #[allow(dead_code)]
     pub async fn for_device(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         instance: &DeviceCapability,
     ) -> anyhow::Result<Self> {
-        let command_topic = format!(
-            "{base_topic}/switch/{id}/command/{inst}",
-            id = topic_safe_id(device),
-            inst = instance.instance
-        );
-        let availability_topic = availability_topic(base_topic);
-        let unique_id = format!(
-            "{base_topic}-{id}-{inst}",
-            id = topic_safe_id(device),
-            inst = instance.instance
-        );
+        let command_topic = topics.switch_command(device, &instance.instance);
+        let availability_topic = topics.availability();
+        let unique_id = topics.entity_id(device, &instance.instance);
 
         Ok(Self {
             base: EntityConfig {
@@ -44,7 +35,7 @@ impl ButtonConfig {
                 name: Some(camel_case_to_space_separated(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
-                device: Device::for_device(base_topic, device),
+                device: Device::for_device(topics, device),
                 unique_id,
                 entity_category: None,
                 icon: None,
@@ -55,7 +46,7 @@ impl ButtonConfig {
     }
 
     pub fn new<NAME: Into<String>, TOPIC: Into<String>>(
-        base_topic: &str,
+        topics: &Topics,
         name: NAME,
         topic: TOPIC,
     ) -> Self {
@@ -63,11 +54,11 @@ impl ButtonConfig {
         let unique_id = format!("global-{}", topic_safe_string(&name));
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(base_topic),
+                availability_topic: topics.availability(),
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
-                device: Device::this_service(base_topic),
+                device: Device::this_service(topics),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,
@@ -78,30 +69,28 @@ impl ButtonConfig {
     }
 
     pub fn activate_work_mode_preset(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         name: &str,
         mode_name: &str,
         mode_num: i64,
         value: i64,
     ) -> Self {
-        let unique_id = format!(
-            "{base_topic}-{id}-preset-{mode}-{mode_num}-{value}",
-            id = topic_safe_id(device),
-            mode = topic_safe_string(mode_name),
+        let unique_id = topics.entity_id(
+            device,
+            &format!(
+                "preset-{mode}-{mode_num}-{value}",
+                mode = topic_safe_string(mode_name)
+            ),
         );
-        let command_topic = format!(
-            "{base_topic}/number/{id}/command/{mode}/{mode_num}",
-            id = topic_safe_id(device),
-            mode = topic_safe_string(mode_name),
-        );
+        let command_topic = topics.number_command(device, mode_name, mode_num);
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(base_topic),
+                availability_topic: topics.availability(),
                 name: Some(name.to_string()),
                 entity_category: None,
                 origin: Origin::default(),
-                device: Device::for_device(base_topic, device),
+                device: Device::for_device(topics, device),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,
@@ -111,22 +100,16 @@ impl ButtonConfig {
         }
     }
 
-    pub fn request_platform_data_for_device(base_topic: &str, device: &ServiceDevice) -> Self {
-        let unique_id = format!(
-            "{base_topic}-{id}-request-platform-data",
-            id = topic_safe_id(device)
-        );
-        let command_topic = format!(
-            "{base_topic}/{id}/request-platform-data",
-            id = topic_safe_id(device)
-        );
+    pub fn request_platform_data_for_device(topics: &Topics, device: &ServiceDevice) -> Self {
+        let unique_id = topics.entity_id(device, "request-platform-data");
+        let command_topic = topics.request_platform_data(device);
         Self {
             base: EntityConfig {
-                availability_topic: availability_topic(base_topic),
+                availability_topic: topics.availability(),
                 name: Some("Request Platform API State".to_string()),
                 entity_category: Some("diagnostic".to_string()),
                 origin: Origin::default(),
-                device: Device::for_device(base_topic, device),
+                device: Device::for_device(topics, device),
                 unique_id: unique_id.clone(),
                 device_class: None,
                 icon: None,

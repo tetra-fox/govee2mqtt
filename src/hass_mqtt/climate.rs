@@ -1,8 +1,9 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::EntityInstance;
 use crate::hass_mqtt::number::NumberConfig;
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, topic_safe_string, HassClient};
+use crate::service::hass::{topic_safe_id, topic_safe_string, HassClient};
 use crate::service::state::StateHandle;
 use govee_api::platform_api::{parse_temperature_constraints, DeviceCapability};
 use govee_api::temperature::{
@@ -24,7 +25,7 @@ pub struct TargetTemperatureEntity {
 
 impl TargetTemperatureEntity {
     pub async fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
         instance: &DeviceCapability,
@@ -39,24 +40,17 @@ impl TargetTemperatureEntity {
         );
 
         let name = "Target Temperature".to_string();
-        let command_topic = format!(
-            "{base_topic}/{id}/set-temperature/{inst}/{units}",
-            id = topic_safe_id(device),
-            inst = topic_safe_string(&instance.instance)
-        );
-        let state_topic = format!(
-            "{base_topic}/{id}/advise-set-temperature",
-            id = topic_safe_id(device),
-        );
+        let command_topic = topics.set_temperature(device, &instance.instance, &units.to_string());
+        let state_topic = topics.advise_set_temperature(device);
 
         Ok(Self {
             number: NumberConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(base_topic),
+                    availability_topic: topics.availability(),
                     name: Some(name),
                     entity_category: None,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id: unique_id.clone(),
                     device_class: Some(DEVICE_CLASS_TEMPERATURE),
                     icon: Some("mdi:thermometer".to_string()),

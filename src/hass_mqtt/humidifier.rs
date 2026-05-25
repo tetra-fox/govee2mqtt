@@ -1,8 +1,9 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, HassClient, IdParameter};
+use crate::service::hass::{HassClient, IdParameter};
 use crate::service::state::StateHandle;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -54,7 +55,7 @@ pub struct Humidifier {
 
 impl Humidifier {
     pub async fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
     ) -> anyhow::Result<Self> {
@@ -70,34 +71,16 @@ impl Humidifier {
 
         // command_topic controls the power state; just route it to
         // the general power switch handler
-        let command_topic = format!(
-            "{base_topic}/switch/{id}/command/powerSwitch",
-            id = topic_safe_id(device)
-        );
+        let command_topic = topics.switch_command(device, "powerSwitch");
 
-        let target_humidity_command_topic = format!(
-            "{base_topic}/humidifier/{id}/set-target",
-            id = topic_safe_id(device)
-        );
-        let target_humidity_state_topic = format!(
-            "{base_topic}/humidifier/{id}/notify-target",
-            id = topic_safe_id(device)
-        );
-        let state_topic = format!(
-            "{base_topic}/humidifier/{id}/state",
-            id = topic_safe_id(device)
-        );
+        let target_humidity_command_topic = topics.humidifier_set_target(device);
+        let target_humidity_state_topic = topics.humidifier_notify_target(device);
+        let state_topic = topics.humidifier_state(device);
 
-        let mode_command_topic = format!(
-            "{base_topic}/humidifier/{id}/set-mode",
-            id = topic_safe_id(device)
-        );
-        let mode_state_topic = format!(
-            "{base_topic}/humidifier/{id}/notify-mode",
-            id = topic_safe_id(device)
-        );
+        let mode_command_topic = topics.humidifier_set_mode(device);
+        let mode_state_topic = topics.humidifier_notify_mode(device);
 
-        let unique_id = format!("{base_topic}-{id}-humidifier", id = topic_safe_id(device),);
+        let unique_id = topics.entity_id(device, "humidifier");
 
         let mut min_humidity = None;
         let mut max_humidity = None;
@@ -126,7 +109,7 @@ impl Humidifier {
         Ok(Self {
             humidifier: HumidifierConfig {
                 base: EntityConfig {
-                    availability_topic: availability_topic(base_topic),
+                    availability_topic: topics.availability(),
                     name: if matches!(
                         device.device_type(),
                         DeviceType::Humidifier | DeviceType::Dehumidifier
@@ -137,7 +120,7 @@ impl Humidifier {
                     },
                     device_class,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

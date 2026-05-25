@@ -11,7 +11,6 @@ use crate::hass_mqtt::sensor::{CapabilitySensor, DeviceStatusDiagnostic, GlobalF
 use crate::hass_mqtt::switch::{CapabilitySwitch, OutletSwitch, PowerSwitch};
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, oneclick_topic, purge_cache_topic};
 use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
 use anyhow::Context;
@@ -40,42 +39,41 @@ async fn enumerate_global_entities(
     state: &StateHandle,
     entities: &mut EntityList,
 ) -> anyhow::Result<()> {
-    let base = state.get_base_topic().await;
+    let topics = state.topics().await;
     entities.add(GlobalFixedDiagnostic::new(
-        &base,
+        &topics,
         "Version",
         govee_version(),
     ));
     entities.add(ButtonConfig::new(
-        &base,
+        &topics,
         "Purge Caches",
-        purge_cache_topic(&base),
+        topics.purge_caches(),
     ));
     Ok(())
 }
 
 async fn enumerate_scenes(state: &StateHandle, entities: &mut EntityList) -> anyhow::Result<()> {
     if let Some(undoc) = state.get_undoc_client().await {
-        let base = state.get_base_topic().await;
+        let topics = state.topics().await;
         match undoc.parse_one_clicks().await {
             Ok(items) => {
                 for oc in items {
-                    let unique_id = format!(
-                        "{base}-one-click-{}",
-                        Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple()
+                    let unique_id = topics.one_click_id(
+                        Uuid::new_v5(&Uuid::NAMESPACE_DNS, oc.name.as_bytes()).simple(),
                     );
                     entities.add(SceneConfig {
                         base: EntityConfig {
-                            availability_topic: availability_topic(&base),
+                            availability_topic: topics.availability(),
                             name: Some(oc.name.to_string()),
                             entity_category: None,
                             origin: Origin::default(),
-                            device: Device::this_service(&base),
+                            device: Device::this_service(&topics),
                             unique_id: unique_id.clone(),
                             device_class: None,
                             icon: None,
                         },
-                        command_topic: oneclick_topic(&base),
+                        command_topic: topics.oneclick(),
                         payload_on: oc.name,
                     });
                 }
@@ -95,7 +93,7 @@ async fn entities_for_work_mode(
     cap: &DeviceCapability,
     entities: &mut EntityList,
 ) -> anyhow::Result<()> {
-    let base = state.get_base_topic().await;
+    let topics = state.topics().await;
     let mut work_modes = ParsedWorkMode::with_capability(cap)?;
     work_modes.adjust_for_device(&d.sku);
 
@@ -117,7 +115,7 @@ async fn entities_for_work_mode(
         if show_as_preset {
             if work_mode.values.is_empty() {
                 entities.add(ButtonConfig::activate_work_mode_preset(
-                    &base,
+                    &topics,
                     d,
                     &format!("Activate Mode: {}", work_mode.label()),
                     &work_mode.name,
@@ -128,7 +126,7 @@ async fn entities_for_work_mode(
                 for value in &work_mode.values {
                     if let Some(mode_value) = value.value.as_i64() {
                         entities.add(ButtonConfig::activate_work_mode_preset(
-                            &base,
+                            &topics,
                             d,
                             &value.computed_label,
                             &work_mode.name,
@@ -142,7 +140,7 @@ async fn entities_for_work_mode(
             let label = work_mode.label().to_string();
 
             entities.add(WorkModeNumber::new(
-                &base,
+                &topics,
                 d,
                 state,
                 label,
@@ -153,7 +151,7 @@ async fn entities_for_work_mode(
         }
     }
 
-    entities.add(WorkModeSelect::new(&base, d, &work_modes, state));
+    entities.add(WorkModeSelect::new(&topics, d, &work_modes, state));
 
     Ok(())
 }
@@ -167,24 +165,24 @@ pub async fn enumerate_entities_for_device(
         return Ok(());
     }
 
-    let base = state.get_base_topic().await;
+    let topics = state.topics().await;
 
-    entities.add(DeviceStatusDiagnostic::new(&base, d, state));
-    entities.add(ButtonConfig::request_platform_data_for_device(&base, d));
+    entities.add(DeviceStatusDiagnostic::new(&topics, d, state));
+    entities.add(ButtonConfig::request_platform_data_for_device(&topics, d));
 
     if d.supports_rgb() || d.get_color_temperature_range().is_some() || d.supports_brightness() {
-        entities.add(DeviceLight::for_device(&base, d, state, None).await?);
+        entities.add(DeviceLight::for_device(&topics, d, state, None).await?);
     }
 
     if matches!(
         d.device_type(),
         DeviceType::Humidifier | DeviceType::Dehumidifier
     ) {
-        entities.add(Humidifier::new(&base, d, state).await?);
+        entities.add(Humidifier::new(&topics, d, state).await?);
     }
 
     if d.device_type() != DeviceType::Light {
-        if let Some(scenes) = SceneModeSelect::new(&base, d, state).await? {
+        if let Some(scenes) = SceneModeSelect::new(&topics, d, state).await? {
             entities.add(scenes);
         }
     }
@@ -196,7 +194,7 @@ pub async fn enumerate_entities_for_device(
     // <https://github.com/wez/govee2mqtt/issues/65>
     if let Some(count) = d.socket_outlet_count() {
         for index in 0..count {
-            entities.add(OutletSwitch::new(&base, d, state, index));
+            entities.add(OutletSwitch::new(&topics, d, state, index));
         }
     }
 
@@ -207,14 +205,14 @@ pub async fn enumerate_entities_for_device(
         && d.socket_outlet_count().is_none()
         && d.http_device_info.is_none()
     {
-        entities.add(PowerSwitch::new(&base, d, state));
+        entities.add(PowerSwitch::new(&topics, d, state));
     }
 
     if let Some(info) = &d.http_device_info {
         for cap in &info.capabilities {
             match &cap.kind {
                 DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff => {
-                    entities.add(CapabilitySwitch::new(&base, d, state, cap).await?);
+                    entities.add(CapabilitySwitch::new(&topics, d, state, cap).await?);
                 }
                 DeviceCapabilityKind::ColorSetting
                 | DeviceCapabilityKind::SegmentColorSetting
@@ -230,11 +228,11 @@ pub async fn enumerate_entities_for_device(
                 }
 
                 DeviceCapabilityKind::Property => {
-                    entities.add(CapabilitySensor::new(&base, d, state, cap).await?);
+                    entities.add(CapabilitySensor::new(&topics, d, state, cap).await?);
                 }
 
                 DeviceCapabilityKind::TemperatureSetting => {
-                    entities.add(TargetTemperatureEntity::new(&base, d, state, cap).await?);
+                    entities.add(TargetTemperatureEntity::new(&topics, d, state, cap).await?);
                 }
 
                 kind => {
@@ -248,7 +246,7 @@ pub async fn enumerate_entities_for_device(
 
         if let Some(segments) = info.supports_segmented_rgb() {
             for n in segments {
-                entities.add(DeviceLight::for_device(&base, d, state, Some(n)).await?);
+                entities.add(DeviceLight::for_device(&topics, d, state, Some(n)).await?);
             }
         }
     }

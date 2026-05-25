@@ -1,8 +1,9 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, HassClient, IdParameter};
+use crate::service::hass::{HassClient, IdParameter};
 use crate::service::state::StateHandle;
 use anyhow::Context;
 use mosquitto_rs::router::{Params, Payload, State};
@@ -33,21 +34,15 @@ pub struct WorkModeSelect {
 
 impl WorkModeSelect {
     pub fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         work_modes: &ParsedWorkMode,
         state: &StateHandle,
     ) -> Self {
-        let command_topic = format!(
-            "{base_topic}/{id}/set-work-mode",
-            id = topic_safe_id(device),
-        );
-        let state_topic = format!(
-            "{base_topic}/{id}/notify-work-mode",
-            id = topic_safe_id(device)
-        );
-        let availability_topic = availability_topic(base_topic);
-        let unique_id = format!("{base_topic}-{id}-workMode", id = topic_safe_id(device),);
+        let command_topic = topics.set_work_mode(device);
+        let state_topic = topics.notify_work_mode(device);
+        let availability_topic = topics.availability();
+        let unique_id = topics.entity_id(device, "workMode");
 
         Self {
             select: SelectConfig {
@@ -56,7 +51,7 @@ impl WorkModeSelect {
                     name: Some("Mode".to_string()),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id,
                     entity_category: None,
                     icon: None,
@@ -118,7 +113,7 @@ pub struct SceneModeSelect {
 
 impl SceneModeSelect {
     pub async fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
     ) -> anyhow::Result<Option<Self>> {
@@ -127,16 +122,10 @@ impl SceneModeSelect {
             return Ok(None);
         }
 
-        let command_topic = format!(
-            "{base_topic}/{id}/set-mode-scene",
-            id = topic_safe_id(device)
-        );
-        let state_topic = format!(
-            "{base_topic}/{id}/notify-mode-scene",
-            id = topic_safe_id(device)
-        );
-        let availability_topic = availability_topic(base_topic);
-        let unique_id = format!("{base_topic}-{id}-mode-scene", id = topic_safe_id(device));
+        let command_topic = topics.set_mode_scene(device);
+        let state_topic = topics.notify_mode_scene(device);
+        let availability_topic = topics.availability();
+        let unique_id = topics.entity_id(device, "mode-scene");
 
         Ok(Some(Self {
             select: SelectConfig {
@@ -145,7 +134,7 @@ impl SceneModeSelect {
                     name: Some("Mode/Scene".to_string()),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id,
                     entity_category: None,
                     icon: None,

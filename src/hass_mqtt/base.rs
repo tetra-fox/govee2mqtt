@@ -1,5 +1,5 @@
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::topic_safe_id;
 use crate::version_info::govee_version;
 use serde::Serialize;
 
@@ -56,16 +56,16 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn for_device(base_topic: &str, device: &ServiceDevice) -> Self {
+    pub fn for_device(topics: &Topics, device: &ServiceDevice) -> Self {
         Self {
             name: device.name(),
             manufacturer: "Govee".to_string(),
             model: device.sku.to_string(),
             sw_version: None,
             suggested_area: device.room_name().map(|s| s.to_string()),
-            via_device: Some(base_topic.to_string()),
+            via_device: Some(topics.service_id()),
             identifiers: vec![
-                format!("{base_topic}-{}", topic_safe_id(device)),
+                topics.device_id(device),
                 /*
                 device.computed_name(),
                 device.id.to_string(),
@@ -75,7 +75,7 @@ impl Device {
         }
     }
 
-    pub fn this_service(base_topic: &str) -> Self {
+    pub fn this_service(topics: &Topics) -> Self {
         Self {
             name: "Govee2MQTT".to_string(),
             manufacturer: "tetra-fox".to_string(),
@@ -83,7 +83,7 @@ impl Device {
             sw_version: Some(govee_version().to_string()),
             suggested_area: None,
             via_device: None,
-            identifiers: vec![base_topic.to_string()],
+            identifiers: vec![topics.service_id()],
             connections: vec![],
         }
     }

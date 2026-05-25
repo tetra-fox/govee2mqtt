@@ -1,3 +1,4 @@
+use crate::hass_mqtt::topic::Topics;
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
 use crate::service::hass::{topic_safe_id, HassClient};
@@ -58,8 +59,9 @@ impl State {
         *self.base_topic.lock().await = base_topic;
     }
 
-    pub async fn get_base_topic(&self) -> String {
-        self.base_topic.lock().await.to_string()
+    /// The topic/unique-id builder, seeded from the configured base topic.
+    pub async fn topics(&self) -> Topics {
+        Topics::new(self.base_topic.lock().await.clone())
     }
 
     /// Returns a mutable version of the specified device, creating

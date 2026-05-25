@@ -1,7 +1,8 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::instance::{publish_entity_config, EntityInstance};
+use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{availability_topic, topic_safe_id, topic_safe_string, HassClient};
+use crate::service::hass::{topic_safe_string, HassClient};
 use crate::service::state::StateHandle;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -54,7 +55,7 @@ pub struct WorkModeNumber {
 
 impl WorkModeNumber {
     pub fn new(
-        base_topic: &str,
+        topics: &Topics,
         device: &ServiceDevice,
         state: &StateHandle,
         label: String,
@@ -62,26 +63,17 @@ impl WorkModeNumber {
         work_mode: JsonValue,
         range: Option<Range<i64>>,
     ) -> Self {
-        let command_topic = format!(
-            "{base_topic}/number/{id}/command/{mode}/{mode_num}",
-            id = topic_safe_id(device),
-            mode = topic_safe_string(mode_name),
-            mode_num = work_mode
-                .as_i64()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "work-mode-was-not-int".to_string()),
-        );
-        let state_topic = format!(
-            "{base_topic}/number/{id}/state/{mode}",
-            id = topic_safe_id(device),
-            mode = topic_safe_string(mode_name)
-        );
+        let mode_num = work_mode
+            .as_i64()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "work-mode-was-not-int".to_string());
+        let command_topic = topics.number_command(device, mode_name, &mode_num);
+        let state_topic = topics.number_state(device, mode_name);
 
-        let availability_topic = availability_topic(base_topic);
-        let unique_id = format!(
-            "{base_topic}-{id}-{mode}-number",
-            id = topic_safe_id(device),
-            mode = topic_safe_string(mode_name),
+        let availability_topic = topics.availability();
+        let unique_id = topics.entity_id(
+            device,
+            &format!("{mode}-number", mode = topic_safe_string(mode_name)),
         );
 
         Self {
@@ -91,7 +83,7 @@ impl WorkModeNumber {
                     name: Some(label),
                     device_class: None,
                     origin: Origin::default(),
-                    device: Device::for_device(base_topic, device),
+                    device: Device::for_device(topics, device),
                     unique_id,
                     entity_category: None,
                     icon: None,
