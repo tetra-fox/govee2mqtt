@@ -3,6 +3,14 @@ name: Build Docker image
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.*"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/build.yml"
   pull_request:
     branches: [main]
     paths:
@@ -11,6 +19,11 @@ on:
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/build.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # only collapse rapid edge builds; never cancel a release
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -38,6 +51,33 @@ jobs:
         type=semver,pattern={{major}}.{{minor}}
         type=semver,pattern={{major}}
         type=raw,value=latest
+      cache: true
+      cache-mode: max
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  # push an :edge image from main so the dev add-on can track unreleased code
+  edge:
+    if: ${{ github.event_name == 'push' }}
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      output: image
+      push: true
+      platforms: linux/amd64,linux/arm64
+      build-args: |
+        GOVEE_CI_TAG=edge-${{ github.sha }}
+      set-meta-labels: true
+      set-meta-annotations: true
+      meta-images: ghcr.io/${{ github.repository }}
+      meta-tags: |
+        type=raw,value=edge
       cache: true
       cache-mode: max
     secrets:
