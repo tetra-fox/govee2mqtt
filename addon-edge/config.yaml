@@ -1,5 +1,5 @@
 name: Govee2MQTT Edge
-image: ghcr.io/tetra-fox/govee2mqtt-addon-edge
+image: ghcr.io/tetra-fox/govee2mqtt-addon
 version: "edge"
 slug: govee2mqtt_edge
 description: Control Govee Devices
