@@ -17,6 +17,15 @@ use tokio::time::{Duration, sleep};
 
 pub static POLL_INTERVAL: Lazy<chrono::Duration> = Lazy::new(|| chrono::Duration::seconds(900));
 
+/// How soon we re-send an IoT status request for a device we still have no
+/// fresh state for. IoT replies are async and can be lost, and poll_iot_api
+/// marks the device polled on send, so without a shorter lockout than
+/// POLL_INTERVAL a single missed reply would leave the device stale for the
+/// full interval. Kept above the poll loop period so an unresponsive device
+/// isn't re-requested every cycle.
+pub static IOT_RESEND_INTERVAL: Lazy<chrono::Duration> =
+    Lazy::new(|| chrono::Duration::seconds(120));
+
 #[derive(clap::Parser, Debug)]
 pub struct ServeCommand {
     /// The port on which the HTTP API will listen
@@ -52,10 +61,23 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     }
 
     let poll_interval = device.preferred_poll_interval();
+    let needs_platform = device.needs_platform_poll();
 
+    // last_polled is when we last sent a request, not when a reply arrived. An
+    // IoT reply is async and may be lost, and poll_iot_api marks the device
+    // polled on send, so gating the re-send on the full poll_interval would
+    // leave a device that missed a single reply stale for ~15min. For IoT-polled
+    // devices gate re-sending on a short interval so a missed reply recovers in
+    // a couple minutes. Platform polls fetch state synchronously over the
+    // rate-limited HTTP API, so they keep the full interval.
+    let resend_interval = if needs_platform {
+        poll_interval
+    } else {
+        poll_interval.min(*IOT_RESEND_INTERVAL)
+    };
     let can_update = match &device.last_polled {
         None => true,
-        Some(last) => now - last > poll_interval,
+        Some(last) => now - last > resend_interval,
     };
 
     if !can_update {
@@ -71,8 +93,6 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     if !needs_update {
         return Ok(());
     }
-
-    let needs_platform = device.needs_platform_poll();
 
     // Don't interrogate via HTTP if we can use the LAN.
     // If we have LAN and the device is stale, it is likely
