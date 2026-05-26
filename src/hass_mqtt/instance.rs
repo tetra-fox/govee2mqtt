@@ -49,7 +49,11 @@ pub struct Component {
 /// struct that embeds `base` via `#[serde(flatten)]`, so its serialized form
 /// carries the same fields plus the entity-specific ones. The platform string
 /// is the one each entity passed to the old per-entity publish path.
-pub fn component<T: Serialize>(platform: &'static str, base: &EntityConfig, config: &T) -> Component {
+pub fn component<T: Serialize>(
+    platform: &'static str,
+    base: &EntityConfig,
+    config: &T,
+) -> Component {
     Component {
         platform,
         base: base.clone(),

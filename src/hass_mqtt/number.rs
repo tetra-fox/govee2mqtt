@@ -186,7 +186,11 @@ impl CapabilityNumber {
             }) => {
                 // Govee reports the increment the device accepts; a precision
                 // of 0 would be a nonsensical step, so fall back to 1.
-                let step = if *precision == 0 { 1. } else { *precision as f32 };
+                let step = if *precision == 0 {
+                    1.
+                } else {
+                    *precision as f32
+                };
                 (*min as f32, *max as f32, step, unit.clone())
             }
             _ => (0., 255., 1., None),
