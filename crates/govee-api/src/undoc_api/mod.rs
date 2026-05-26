@@ -283,6 +283,57 @@ impl GoveeUndocumentedApi {
         Ok(())
     }
 
+    /// Read a device's stored "common data" blob. The app keeps per-device UI
+    /// state (eg: the H6093's full aurora/laser settings) in this cloud store,
+    /// keyed by `biz_type` + `biz_key` (the H6093 uses biz_type 3, key
+    /// `H6093_<device>`). Returns the inner JSON the app stored, or None if the
+    /// device has no record yet. This is how we seed the current device state
+    /// before a single-field edit, matching how the app reads it back.
+    pub async fn get_common_datas(
+        &self,
+        biz_type: i32,
+        biz_key: &str,
+    ) -> anyhow::Result<Option<JsonValue>> {
+        let account = self.login_account_cached().await?;
+        let url = reqwest::Url::parse_with_params(
+            "https://app2.govee.com/appsku/v1/devices/common-datas",
+            &[
+                ("bizType", biz_type.to_string()),
+                ("bizKey", biz_key.to_string()),
+            ],
+        )?;
+        let response = self
+            .app_request(Method::GET, url, Some(account.token.as_str()))
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_account_login();
+        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "common-datas read failed: {}",
+            response.status()
+        );
+
+        #[derive(Deserialize)]
+        struct Response {
+            data: Option<Data>,
+        }
+        #[derive(Deserialize)]
+        struct Data {
+            #[serde(rename = "commonDatas")]
+            common_datas: Option<String>,
+        }
+
+        let resp: Response = http_response_body(response).await?;
+        let Some(raw) = resp.data.and_then(|d| d.common_datas) else {
+            return Ok(None);
+        };
+        // The stored value is itself a JSON string.
+        Ok(Some(serde_json::from_str(&raw)?))
+    }
+
     pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
         // The app migrated device-list to this BFF GET; the legacy
         // POST /device/rest/devices/v1/list is gone from the app (v7.4.40).
@@ -428,6 +479,123 @@ impl GoveeUndocumentedApi {
             event_state: None,
             instance: "lightScene".to_string(),
         }])
+    }
+
+    /// Capabilities the platform API doesn't report for the H6093 star
+    /// projector. They are control-only (no platform-API instance), so the
+    /// command path routes them through the IoT ptReal frame encoder keyed by
+    /// the same instance name; see `ble::projector::encode_capability`. Returns
+    /// empty for any other SKU.
+    pub fn synthesize_h6093_capabilities(sku: &str) -> Vec<DeviceCapability> {
+        use crate::ble::projector::instance;
+        use crate::model::{EnumOption, IntegerRange};
+        if sku != "H6093" {
+            return vec![];
+        }
+        let toggle = |inst: &str| DeviceCapability {
+            kind: DeviceCapabilityKind::Toggle,
+            parameters: None,
+            alarm_type: None,
+            event_state: None,
+            instance: inst.to_string(),
+        };
+        // A 0-100 slider (relative brightness, speeds, flow).
+        let pct = |inst: &str| DeviceCapability {
+            kind: DeviceCapabilityKind::Range,
+            parameters: Some(DeviceParameters::Integer {
+                unit: None,
+                range: IntegerRange {
+                    min: 0,
+                    max: 100,
+                    precision: 1,
+                },
+            }),
+            alarm_type: None,
+            event_state: None,
+            instance: inst.to_string(),
+        };
+        // The aurora effect picker (codes 1-4). No app-facing names captured yet,
+        // so the options are numbered; refine when we have the effect labels.
+        let aurora_effect = DeviceCapability {
+            kind: DeviceCapabilityKind::Mode,
+            parameters: Some(DeviceParameters::Enum {
+                // Effect codes 1-4 and their app names.
+                options: [
+                    (1, "Gradient"),
+                    (2, "Breathe"),
+                    (3, "Rainbow"),
+                    (4, "Twinkle"),
+                ]
+                .into_iter()
+                .map(|(code, name)| EnumOption {
+                    name: name.to_string(),
+                    value: json!(code),
+                    extras: Default::default(),
+                })
+                .collect(),
+            }),
+            alarm_type: None,
+            event_state: None,
+            instance: instance::AURORA_EFFECT.to_string(),
+        };
+        // The aurora color mode (the app's "Aurora High" toggle): Basic = a single
+        // color list, Advanced = separate "waves"/"flows" color sets. Exposed as a
+        // select so the control reads as the mode picker it is, rather than an
+        // opaque on/off.
+        let aurora_color_mode = DeviceCapability {
+            kind: DeviceCapabilityKind::Mode,
+            parameters: Some(DeviceParameters::Enum {
+                options: ["Basic", "Advanced"]
+                    .into_iter()
+                    .map(|name| EnumOption {
+                        name: name.to_string(),
+                        value: json!(name),
+                        extras: Default::default(),
+                    })
+                    .collect(),
+            }),
+            alarm_type: None,
+            event_state: None,
+            instance: instance::AURORA_COLOR_MODE.to_string(),
+        };
+        vec![
+            // standalone settings toggles
+            toggle(instance::PAIRING_STATUS),
+            toggle(instance::PAIRING_SOUND),
+            toggle(instance::SILENT_POWER_UP),
+            toggle(instance::DREAMVIEW_LASER),
+            // aurora layer
+            toggle(instance::AURORA_ON),
+            aurora_color_mode,
+            pct(instance::AURORA_BRIGHTNESS),
+            pct(instance::AURORA_EFFECT_SPEED),
+            pct(instance::AURORA_FLOW),
+            aurora_effect,
+            // stars (laser) layer
+            toggle(instance::STARS_ON),
+            pct(instance::STARS_BRIGHTNESS),
+            toggle(instance::ORBIT_ON),
+            pct(instance::ORBIT_SPEED),
+            toggle(instance::FLASHING_ON),
+            pct(instance::FLASHING_SPEED),
+            // auto-off: enable + "stop playing sound" + a 30-240 minute timeout
+            toggle(instance::AUTO_OFF_ENABLE),
+            toggle(instance::AUTO_OFF_STOP_SOUND),
+            DeviceCapability {
+                kind: DeviceCapabilityKind::Range,
+                parameters: Some(DeviceParameters::Integer {
+                    unit: Some("min".to_string()),
+                    range: IntegerRange {
+                        min: 30,
+                        max: 240,
+                        precision: 1,
+                    },
+                }),
+                alarm_type: None,
+                event_state: None,
+                instance: instance::AUTO_OFF_MINUTES.to_string(),
+            },
+        ]
     }
 
     pub async fn get_saved_one_click_shortcuts(

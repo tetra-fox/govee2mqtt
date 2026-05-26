@@ -38,7 +38,8 @@ impl SwitchConfig {
                 origin: Origin::default(),
                 device: Device::for_device(topics, device),
                 unique_id,
-                entity_category: None,
+                entity_category: govee_api::ble::projector_entity_category(&instance.instance)
+                    .unwrap_or(None),
                 icon: None,
             },
             command_topic,

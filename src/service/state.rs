@@ -328,6 +328,17 @@ impl State {
         crate::service::transport::device_control(self, device, capability, value).await
     }
 
+    /// Try to control `instance` as an IoT ptReal frame; returns false if it
+    /// isn't a frame-encoded instance for this SKU (caller falls back).
+    pub async fn try_iot_capability(
+        self: &Arc<Self>,
+        device: &Device,
+        instance: &str,
+        value: &JsonValue,
+    ) -> anyhow::Result<bool> {
+        crate::service::transport::try_iot_capability(self, device, instance, value).await
+    }
+
     pub async fn device_light_power_on(
         self: &Arc<Self>,
         device: &Device,

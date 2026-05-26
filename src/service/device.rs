@@ -1,11 +1,14 @@
 use crate::commands::serve::POLL_INTERVAL;
 use crate::service::quirks::{BULB, Quirk, resolve_quirk};
 use chrono::{DateTime, Utc};
-use govee_api::ble::NotifyHumidifierNightlightParams;
+use govee_api::ble::{
+    NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, SetAuroraLaser, SetAutoOff,
+};
 use govee_api::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::{
     DeviceCapability, DeviceCapabilityState, DeviceType, HttpDeviceInfo, HttpDeviceState,
 };
+use govee_api::undoc_api::GoveeUndocumentedApi;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -77,6 +80,20 @@ pub struct Device {
     pub target_humidity_percent: Option<u8>,
     pub humidifier_work_mode: Option<u8>,
     pub humidifier_param_by_mode: HashMap<u8, u8>,
+
+    /// Held aurora+laser state for projectors like the H6093. The aurora/laser
+    /// controls share a single write frame that carries the full state, so a
+    /// single-field change has to re-send everything; we hold the current state
+    /// here, seed it from our own writes, and refine the fields we can decode
+    /// from the device's status frames (aurora from aa 11, laser on/off from
+    /// aa 34). None until the first status decode or write.
+    pub aurora_laser_state: Option<SetAuroraLaser>,
+
+    /// Held auto-off state for projectors like the H6093. Auto-off enable, the
+    /// "stop playing sound" sub-option, and the timeout minutes share one write
+    /// frame, so a single-field change re-sends all three; held here and seeded
+    /// from our own writes. None until the first write.
+    pub auto_off_state: Option<SetAutoOff>,
 
     pub last_polled: Option<DateTime<Utc>>,
 
@@ -240,6 +257,53 @@ impl Device {
         self.humidifier_param_by_mode.insert(mode, param);
     }
 
+    /// The held aurora+laser state, defaulting to all-zero if we have neither
+    /// decoded a status frame nor sent a write yet. Callers mutate one field of
+    /// the returned value and pass it to a write, which re-sends the full frame.
+    pub fn aurora_laser_state(&self) -> SetAuroraLaser {
+        self.aurora_laser_state.clone().unwrap_or_default()
+    }
+
+    /// Replace the held aurora+laser state. Called after a write (so the next
+    /// single-field change starts from what we just sent) and by the status
+    /// refiners below.
+    pub fn set_aurora_laser_state(&mut self, state: SetAuroraLaser) {
+        self.aurora_laser_state.replace(state);
+    }
+
+    /// Refine the held aurora fields from an aa 11 status frame. Updates only the
+    /// aurora on/speed fields the frame carries; laser fields and the color
+    /// arrays are left as held (seeded from our writes), since aa 11 doesn't
+    /// carry them.
+    pub fn refine_aurora_from_status(&mut self, aurora: NotifyAurora) {
+        let mut state = self.aurora_laser_state();
+        state.aurora_on = aurora.on;
+        state.aurora_effect_speed = aurora.speed;
+        self.set_aurora_laser_state(state);
+    }
+
+    /// Refine the held laser on/off from an aa 34 status frame. Only the on/off
+    /// bit is interpreted (see `NotifyLaser::is_on`) and stored in `laser_sub_on`,
+    /// the byte that tracked the laser toggle in the live write blob. The laser
+    /// value bytes (brightness/swim/flicker) use a packing we haven't pinned, so
+    /// they stay as held (seeded from our writes) rather than guessing a mapping.
+    pub fn refine_laser_from_status(&mut self, laser: NotifyLaser) {
+        let mut state = self.aurora_laser_state();
+        state.laser_on = laser.is_on();
+        self.set_aurora_laser_state(state);
+    }
+
+    /// The held auto-off state, defaulting to disabled if we haven't sent one yet.
+    pub fn auto_off_state(&self) -> SetAutoOff {
+        self.auto_off_state.unwrap_or_default()
+    }
+
+    /// Replace the held auto-off state, called after an auto-off write so the
+    /// next single-field change starts from what we just sent.
+    pub fn set_auto_off_state(&mut self, state: SetAutoOff) {
+        self.auto_off_state.replace(state);
+    }
+
     /// Update the LAN device information
     pub fn set_lan_device(&mut self, device: LanDevice) {
         self.lan_device.replace(device);
@@ -299,7 +363,16 @@ impl Device {
             .map(|s| s.to_string())
     }
 
-    pub fn set_http_device_info(&mut self, info: HttpDeviceInfo) {
+    pub fn set_http_device_info(&mut self, mut info: HttpDeviceInfo) {
+        // Augment the platform API's capability list with controls it doesn't
+        // report but that we drive over IoT (eg: the H6093 projector's settings).
+        // The incoming info is fresh from the API each poll and never carries
+        // these, so add any that aren't already present by instance.
+        for cap in GoveeUndocumentedApi::synthesize_h6093_capabilities(&info.sku) {
+            if !info.capabilities.iter().any(|c| c.instance == cap.instance) {
+                info.capabilities.push(cap);
+            }
+        }
         self.http_device_info.replace(info);
         self.last_http_device_update.replace(Utc::now());
     }
@@ -645,10 +718,27 @@ impl Device {
     pub fn get_state_capability_by_instance(
         &self,
         instance: &str,
-    ) -> Option<&DeviceCapabilityState> {
-        self.http_device_state
+    ) -> Option<DeviceCapabilityState> {
+        if let Some(cap) = self
+            .http_device_state
             .as_ref()
             .and_then(|info| info.capability_by_instance(instance))
+        {
+            return Some(cap.clone());
+        }
+        // Fall back to synthesized state for IoT-only controls (eg: the H6093
+        // aurora/laser and auto-off entities) whose value we hold ourselves
+        // rather than getting from the platform API.
+        let (kind, state) = govee_api::ble::projector_state_value(
+            instance,
+            &self.aurora_laser_state(),
+            &self.auto_off_state(),
+        )?;
+        Some(DeviceCapabilityState {
+            kind,
+            instance: instance.to_string(),
+            state,
+        })
     }
 
     pub fn get_light_power_toggle_instance_name(&self) -> Option<&'static str> {

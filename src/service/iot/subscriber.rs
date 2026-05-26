@@ -160,6 +160,12 @@ pub(super) async fn run_iot_subscriber(
                                                     mode, param,
                                                 );
                                             }
+                                            GoveeBlePacket::NotifyAurora(aurora) => {
+                                                device.refine_aurora_from_status(aurora);
+                                            }
+                                            GoveeBlePacket::NotifyLaser(laser) => {
+                                                device.refine_laser_from_status(laser);
+                                            }
                                             GoveeBlePacket::Generic(_) => {
                                                 // Ignore packets that we can't decode
                                             }

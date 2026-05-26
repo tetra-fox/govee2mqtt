@@ -9,6 +9,7 @@
 pub mod codec;
 pub mod humidifier;
 pub mod light;
+pub mod projector;
 
 use once_cell::sync::Lazy;
 
@@ -24,6 +25,14 @@ pub use humidifier::{
     SetHumidifierNightlightParams, TargetHumidity,
 };
 pub use light::{SetDevicePower, SetSceneCode};
+pub use projector::{
+    AuroraColorMode, NotifyAurora, NotifyLaser, SetAurora, SetAuroraLaser, SetAutoOff,
+    SetDreamViewLaser, SetPairingSound, SetPairingStatus, SetSilentPowerUp,
+    apply_auto_off_field as projector_apply_auto_off_field,
+    apply_blob_field as projector_apply_blob_field,
+    encode_capability as projector_encode_capability, entity_category as projector_entity_category,
+    state_value as projector_state_value,
+};
 
 #[cfg(test)]
 mod test {

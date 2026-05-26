@@ -265,6 +265,14 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     value: V,
 ) -> anyhow::Result<()> {
     let value: JsonValue = value.into();
+
+    // IoT-only capabilities (eg: the H6093 projector's controls) aren't known to
+    // the platform API. If this SKU+instance has a ptReal frame encoder, send
+    // that; otherwise fall through to the platform API.
+    if try_iot_capability(state, device, &capability.instance, &value).await? {
+        return Ok(());
+    }
+
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
@@ -274,6 +282,128 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     }
 
     anyhow::bail!("Unable to use Platform API to control {device}");
+}
+
+/// Try to send a control for `instance` as an IoT ptReal frame. Returns
+/// `Ok(true)` if the SKU+instance has a frame encoder and the command was sent,
+/// `Ok(false)` if it isn't a frame-encoded instance (caller falls back to the
+/// platform API). The (sku, instance) -> frames mapping lives entirely in the
+/// `ble` layer's encoder registry, so this dispatch stays device-agnostic.
+pub(crate) async fn try_iot_capability(
+    state: &StateHandle,
+    device: &Device,
+    instance: &str,
+    value: &JsonValue,
+) -> anyhow::Result<bool> {
+    // Aurora/stars controls share one write blob, so they read the held state,
+    // mutate one field, and re-send the whole frame. The blob carries the whole
+    // aurora/laser state, so we must start from the device's current state: if
+    // we haven't got it yet, seed it from the app's stored common-datas.
+    let mut blob_state = seeded_aurora_laser_state(state, device).await;
+    if govee_api::ble::projector_apply_blob_field(instance, value, &mut blob_state) {
+        log::info!("Using IoT API to set {device} {instance} = {value:?}");
+        send_iot_frame(state, device, &blob_state).await?;
+        state
+            .device_mut(&device.sku, &device.id)
+            .await
+            .set_aurora_laser_state(blob_state);
+        // The device doesn't report these back, so publish our held state to HA
+        // ourselves; otherwise the entities stay "unknown".
+        state.notify_of_state_change(&device.id).await.ok();
+        return Ok(true);
+    }
+
+    // Auto-off enable/stop-sound/minutes likewise share one frame.
+    let mut auto_off = device.auto_off_state();
+    if govee_api::ble::projector_apply_auto_off_field(instance, value, &mut auto_off) {
+        send_iot_frame(state, device, &auto_off).await?;
+        state
+            .device_mut(&device.sku, &device.id)
+            .await
+            .set_auto_off_state(auto_off);
+        state.notify_of_state_change(&device.id).await.ok();
+        return Ok(true);
+    }
+
+    // Standalone IoT-framed capabilities (eg: settings toggles).
+    let Some(frames) = govee_api::ble::projector_encode_capability(&device.sku, instance, value)
+    else {
+        return Ok(false);
+    };
+    let frames = frames?;
+
+    let iot = state
+        .get_iot_client()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device} {instance}"))?;
+    let info = device
+        .undoc_device_info
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device} {instance}"))?;
+
+    log::info!("Using IoT API to set {device} {instance} = {value:?}");
+    iot.send_real(&info.entry, frames).await?;
+    Ok(true)
+}
+
+/// Encode a typed command for this SKU and send it over IoT as a ptReal frame.
+/// Used by the controls that share a state-carrying frame (aurora/laser blob,
+/// auto-off): the caller reads held state, mutates one field, sends here, then
+/// writes the mutated state back. Those value bytes aren't fully recoverable
+/// from status frames, so that write-back is what keeps held state correct
+/// between edits.
+async fn send_iot_frame<T: 'static>(
+    state: &StateHandle,
+    device: &Device,
+    value: &T,
+) -> anyhow::Result<()> {
+    let command = Base64HexBytes::encode_for_sku(&device.sku, value)?;
+    let iot = state
+        .get_iot_client()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
+    let info = device
+        .undoc_device_info
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device}"))?;
+
+    log::info!("Using IoT API to send a ptReal frame to {device}");
+    iot.send_real(&info.entry, command.base64()).await?;
+    Ok(())
+}
+
+/// Return the device's held aurora+laser state, seeding it from the app's stored
+/// common-datas blob if we don't have it yet. A single-field edit re-sends the
+/// whole frame, so it must start from the device's real current state; the app
+/// keeps that state in common-datas (bizType 3, key `<sku>_<device>`) and we
+/// read it the same way the app does. If the read fails or there's no record,
+/// fall back to the default so control still works (it just may not preserve
+/// fields the user hasn't set through us).
+async fn seeded_aurora_laser_state(
+    state: &StateHandle,
+    device: &Device,
+) -> govee_api::ble::SetAuroraLaser {
+    if let Some(held) = &device.aurora_laser_state {
+        return held.clone();
+    }
+
+    if let Some(undoc) = state.get_undoc_client().await {
+        let biz_key = format!("{}_{}", device.sku, device.id);
+        match undoc.get_common_datas(3, &biz_key).await {
+            Ok(Some(json)) => {
+                let seeded = govee_api::ble::SetAuroraLaser::from_common_datas(&json);
+                log::debug!("{device}: seeded aurora/laser state from common-datas");
+                state
+                    .device_mut(&device.sku, &device.id)
+                    .await
+                    .set_aurora_laser_state(seeded.clone());
+                return seeded;
+            }
+            Ok(None) => log::warn!("{device}: no common-datas record to seed aurora/laser state"),
+            Err(err) => log::warn!("{device}: failed to read common-datas to seed state: {err:#}"),
+        }
+    }
+    device.aurora_laser_state()
 }
 
 /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the zero-based

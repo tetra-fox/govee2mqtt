@@ -107,6 +107,7 @@ impl PacketManager {
 
         crate::ble::humidifier::register(&mut all_codecs);
         crate::ble::light::register(&mut all_codecs);
+        crate::ble::projector::register(&mut all_codecs);
 
         Self {
             codec_by_sku: Mutex::new(HashMap::new()),
@@ -240,6 +241,14 @@ pub enum GoveeBlePacket {
     SetHumidifierMode(super::humidifier::SetHumidifierMode),
     NotifyHumidifierAutoMode(super::humidifier::HumidifierAutoMode),
     NotifyHumidifierNightlight(super::humidifier::NotifyHumidifierNightlightParams),
+    SetPairingStatus(super::projector::SetPairingStatus),
+    SetPairingSound(super::projector::SetPairingSound),
+    SetSilentPowerUp(super::projector::SetSilentPowerUp),
+    SetDreamViewLaser(super::projector::SetDreamViewLaser),
+    SetAutoOff(super::projector::SetAutoOff),
+    SetAurora(super::projector::SetAurora),
+    NotifyAurora(super::projector::NotifyAurora),
+    NotifyLaser(super::projector::NotifyLaser),
 }
 
 #[derive(Debug)]
