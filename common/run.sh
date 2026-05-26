@@ -107,6 +107,11 @@ if bashio::config.has_value temperature_scale ; then
   export GOVEE2MQTT_TEMPERATURE_SCALE
 fi
 
+if bashio::config.has_value availability_timeout ; then
+  GOVEE2MQTT_AVAILABILITY_TIMEOUT="$(bashio::config availability_timeout)"
+  export GOVEE2MQTT_AVAILABILITY_TIMEOUT
+fi
+
 # log the resolved config with secrets redacted. this is diagnostic only, so it
 # must not abort startup: grep exits non-zero when nothing matches, and the
 # script runs under bashio's set -e, so swallow that.

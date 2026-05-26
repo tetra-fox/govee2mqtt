@@ -66,3 +66,11 @@ You will also need to configure `govee2mqtt` to use the same broker:
 | `--mqtt-username`   | `GOVEE2MQTT_MQTT_USER`       | `mqtt_username` | If your broker requires authentication, the username to use                                                                                                                                                                   |
 | `--mqtt-password`   | `GOVEE2MQTT_MQTT_PASSWORD`   | `mqtt_password` | If your broker requires authentication, the password to use                                                                                                                                                                   |
 | `--mqtt-base-topic` | `GOVEE2MQTT_MQTT_BASE_TOPIC` | `base_topic`    | The prefix for all MQTT topics and Home Assistant entity unique ids. Defaults to `govee2mqtt`. If you are migrating from an upstream `wez/govee2mqtt` install and want to keep your existing entities, set this to `gv2mqtt`. |
+
+## Device Availability
+
+A device is reported unavailable in Home Assistant once `govee2mqtt` hasn't heard from it for `availability_timeout` seconds. Lower values detect an unplugged or offline device faster, at the cost of polling each device for its status more often over the (free) AWS IoT channel. The Govee cloud itself marks a device offline within about a minute.
+
+| CLI                      | ENV                              | AddOn                  | Purpose                                                                       |
+| ------------------------ | -------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| `--availability-timeout` | `GOVEE2MQTT_AVAILABILITY_TIMEOUT`| `availability_timeout` | Seconds of silence before a device is reported offline. Defaults to `300`.    |

@@ -31,6 +31,7 @@ options:
 
 schema:
   temperature_scale: "str?"
+  availability_timeout: "int?"
   govee_email: "str?"
   govee_password: "password?"
   govee_api_key: "password?"

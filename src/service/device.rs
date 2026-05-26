@@ -1,4 +1,4 @@
-use crate::commands::serve::POLL_INTERVAL;
+use crate::commands::serve::{POLL_INTERVAL, availability_timeout};
 use crate::service::quirks::{BULB, Quirk, resolve_quirk};
 use chrono::{DateTime, Utc};
 use govee_api::ble::{
@@ -538,16 +538,38 @@ impl Device {
             .online
     }
 
-    /// Reachability of the device. For a device we can poll (LAN/IoT/platform),
-    /// this is derived from how recently any transport last reported state. For
-    /// a device we can't poll (eg: shared devices), it comes from the online
-    /// flag in the undoc device list. This is the single source of truth for
-    /// both the Status diagnostic sensor text and the per-device MQTT
-    /// availability topic, so the two always agree.
+    /// Reachability of the device. This is the single source of truth for both
+    /// the Status diagnostic sensor text and the per-device MQTT availability
+    /// topic, so the two always agree.
+    ///
+    /// The platform API answers from the cloud whether or not the device itself
+    /// is reachable, and its response carries an explicit `online` flag for the
+    /// device (DeviceState::online). When the freshest state has that flag, it
+    /// is authoritative: a device the cloud reports offline must read offline
+    /// even though we just fetched its (stale) state successfully. Otherwise we
+    /// would only ever fetch cached settings and never notice the device left.
+    ///
+    /// LAN and IoT replies carry no online flag, but a reply only arrives when
+    /// the device answered (LAN) or is connected to AWS IoT (IoT), so the
+    /// arrival itself is the reachability signal. For those we fall back to how
+    /// recently we last heard anything: past the availability timeout means the
+    /// device stopped answering and is treated as gone. The IoT poll cadence is
+    /// tied to half that timeout (see iot_resend_interval), so a live device is
+    /// re-probed before the window elapses.
+    ///
+    /// With no polled state at all (eg: shared devices the platform API doesn't
+    /// return and we can't poll), use the undoc device list's online flag.
     pub fn availability_status(&self) -> Reachability {
         if let Some(state) = self.device_state() {
-            let threshold = *POLL_INTERVAL + chrono::Duration::seconds(30);
-            return if Utc::now() - state.updated > threshold {
+            if let Some(online) = state.online {
+                return if online {
+                    Reachability::Available
+                } else {
+                    Reachability::Missing
+                };
+            }
+
+            return if Utc::now() - state.updated > availability_timeout() {
                 Reachability::Missing
             } else {
                 Reachability::Available
@@ -853,5 +875,64 @@ mod test {
 
         let device = Device::new("H6127", "ce");
         assert_eq!(device.name(), "H6127_CE");
+    }
+
+    /// A platform-API state with an explicit online capability set to `value`,
+    /// as the cloud returns it. The cloud answers whether or not the device is
+    /// reachable, so this flag, not how recently we fetched, is authoritative.
+    fn http_state_with_online(sku: &str, id: &str, value: bool) -> HttpDeviceState {
+        serde_json::from_value(serde_json::json!({
+            "sku": sku,
+            "device": id,
+            "capabilities": [{
+                "type": "devices.capabilities.online",
+                "instance": "online",
+                "state": {"value": value}
+            }]
+        }))
+        .expect("valid HttpDeviceState")
+    }
+
+    #[test]
+    fn platform_online_flag_is_authoritative_over_freshness() {
+        // The cloud says offline. Even though we fetched the state just now, the
+        // device must read Missing: the platform API answers from the cloud for
+        // a device that itself is unreachable (eg: its wifi dropped while our
+        // bridge kept cloud connectivity).
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:11:22");
+        device.set_http_device_state(http_state_with_online("H6109", &device.id, false));
+        assert_eq!(device.availability_status(), Reachability::Missing);
+
+        // Same fetch timing, cloud says online: Available.
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:11:22");
+        device.set_http_device_state(http_state_with_online("H6109", &device.id, true));
+        assert_eq!(device.availability_status(), Reachability::Available);
+    }
+
+    #[test]
+    fn iot_state_uses_freshness_when_no_online_flag() {
+        // IoT and LAN replies carry no online flag; a reply arriving at all is
+        // the reachability signal. A fresh reply reads Available.
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:33:44");
+        device.set_iot_device_status(govee_api::lan_api::DeviceStatus::default());
+        assert_eq!(device.availability_status(), Reachability::Available);
+
+        // Just inside the availability window: still Available.
+        device.last_iot_device_status_update =
+            Some(Utc::now() - (availability_timeout() - chrono::Duration::seconds(10)));
+        assert_eq!(device.availability_status(), Reachability::Available);
+
+        // Past the availability timeout: Missing. The device stopped answering.
+        // This must not depend on POLL_INTERVAL (the old bug tied it to the
+        // 15min state poll, so a device never went offline).
+        device.last_iot_device_status_update =
+            Some(Utc::now() - (availability_timeout() + chrono::Duration::seconds(10)));
+        assert_eq!(device.availability_status(), Reachability::Missing);
+    }
+
+    #[test]
+    fn no_state_falls_back_to_undoc_online_flag() {
+        let device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:55:66");
+        assert_eq!(device.availability_status(), Reachability::Unknown);
     }
 }

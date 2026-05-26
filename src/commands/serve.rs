@@ -10,27 +10,55 @@ use chrono::Utc;
 use govee_api::lan_api::Client as LanClient;
 use govee_api::platform_api::GoveeApiClient;
 use govee_api::undoc_api::GoveeUndocumentedApi;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
 pub static POLL_INTERVAL: Lazy<chrono::Duration> = Lazy::new(|| chrono::Duration::seconds(900));
 
-/// How soon we re-send an IoT status request for a device we still have no
-/// fresh state for. IoT replies are async and can be lost, and poll_iot_api
-/// marks the device polled on send, so without a shorter lockout than
-/// POLL_INTERVAL a single missed reply would leave the device stale for the
-/// full interval. Kept above the poll loop period so an unresponsive device
-/// isn't re-requested every cycle.
-pub static IOT_RESEND_INTERVAL: Lazy<chrono::Duration> =
-    Lazy::new(|| chrono::Duration::seconds(120));
+pub const DEFAULT_AVAILABILITY_TIMEOUT_SECS: i64 = 300;
+
+/// How long a device may go without us hearing from it before we treat it as
+/// offline. The Govee cloud marks an unreachable device offline within about a
+/// minute (measured by unplugging an H6093 and polling the platform online
+/// flag), but our state poll is too slow to notice promptly, and IoT replies
+/// just stop arriving. This timeout is the silence window after which
+/// availability_status reports Missing. The Govee app uses 60s, but it only
+/// runs while open; as an always-on daemon we default higher (see
+/// DEFAULT_AVAILABILITY_TIMEOUT_SECS) to keep IoT status traffic modest, and
+/// let the user tune it via --availability-timeout / GOVEE2MQTT_AVAILABILITY_TIMEOUT.
+/// Set once at serve startup; availability_status reads it.
+static AVAILABILITY_TIMEOUT: OnceCell<chrono::Duration> = OnceCell::new();
+
+pub fn availability_timeout() -> chrono::Duration {
+    *AVAILABILITY_TIMEOUT
+        .get()
+        .unwrap_or(&chrono::Duration::seconds(DEFAULT_AVAILABILITY_TIMEOUT_SECS))
+}
+
+/// How soon we re-send an IoT status request for a device we have no fresh
+/// state for. IoT replies are async and can be lost, and poll_iot_api marks the
+/// device polled on send, so without a shorter lockout than POLL_INTERVAL a
+/// single missed reply would leave the device stale for the full interval.
+/// Tied to half the availability timeout so a live device is probed at least
+/// twice per window and a lost reply doesn't flip it offline.
+pub fn iot_resend_interval() -> chrono::Duration {
+    availability_timeout() / 2
+}
 
 #[derive(clap::Parser, Debug)]
 pub struct ServeCommand {
     /// The port on which the HTTP API will listen
     #[arg(long, default_value_t = 8056)]
     http_port: u16,
+
+    /// Seconds of silence from a device before it is reported offline in home
+    /// assistant. Lower means faster offline detection but more frequent IoT
+    /// status polling. You may also set this via the
+    /// GOVEE2MQTT_AVAILABILITY_TIMEOUT environment variable.
+    #[arg(long)]
+    availability_timeout: Option<i64>,
 }
 
 async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Result<()> {
@@ -66,14 +94,16 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     // last_polled is when we last sent a request, not when a reply arrived. An
     // IoT reply is async and may be lost, and poll_iot_api marks the device
     // polled on send, so gating the re-send on the full poll_interval would
-    // leave a device that missed a single reply stale for ~15min. For IoT-polled
-    // devices gate re-sending on a short interval so a missed reply recovers in
-    // a couple minutes. Platform polls fetch state synchronously over the
-    // rate-limited HTTP API, so they keep the full interval.
+    // leave a device that missed a single reply stale for the whole interval.
+    // For IoT-polled devices gate re-sending on the shorter resend interval so
+    // we probe each device at least twice per availability window and it goes
+    // offline promptly once it stops answering. Platform polls fetch state
+    // synchronously over the rate-limited HTTP API, so they keep the full
+    // interval.
     let resend_interval = if needs_platform {
         poll_interval
     } else {
-        poll_interval.min(*IOT_RESEND_INTERVAL)
+        poll_interval.min(iot_resend_interval())
     };
     let can_update = match &device.last_polled {
         None => true,
@@ -302,6 +332,21 @@ const ISSUE_76_EXPLANATION: &str = "Startup cannot automatically continue becaus
 impl ServeCommand {
     pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
         log::info!("Starting service. version {}", govee_version());
+
+        let timeout_secs = match self.availability_timeout {
+            Some(secs) => Some(secs),
+            None => govee_api::opt_env_var("GOVEE2MQTT_AVAILABILITY_TIMEOUT")?,
+        }
+        .unwrap_or(DEFAULT_AVAILABILITY_TIMEOUT_SECS);
+        if timeout_secs < 1 {
+            anyhow::bail!("availability-timeout must be at least 1 second, got {timeout_secs}");
+        }
+        // OnceCell: run is called once per process, so set can't already be filled.
+        AVAILABILITY_TIMEOUT
+            .set(chrono::Duration::seconds(timeout_secs))
+            .ok();
+        log::info!("Device availability timeout: {timeout_secs}s");
+
         let state = Arc::new(crate::service::state::State::new());
 
         // First, use the HTTP APIs to determine the list of devices and
