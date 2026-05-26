@@ -101,12 +101,18 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
 }
 
 async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
-    // Short settle so the IoT/platform clients finish connecting before the
-    // first poll, then poll right away rather than after a long blind wait.
-    // Cloud-only devices come online within seconds; LAN-capable devices are
-    // brought online by LAN discovery (see the disco task in run), which is
-    // why the first pass skips them below.
-    sleep(Duration::from_secs(3)).await;
+    // Wait for the IoT client to connect before the first poll. poll_iot_api
+    // publishes a status request and receives the reply on the account topic the
+    // IoT subscriber subscribes to on ConnAck; publishing before that
+    // subscription is live loses the reply. And poll_iot_api marks the device
+    // polled on publish, so a lost first reply isn't retried until the full poll
+    // interval (~15min), leaving that device unavailable that whole time. The
+    // bound stops a broken IoT connection from stalling polling forever; a
+    // LAN/platform-only setup has no IoT client and skips the wait.
+    if state.get_iot_client().await.is_some() {
+        // ignore the result: on timeout we poll anyway, accepting the race
+        let _ = tokio::time::timeout(Duration::from_secs(10), state.wait_for_iot_ready()).await;
+    }
     let mut first_pass = true;
     loop {
         for d in state.devices().await {

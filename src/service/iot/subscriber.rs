@@ -208,6 +208,9 @@ pub(super) async fn run_iot_subscriber(
                     .subscribe(acct.topic.as_str(), QoS::AtMostOnce)
                     .await
                     .context("subscribe to account topic")?;
+                // Status replies land on the account topic we just subscribed
+                // to; let the first poll proceed now that it won't lose them.
+                state.signal_iot_ready();
                 // This logic tries to subscribe to the same data that is
                 // being sent to the individual devices, but the server
                 // will close the connection on us when we try this.

@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Semaphore};
+use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore};
 use tokio::time::{Duration, sleep};
 
 #[derive(Default)]
@@ -42,6 +42,12 @@ pub struct State {
     /// birth message arriving during a reconnect re-register) can't both diff
     /// against a half-rebuilt topic set.
     registration_lock: Mutex<()>,
+    /// Signalled once the IoT subscriber has connected and subscribed to the
+    /// account topic. Status replies arrive on that topic, so a status request
+    /// published before the subscription is live gets no reply; the first poll
+    /// waits on this so it doesn't fire into the void. notify_one stores a
+    /// permit, so a wait that starts after the signal still completes.
+    iot_ready: Notify,
 }
 
 pub type StateHandle = Arc<State>;
@@ -207,6 +213,18 @@ impl State {
 
     pub async fn get_iot_client(&self) -> Option<IotClient> {
         self.iot_client.lock().await.clone()
+    }
+
+    /// Mark the IoT client connected and subscribed; the IoT subscriber calls
+    /// this on ConnAck after it subscribes to the account topic.
+    pub fn signal_iot_ready(&self) {
+        self.iot_ready.notify_one();
+    }
+
+    /// Wait until the IoT client has connected and subscribed, so a status
+    /// request will actually get a reply.
+    pub async fn wait_for_iot_ready(&self) {
+        self.iot_ready.notified().await;
     }
 
     pub async fn set_lan_client(&self, client: LanClient) {
