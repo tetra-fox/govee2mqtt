@@ -7,6 +7,7 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 ## Features
 
 - **LAN-first transport selection** - `govee2mqtt` switches transports per command, preferring the LAN API where it can carry the command, and falling back to IoT MQTT or the platform REST API otherwise. Many device capabilities (and some whole devices) aren't exposed over the LAN API at all; those always go through one of the other transports.
+- **Shared device support** - devices shared to your account by another Govee user are controlled and polled through Govee's REST relay over IoT, so they appear and work alongside your own devices even though the platform API doesn't return them.
 - Support for per-device modes and scenes.
 - Support for the undocumented AWS IoT interface to your devices, provides low latency status updates.
 - Support for the new [Platform API](https://developer.govee.com/reference/get-you-devices) in case the AWS IoT or LAN control is unavailable.
