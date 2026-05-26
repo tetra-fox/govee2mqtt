@@ -116,7 +116,6 @@ fi
 # must not abort startup: grep exits non-zero when nothing matches, and the
 # script runs under bashio's set -e, so swallow that.
 env | grep GOVEE2MQTT_ | sed -r 's/_(EMAIL|KEY|PASSWORD)=.*/_\1=REDACTED/' || true
-set -x
 
 cd /app || bashio::exit.nok "could not cd to /app"
 exec /app/govee2mqtt serve
