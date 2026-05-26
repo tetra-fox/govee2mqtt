@@ -50,15 +50,16 @@ addon arch="amd64":
     docker build --target addon --build-arg BUILD_ARCH={{ arch }} .
 
 # regenerate addon-edge/config.yaml from the canonical addon/config.yaml. only
-# the identity, image, and version differ; schema/options/map are shared. rerun
-# after editing addon/config.yaml; ci fails if this is stale
+# the identity and version differ; the image, schema, options, and map are
+# inherited unchanged. edge and stable share one image, told apart by the
+# version tag (edge vs the semver). rerun after editing addon/config.yaml; ci
+# fails if this is stale
 addon-edge-config:
     mkdir -p addon-edge
     cp addon/config.yaml addon-edge/config.yaml
     sed -i 's/^name:.*/name: Govee2MQTT Edge/' addon-edge/config.yaml
     sed -i 's/^slug:.*/slug: govee2mqtt_edge/' addon-edge/config.yaml
     sed -i 's/^version:.*/version: "edge"/' addon-edge/config.yaml
-    sed -i 's#^image:.*#image: ghcr.io/tetra-fox/govee2mqtt-addon-edge#' addon-edge/config.yaml
 
 # boot Home Assistant with the dev add-on built from local source, on
 # http://localhost:7123. the devcontainer's postStartCommand (bootstrap.sh)
