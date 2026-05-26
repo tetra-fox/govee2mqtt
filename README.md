@@ -8,11 +8,8 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 
 - **LAN-first transport selection** - `govee2mqtt` switches transports per command, preferring the LAN API where it can carry the command, and falling back to IoT MQTT or the platform REST API otherwise. Many device capabilities (and some whole devices) aren't exposed over the LAN API at all; those always go through one of the other transports.
 - Support for per-device modes and scenes.
-- Support for the undocumented AWS IoT interface to your devices, provides
-  low latency status updates.
-- Support for the new [Platform
-  API](https://developer.govee.com/reference/get-you-devices) in case the AWS
-  IoT or LAN control is unavailable.
+- Support for the undocumented AWS IoT interface to your devices, provides low latency status updates.
+- Support for the new [Platform API](https://developer.govee.com/reference/get-you-devices) in case the AWS IoT or LAN control is unavailable.
 
 | Feature                      | Requires       | Notes                                                                                          |
 | ---------------------------- | -------------- | ---------------------------------------------------------------------------------------------- |
@@ -22,13 +19,9 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 | Live Device Status Updates   | LAN and/or IoT | Devices typically report most changes within a couple of seconds.                              |
 | Segment Color                | API Key        | Find the `Segment 00X` light entities associated with your main light device in Home Assistant |
 
-- `API Key` means that you have [applied for a key from Govee](https://developer.govee.com/reference/apply-you-govee-api-key)
-  and have configured it for use in govee2mqtt
-- `IoT` means that you have configured your Govee account email and password for
-  use in govee2mqtt, which will then attempt to use the
-  _undocumented and likely unsupported_ AWS MQTT-based IoT service
-- `LAN` means that you have enabled the [Govee LAN API](https://app-h5.govee.com/user-manual/wlan-guide)
-  on supported devices and that the LAN API protocol is functional on your network
+- `API Key` means that you have [applied for a key from Govee](https://developer.govee.com/reference/apply-you-govee-api-key) and have configured it for use in govee2mqtt
+- `IoT` means that you have configured your Govee account email and password for use in govee2mqtt, which will then attempt to use the _undocumented and likely unsupported_ AWS MQTT-based IoT service
+- `LAN` means that you have enabled the [Govee LAN API](https://app-h5.govee.com/user-manual/wlan-guide) on supported devices and that the LAN API protocol is functional on your network
 
 ## Usage
 
