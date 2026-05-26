@@ -1,4 +1,4 @@
-# Govee2MQTT: a Govee to MQTT bridge for Home Assistant
+# govee2mqtt
 
 This repo provides a `govee2mqtt` executable whose primary purpose is to act
 as a bridge between [Govee](https://govee.com) devices and Home Assistant,
@@ -6,9 +6,7 @@ via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrat
 
 ## Features
 
-- Robust LAN-first design. Not all of Govee's devices support LAN control,
-  but for those that do, you'll have the lowest latency and ability to
-  control them even when your primary internet connection is offline.
+- **LAN-first transport selection** - `govee2mqtt` switches transports per command, preferring the LAN API where it can carry the command, and falling back to IoT MQTT or the platform REST API otherwise. Many device capabilities (and some whole devices) aren't exposed over the LAN API at all; those always go through one of the other transports.
 - Support for per-device modes and scenes.
 - Support for the undocumented AWS IoT interface to your devices, provides
   low latency status updates.

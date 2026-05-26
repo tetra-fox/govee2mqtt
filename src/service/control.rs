@@ -1,8 +1,9 @@
-//! Per-device-type control routing.
+//! Per-device-type control dispatch: which wire command a control verb maps to
+//! for a given device type. The transport each command goes out on (LAN vs IoT
+//! vs platform) is a separate decision, in [`crate::service::transport`].
 //!
-//! Most devices control the same way: try the LAN API, then the IoT MQTT API,
-//! then the platform REST API, taking the first transport that is available.
-//! That generic cascade lives in the default methods of [`DeviceController`].
+//! Most devices control the same way, so the default methods of
+//! [`DeviceController`] just call the generic transport cascade.
 //!
 //! Some device types map a control verb onto a different wire command. A
 //! humidifier's "light" is its nightlight, set through a BLE nightlight packet
@@ -13,12 +14,12 @@
 //!
 //! [`controller_for`] picks the implementation from the device type, so adding a
 //! device type with bespoke control means adding an impl here, not threading
-//! another branch through the state methods.
+//! another branch through the transport functions.
 
 use crate::service::device::Device;
 use crate::service::state::StateHandle;
+use crate::service::transport;
 use async_trait::async_trait;
-use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
 use govee_api::platform_api::DeviceType;
 
 /// Control behavior for one device type. The default methods are the generic
@@ -27,7 +28,7 @@ use govee_api::platform_api::DeviceType;
 #[async_trait]
 pub trait DeviceController: Send + Sync {
     async fn power_on(&self, state: &StateHandle, device: &Device, on: bool) -> anyhow::Result<()> {
-        state.power_on_generic(device, on).await
+        transport::power_on_generic(state, device, on).await
     }
 
     async fn light_power_on(
@@ -36,7 +37,7 @@ pub trait DeviceController: Send + Sync {
         device: &Device,
         on: bool,
     ) -> anyhow::Result<()> {
-        state.light_power_on_generic(device, on).await
+        transport::light_power_on_generic(state, device, on).await
     }
 
     async fn set_brightness(
@@ -45,7 +46,7 @@ pub trait DeviceController: Send + Sync {
         device: &Device,
         percent: u8,
     ) -> anyhow::Result<()> {
-        state.set_brightness_generic(device, percent).await
+        transport::set_brightness_generic(state, device, percent).await
     }
 
     async fn set_color_rgb(
@@ -56,7 +57,7 @@ pub trait DeviceController: Send + Sync {
         g: u8,
         b: u8,
     ) -> anyhow::Result<()> {
-        state.set_color_rgb_generic(device, r, g, b).await
+        transport::set_color_rgb_generic(state, device, r, g, b).await
     }
 
     async fn set_color_temperature(
@@ -65,7 +66,7 @@ pub trait DeviceController: Send + Sync {
         device: &Device,
         kelvin: u32,
     ) -> anyhow::Result<()> {
-        state.set_color_temperature_generic(device, kelvin).await
+        transport::set_color_temperature_generic(state, device, kelvin).await
     }
 }
 
@@ -86,10 +87,10 @@ impl DeviceController for HumidifierController {
         device: &Device,
         on: bool,
     ) -> anyhow::Result<()> {
-        if try_set_nightlight(state, device, |p| p.on = on).await? {
+        if transport::try_set_nightlight(state, device, |p| p.on = on).await? {
             return Ok(());
         }
-        state.light_power_on_generic(device, on).await
+        transport::light_power_on_generic(state, device, on).await
     }
 
     async fn set_brightness(
@@ -98,7 +99,7 @@ impl DeviceController for HumidifierController {
         device: &Device,
         percent: u8,
     ) -> anyhow::Result<()> {
-        if try_set_nightlight(state, device, |p| {
+        if transport::try_set_nightlight(state, device, |p| {
             p.brightness = percent;
             p.on = true;
         })
@@ -106,7 +107,7 @@ impl DeviceController for HumidifierController {
         {
             return Ok(());
         }
-        state.set_brightness_generic(device, percent).await
+        transport::set_brightness_generic(state, device, percent).await
     }
 
     async fn set_color_rgb(
@@ -117,7 +118,7 @@ impl DeviceController for HumidifierController {
         g: u8,
         b: u8,
     ) -> anyhow::Result<()> {
-        if try_set_nightlight(state, device, |p| {
+        if transport::try_set_nightlight(state, device, |p| {
             p.r = r;
             p.g = g;
             p.b = b;
@@ -127,7 +128,7 @@ impl DeviceController for HumidifierController {
         {
             return Ok(());
         }
-        state.set_color_rgb_generic(device, r, g, b).await
+        transport::set_color_rgb_generic(state, device, r, g, b).await
     }
 }
 
@@ -140,7 +141,7 @@ impl DeviceController for SocketController {
     async fn power_on(&self, state: &StateHandle, device: &Device, on: bool) -> anyhow::Result<()> {
         // 15 addresses all outlets, the form the app uses for a single-outlet
         // plug. Shared vs owned transport is handled downstream.
-        state.socket_turn(device, 15, on).await
+        transport::socket_turn(state, device, 15, on).await
     }
 }
 
@@ -150,58 +151,4 @@ pub fn controller_for(device: &Device) -> Box<dyn DeviceController> {
         DeviceType::Socket => Box::new(SocketController),
         _ => Box::new(GenericController),
     }
-}
-
-/// Encode the humidifier nightlight params and send them over IoT. Returns true
-/// if the command was sent, false if the device has no IoT transport or undoc
-/// metadata (so the caller can fall back to the generic cascade).
-async fn try_set_nightlight<F: Fn(&mut SetHumidifierNightlightParams)>(
-    state: &StateHandle,
-    device: &Device,
-    apply: F,
-) -> anyhow::Result<bool> {
-    let mut params: SetHumidifierNightlightParams =
-        device.nightlight_state.unwrap_or_default().into();
-    (apply)(&mut params);
-
-    if let Ok(command) = Base64HexBytes::encode_for_sku(&device.sku, &params)
-        && let Some(iot) = state.get_iot_client().await
-        && let Some(info) = &device.undoc_device_info
-    {
-        log::info!("Using IoT API to set {device} color");
-        iot.send_real(&info.entry, command.base64()).await?;
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-/// Set a humidifier work mode and parameter. Tries the BLE-encoded SetHumidifierMode
-/// over IoT first, then falls back to the platform API's work-mode capability.
-pub async fn humidifier_set_parameter(
-    state: &StateHandle,
-    device: &Device,
-    work_mode: i64,
-    value: i64,
-) -> anyhow::Result<()> {
-    if let Ok(command) = Base64HexBytes::encode_for_sku(
-        &device.sku,
-        &SetHumidifierMode {
-            mode: work_mode as u8,
-            param: value as u8,
-        },
-    ) && let Some(iot) = state.get_iot_client().await
-        && let Some(info) = &device.undoc_device_info
-    {
-        iot.send_real(&info.entry, command.base64()).await?;
-        return Ok(());
-    }
-
-    if let Some(client) = state.get_platform_client().await
-        && let Some(info) = &device.http_device_info
-    {
-        client.set_work_mode(info, work_mode, value).await?;
-        return Ok(());
-    }
-    anyhow::bail!("Unable to control humidifier parameter work_mode={work_mode} for {device}");
 }
