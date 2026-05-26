@@ -161,34 +161,13 @@ impl HttpControlCommand {
                         &cap.parameters,
                     )?;
                 } else if let Some(mode) = mode {
-                    let mut music_mode = None;
-                    for_each_music_mode(
-                        |opt| {
-                            if opt.name.eq_ignore_ascii_case(mode) {
-                                music_mode.replace(opt.value.clone());
-                                // Halt iteration
-                                Ok(false)
-                            } else {
-                                // Continue
-                                Ok(true)
-                            }
-                        },
-                        &cap.parameters,
-                    )?;
-                    let Some(music_mode) = music_mode else {
-                        anyhow::bail!("mode {mode} not found");
-                    };
-
-                    let value = serde_json::json!({
-                        "musicMode": music_mode,
-                        "sensitivity": sensitivity,
-                        "autoColor": if *auto_color { 1 } else { 0 },
-                        "rgb": color.as_ref().map(|color| {
-                            let [r, g, b, _a] = color.to_rgba8();
-                            ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-                        }),
+                    let rgb = color.as_ref().map(|color| {
+                        let [r, g, b, _a] = color.to_rgba8();
+                        ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
                     });
-                    let result = client.control_device(&device, cap, value).await?;
+                    let result = client
+                        .set_music_mode(&device, mode, *sensitivity, *auto_color, rgb)
+                        .await?;
                     println!("{result:#?}");
                 }
             }

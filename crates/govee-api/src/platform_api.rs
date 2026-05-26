@@ -356,16 +356,11 @@ impl GoveeApiClient {
         }
 
         if let Some(music_mode) = scene.strip_prefix("Music: ")
-            && let Some(cap) = device.capability_by_instance("musicMode")
-            && let Some(field) = cap.struct_field_by_name("musicMode")
-            && let Some(value) = field.field_type.enum_parameter_by_name(music_mode)
+            && device.capability_by_instance("musicMode").is_some()
         {
-            let value = serde_json::json!({
-                "musicMode": value,
-                "sensitivity": sensitivity.min(100),
-                "autoColor": if auto_color { 1 } else { 0 },
-            });
-            return self.control_device(device, cap, value).await;
+            return self
+                .set_music_mode(device, music_mode, sensitivity, auto_color, None)
+                .await;
         }
 
         let caps = self.get_scene_caps(device).await?;
@@ -382,6 +377,38 @@ impl GoveeApiClient {
             }
         }
         anyhow::bail!("Scene '{scene}' is not available for this device");
+    }
+
+    /// Activate one of the device's music modes. The platform API musicMode
+    /// struct carries musicMode (the mode value), sensitivity (0-100), autoColor
+    /// (0/1) and rgb. rgb only has an effect when autoColor is off; it is sent
+    /// only when a color is supplied, because the platform API rejects an
+    /// explicit null rgb with "Parameter value cannot be empty".
+    pub async fn set_music_mode(
+        &self,
+        device: &HttpDeviceInfo,
+        mode: &str,
+        sensitivity: u8,
+        auto_color: bool,
+        rgb: Option<u32>,
+    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+        let cap = device
+            .capability_by_instance("musicMode")
+            .ok_or_else(|| anyhow::anyhow!("device has no musicMode"))?;
+
+        let mode_value = match cap.struct_field_by_name("musicMode").map(|f| &f.field_type) {
+            Some(DeviceParameters::Enum { options }) => options
+                .iter()
+                .find(|opt| opt.name.eq_ignore_ascii_case(mode))
+                .map(|opt| opt.value.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("music mode '{mode}' is not available for this device")
+                })?,
+            _ => anyhow::bail!("device musicMode capability has no musicMode enum field"),
+        };
+
+        let value = music_mode_value(mode_value, sensitivity, auto_color, rgb);
+        self.control_device(device, cap, value).await
     }
 
     pub async fn set_target_temperature(
@@ -820,6 +847,26 @@ impl GoveeApiClient {
     }
 }
 
+/// Build the control value for a musicMode capability. sensitivity is clamped
+/// to the documented 0-100 range; rgb is included only when a color is supplied,
+/// since the platform API rejects an explicit null rgb.
+fn music_mode_value(
+    mode: JsonValue,
+    sensitivity: u8,
+    auto_color: bool,
+    rgb: Option<u32>,
+) -> JsonValue {
+    let mut value = json!({
+        "musicMode": mode,
+        "sensitivity": sensitivity.min(100),
+        "autoColor": if auto_color { 1 } else { 0 },
+    });
+    if let Some(rgb) = rgb {
+        value["rgb"] = rgb.into();
+    }
+    value
+}
+
 pub fn sort_and_dedup_scenes(mut scenes: Vec<String>) -> Vec<String> {
     scenes.sort_by_key(|s| s.to_ascii_lowercase());
     scenes.dedup();
@@ -903,5 +950,22 @@ mod test {
     fn list_devices() {
         let resp: GetDevicesResponse = from_json(LIST_DEVICES_EXAMPLE).expect("parse");
         assert!(!resp.data.is_empty());
+    }
+
+    #[test]
+    fn music_mode_value_rgb() {
+        // autoColor on, no color: rgb is irrelevant and must be omitted, because
+        // the platform API rejects an explicit null rgb.
+        assert_eq!(
+            music_mode_value(json!(5), 80, true, None),
+            json!({"musicMode": 5, "sensitivity": 80, "autoColor": 1})
+        );
+
+        // autoColor off with a color: rgb is included, and sensitivity is
+        // clamped to the documented max of 100.
+        assert_eq!(
+            music_mode_value(json!(5), 200, false, Some(0x0000ff)),
+            json!({"musicMode": 5, "sensitivity": 100, "autoColor": 0, "rgb": 255})
+        );
     }
 }
