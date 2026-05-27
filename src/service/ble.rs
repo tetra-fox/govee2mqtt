@@ -308,8 +308,10 @@ impl BleClient {
         // The device replies to the handshake (and sends status) as notifications.
         // The captured session shows them on the 2b10 notify char; subscribe to it
         // and to the data char, and accept replies from either.
-        let notify_chars: Vec<Characteristic> =
-            [NOTIFY_CHAR_UUID, DATA_CHAR_UUID].iter().filter_map(|u| find(*u)).collect();
+        let notify_chars: Vec<Characteristic> = [NOTIFY_CHAR_UUID, DATA_CHAR_UUID]
+            .iter()
+            .filter_map(|u| find(*u))
+            .collect();
 
         // Pick the version: BgcInfo present -> read it (V1/V2); absent -> assume V1
         // (the app defaults to V1 when a device supports encryption but not V2).

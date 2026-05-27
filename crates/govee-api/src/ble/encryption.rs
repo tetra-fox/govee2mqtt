@@ -483,7 +483,7 @@ mod test {
         assert_eq!(pkcs5_unpad(&[1, 2, 3, 1]), &[1, 2, 3]);
         assert_eq!(pkcs5_unpad(&[9, 9, 3, 3, 3]), &[9, 9]);
         let mut padded = vec![0xab; 16];
-        padded.extend(std::iter::repeat(16u8).take(16));
+        padded.extend(std::iter::repeat_n(16u8, 16));
         assert_eq!(pkcs5_unpad(&padded).len(), 16);
         assert_eq!(pkcs5_unpad(&[1, 2, 13]), &[1, 2, 13]);
         assert_eq!(pkcs5_unpad(&[1, 2, 3, 3]).len(), 4);
@@ -587,7 +587,7 @@ mod test {
         let payload: Vec<u8> = (10..29).collect();
         assert_eq!(payload.len(), 19);
         let iv = [0x5au8; 12];
-        let mut head = [FRAME_HEAD, V2_OP_REQUEST_SINGLE, 0u8];
+        let head = [FRAME_HEAD, V2_OP_REQUEST_SINGLE, 0u8];
         let mut aad = Vec::new();
         aad.extend_from_slice(&head);
         aad.extend_from_slice(&iv);
@@ -600,8 +600,7 @@ mod test {
             v2_parse_single_reply(&frame).as_deref(),
             Some(payload.as_slice())
         );
-        // non-zero status is rejected
-        head[2] = 1;
+        // non-zero status byte is rejected
         frame[2] = 1;
         assert!(v2_parse_single_reply(&frame).is_none());
     }
@@ -612,7 +611,10 @@ mod test {
         let frame: Vec<u8> = (0..20).collect();
         let wire = s.encrypt_command(&frame);
         assert_eq!(wire, frame);
-        assert_eq!(s.decrypt_notification(&wire).as_deref(), Some(frame.as_slice()));
+        assert_eq!(
+            s.decrypt_notification(&wire).as_deref(),
+            Some(frame.as_slice())
+        );
     }
 
     #[test]

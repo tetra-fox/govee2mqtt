@@ -42,7 +42,12 @@ impl BleControlCommand {
         let Some(client) = start_ble_client().await? else {
             anyhow::bail!("No Bluetooth adapter found");
         };
-        println!("sending to {} ({} bytes): {:02x?}", self.ble_address, bytes.len(), bytes);
+        println!(
+            "sending to {} ({} bytes): {:02x?}",
+            self.ble_address,
+            bytes.len(),
+            bytes
+        );
         let result = client.send_frames(&self.ble_address, &[bytes]).await;
         // release the device so it advertises again for the next attempt.
         client.disconnect(&self.ble_address).await;
@@ -54,7 +59,10 @@ impl BleControlCommand {
 
 fn parse_hex(s: &str) -> anyhow::Result<Vec<u8>> {
     let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    anyhow::ensure!(s.len().is_multiple_of(2), "hex must have an even number of digits");
+    anyhow::ensure!(
+        s.len().is_multiple_of(2),
+        "hex must have an even number of digits"
+    );
     (0..s.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(Into::into))

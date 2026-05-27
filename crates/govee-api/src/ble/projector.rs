@@ -525,18 +525,18 @@ impl SetAuroraLaser {
         // are at [1] and [7] respectively -- NOT the reverse, which was the
         // "toggling aurora flips the stars" bug.
         let mut payload = vec![
-            Self::CONTROL_TYPE,         // [0]
-            u8::from(self.aurora_on),   // [1] aurora layer on/off
-            self.laser_brightness,      // [2] stars relative brightness
-            u8::from(self.flicker_on),  // [3] flashing on/off
-            self.flicker_value,         // [4] flashing speed
-            u8::from(self.swim_on),     // [5] orbit on/off
-            self.swim_value,            // [6] orbit speed
-            u8::from(self.laser_on),    // [7] stars layer on/off
-            self.aurora_flow,           // [8] aurora flow rate
-            self.aurora_brightness,     // [9] aurora relative brightness
-            self.aurora_effect_code,    // [10] aurora mode (1=Gradient 2=Breathe 4=Rainbow 3=Twinkle)
-            self.aurora_effect_speed,   // [11] aurora speed
+            Self::CONTROL_TYPE,        // [0]
+            u8::from(self.aurora_on),  // [1] aurora layer on/off
+            self.laser_brightness,     // [2] stars relative brightness
+            u8::from(self.flicker_on), // [3] flashing on/off
+            self.flicker_value,        // [4] flashing speed
+            u8::from(self.swim_on),    // [5] orbit on/off
+            self.swim_value,           // [6] orbit speed
+            u8::from(self.laser_on),   // [7] stars layer on/off
+            self.aurora_flow,          // [8] aurora flow rate
+            self.aurora_brightness,    // [9] aurora relative brightness
+            self.aurora_effect_code, // [10] aurora mode (1=Gradient 2=Breathe 4=Rainbow 3=Twinkle)
+            self.aurora_effect_speed, // [11] aurora speed
             match self.color_mode {
                 AuroraColorMode::Basic => 0,
                 AuroraColorMode::Advanced => 1,
