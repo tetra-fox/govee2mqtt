@@ -178,6 +178,38 @@ pub fn entity_category(instance: &str) -> Option<Option<String>> {
     })
 }
 
+/// The HA display name for a synthesized H6093 instance, if it is one of ours.
+/// `camel_case_to_space_separated` would mangle these: it leaves the boolean
+/// "On"/"Enable" suffix on ("Aurora On", "Auto Off Enable") and splits the
+/// "DreamView" brand into two words. These match the app's own labels. Returns
+/// None for instances we don't own, so callers fall back to the generic
+/// humanizer.
+pub fn entity_name(instance: &str) -> Option<&'static str> {
+    use instance::*;
+    Some(match instance {
+        PAIRING_STATUS => "Pairing",
+        PAIRING_SOUND => "Pairing Sound",
+        SILENT_POWER_UP => "Silent Power Up",
+        DREAMVIEW_LASER => "DreamView Laser",
+        AURORA_ON => "Aurora",
+        AURORA_BRIGHTNESS => "Aurora Brightness",
+        AURORA_EFFECT => "Aurora Effect",
+        AURORA_EFFECT_SPEED => "Aurora Effect Speed",
+        AURORA_FLOW => "Aurora Flow",
+        AURORA_COLOR_MODE => "Aurora Color",
+        STARS_ON => "Stars",
+        STARS_BRIGHTNESS => "Stars Brightness",
+        ORBIT_ON => "Orbit",
+        ORBIT_SPEED => "Orbit Speed",
+        FLASHING_ON => "Flashing",
+        FLASHING_SPEED => "Flashing Speed",
+        AUTO_OFF_ENABLE => "Auto Off",
+        AUTO_OFF_STOP_SOUND => "Stop Sound",
+        AUTO_OFF_MINUTES => "Auto Off Timer",
+        _ => return None,
+    })
+}
+
 /// Whether `instance` is one of the H6093 projector controls we synthesize.
 /// Mirrors the instances `apply_blob_field` / `apply_auto_off_field` /
 /// `encode_capability` handle.
@@ -1180,5 +1212,47 @@ mod test {
         // Non-projector instances are left untouched (None -> caller keeps its default).
         assert_eq!(entity_category("powerSwitch"), None);
         assert_eq!(entity_category("brightness"), None);
+    }
+
+    #[test]
+    fn entity_names_drop_boolean_suffix() {
+        // The generic humanizer would leave "Aurora On" / "Auto Off Enable" and
+        // split "DreamView". These curated labels match the app.
+        assert_eq!(entity_name(instance::AURORA_ON), Some("Aurora"));
+        assert_eq!(entity_name(instance::STARS_ON), Some("Stars"));
+        assert_eq!(entity_name(instance::FLASHING_ON), Some("Flashing"));
+        assert_eq!(entity_name(instance::AUTO_OFF_ENABLE), Some("Auto Off"));
+        assert_eq!(
+            entity_name(instance::DREAMVIEW_LASER),
+            Some("DreamView Laser")
+        );
+
+        // Every projector instance has a name (callers never fall back for ours).
+        for inst in [
+            instance::PAIRING_STATUS,
+            instance::PAIRING_SOUND,
+            instance::SILENT_POWER_UP,
+            instance::DREAMVIEW_LASER,
+            instance::AURORA_ON,
+            instance::AURORA_BRIGHTNESS,
+            instance::AURORA_EFFECT,
+            instance::AURORA_EFFECT_SPEED,
+            instance::AURORA_FLOW,
+            instance::AURORA_COLOR_MODE,
+            instance::STARS_ON,
+            instance::STARS_BRIGHTNESS,
+            instance::ORBIT_ON,
+            instance::ORBIT_SPEED,
+            instance::FLASHING_ON,
+            instance::FLASHING_SPEED,
+            instance::AUTO_OFF_ENABLE,
+            instance::AUTO_OFF_STOP_SOUND,
+            instance::AUTO_OFF_MINUTES,
+        ] {
+            assert!(entity_name(inst).is_some(), "{inst} should have a name");
+        }
+
+        // Non-projector instances fall back to the generic humanizer.
+        assert_eq!(entity_name("powerSwitch"), None);
     }
 }

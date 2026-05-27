@@ -3,7 +3,7 @@ use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{HassClient, IdParameter, camel_case_to_space_separated};
+use crate::service::hass::{HassClient, IdParameter, entity_display_name};
 use crate::service::state::StateHandle;
 use async_trait::async_trait;
 use govee_api::platform_api::DeviceCapability;
@@ -33,7 +33,7 @@ impl SwitchConfig {
             base: EntityConfig {
                 availability,
                 availability_mode,
-                name: Some(camel_case_to_space_separated(&instance.instance)),
+                name: Some(entity_display_name(&instance.instance)),
                 device_class: None,
                 origin: Origin::default(),
                 device: Device::for_device(topics, device),

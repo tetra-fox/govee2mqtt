@@ -33,7 +33,7 @@ pub use projector::{
     apply_blob_field as projector_apply_blob_field,
     common_datas_seed as projector_common_datas_seed,
     encode_capability as projector_encode_capability, entity_category as projector_entity_category,
-    state_value as projector_state_value,
+    entity_name as projector_entity_name, state_value as projector_state_value,
 };
 
 #[cfg(test)]

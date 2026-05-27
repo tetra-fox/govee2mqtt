@@ -3,7 +3,7 @@ use crate::hass_mqtt::instance::{Component, EntityInstance, component};
 use crate::hass_mqtt::router::{Params, Payload, State};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::hass::{HassClient, camel_case_to_space_separated, topic_safe_string};
+use crate::service::hass::{HassClient, entity_display_name, topic_safe_string};
 use crate::service::state::StateHandle;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -209,7 +209,7 @@ impl CapabilityNumber {
                 base: EntityConfig {
                     availability,
                     availability_mode,
-                    name: Some(camel_case_to_space_separated(&cap.instance)),
+                    name: Some(entity_display_name(&cap.instance)),
                     device_class: None,
                     origin: Origin::default(),
                     device: Device::for_device(topics, device),
