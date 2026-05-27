@@ -21,6 +21,10 @@ webui: http://[HOST]:[PORT:8056]/assets/index.html
 # Host network access is required for LAN discovery
 host_network: true
 
+# Direct BLE control (enable_ble) talks to the host BlueZ stack over the system
+# D-Bus; harmless to grant when BLE is unused.
+host_dbus: true
+
 map:
   - type: addon_config
     read_only: false
@@ -44,3 +48,4 @@ schema:
   broadcast_all: "bool?"
   global_broadcast: "bool?"
   scan: "str?"
+  enable_ble: "bool?"

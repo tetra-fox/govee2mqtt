@@ -13,7 +13,8 @@ FROM rust:1-alpine AS builder
 # aws-lc-sys (rustls crypto provider) builds C and asm via cmake/nasm, and
 # rusqlite (bundled) builds SQLite C with cc. musl-dev provides the C toolchain;
 # clang is needed by aws-lc-sys's bindgen. nasm is for aws-lc's x86 asm.
-RUN apk add --no-cache musl-dev cmake make perl clang clang-dev nasm pkgconf
+# dbus-dev is for btleplug's Linux backend (libdbus-sys links BlueZ over D-Bus).
+RUN apk add --no-cache musl-dev cmake make perl clang clang-dev nasm pkgconf dbus-dev
 
 # runtime user, copied into the alpine standalone image below
 RUN adduser -D -H -u 1000 -s /sbin/nologin govee \
@@ -49,6 +50,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 ####################################################################################################
 FROM alpine:3.21 AS standalone
 
+# libdbus runtime shared lib, dynamically linked by btleplug's Linux backend.
+RUN apk add --no-cache dbus-libs
+
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
 
@@ -76,6 +80,9 @@ CMD ["/app/govee2mqtt", \
 ## addon: Home Assistant add-on image, runs the daemon under bashio via run.sh
 ####################################################################################################
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.21 AS addon
+
+# libdbus runtime shared lib, dynamically linked by btleplug's Linux backend.
+RUN apk add --no-cache dbus-libs
 
 COPY common/run.sh /run.sh
 COPY --from=builder /govee2mqtt /app/govee2mqtt

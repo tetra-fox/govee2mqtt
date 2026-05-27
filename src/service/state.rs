@@ -1,4 +1,5 @@
 use crate::hass_mqtt::topic::Topics;
+use crate::service::ble::BleClient;
 use crate::service::control::controller_for;
 use crate::service::coordinator::Coordinator;
 use crate::service::device::Device;
@@ -24,6 +25,9 @@ pub struct State {
     platform_client: Mutex<Option<GoveeApiClient>>,
     undoc_client: Mutex<Option<GoveeUndocumentedApi>>,
     iot_client: Mutex<Option<IotClient>>,
+    /// Present only when direct BLE is enabled and a Bluetooth adapter exists;
+    /// the transport cascade skips BLE when this is None.
+    ble_client: Mutex<Option<BleClient>>,
     hass_client: Mutex<Option<HassClient>>,
     hass_discovery_prefix: Mutex<String>,
     base_topic: Mutex<String>,
@@ -211,6 +215,14 @@ impl State {
 
     pub async fn get_iot_client(&self) -> Option<IotClient> {
         self.iot_client.lock().await.clone()
+    }
+
+    pub async fn set_ble_client(&self, client: BleClient) {
+        self.ble_client.lock().await.replace(client);
+    }
+
+    pub async fn get_ble_client(&self) -> Option<BleClient> {
+        self.ble_client.lock().await.clone()
     }
 
     /// Mark the IoT client connected and subscribed; the IoT subscriber calls

@@ -35,6 +35,8 @@ pub enum SubCommand {
     HttpControl(commands::http_control::HttpControlCommand),
     Serve(commands::serve::ServeCommand),
     Undoc(commands::undoc::UndocCommand),
+    BleProbe(commands::ble_probe::BleProbeCommand),
+    BleControl(commands::ble_control::BleControlCommand),
 }
 
 impl Args {
@@ -47,6 +49,8 @@ impl Args {
             SubCommand::List(cmd) => cmd.run(self).await,
             SubCommand::Serve(cmd) => cmd.run(self).await,
             SubCommand::Undoc(cmd) => cmd.run(self).await,
+            SubCommand::BleProbe(cmd) => cmd.run(self).await,
+            SubCommand::BleControl(cmd) => cmd.run(self).await,
         }
     }
 }

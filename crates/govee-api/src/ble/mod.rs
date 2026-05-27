@@ -7,6 +7,7 @@
 //! it from [`codec::PacketManager::new`].
 
 pub mod codec;
+pub mod encryption;
 pub mod humidifier;
 pub mod light;
 pub mod projector;

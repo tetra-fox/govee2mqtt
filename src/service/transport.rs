@@ -16,7 +16,9 @@
 
 use crate::service::device::Device;
 use crate::service::state::StateHandle;
-use govee_api::ble::{Base64HexBytes, SetHumidifierMode, SetHumidifierNightlightParams};
+use govee_api::ble::{
+    Base64HexBytes, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
+};
 use govee_api::lan_api::{DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::DeviceCapability;
 use serde_json::Value as JsonValue;
@@ -31,6 +33,10 @@ pub(crate) async fn power_on_generic(
         log::info!("Using LAN API to set {device} power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
+        return Ok(());
+    }
+
+    if power_via_ble(state, device, on).await {
         return Ok(());
     }
 
@@ -52,6 +58,39 @@ pub(crate) async fn power_on_generic(
     }
 
     anyhow::bail!("Unable to control power state for {device}");
+}
+
+/// Try to set power over direct BLE. Returns true on success; on any failure (no
+/// BLE client, no BLE address, connect/handshake/write error) it logs and returns
+/// false so the caller falls through to the cloud transports. The BLE client is
+/// only present when a Bluetooth adapter was found at startup, so hosts without
+/// one never reach a connect attempt here.
+async fn power_via_ble(state: &StateHandle, device: &Device, on: bool) -> bool {
+    let Some(ble) = state.get_ble_client().await else {
+        return false;
+    };
+    let Some(addr) = device.ble_address() else {
+        return false;
+    };
+    // SetDevicePower is registered under the generic light codec.
+    let frame = match Base64HexBytes::encode_for_sku("Generic:Light", &SetDevicePower { on }) {
+        Ok(frame) => frame,
+        Err(err) => {
+            log::warn!("BLE power encode for {device} failed: {err:#}");
+            return false;
+        }
+    };
+    log::info!("Using BLE to set {device} power state");
+    // The connection is kept warm and auto-released after an idle period (see
+    // BleClient::send_frames), so bursts reuse one session instead of
+    // re-handshaking per command.
+    match ble.send_frames(addr, &[frame.bytes().to_vec()]).await {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("BLE power for {device} failed ({err:#}); falling through to cloud");
+            false
+        }
+    }
 }
 
 pub(crate) async fn light_power_on_generic(

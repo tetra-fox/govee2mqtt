@@ -47,6 +47,12 @@
             pkgs.pkg-config
           ];
 
+          # btleplug's Linux backend builds against system libdbus (BlueZ lives on
+          # the system bus); pkg-config finds it via buildInputs, and the built
+          # binary needs libdbus-1.so on the runtime linker path too.
+          buildInputs = [pkgs.dbus];
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [pkgs.dbus];
+
           # `cargo fmt` shells out to this rustfmt; point it at the nightly one.
           RUSTFMT = "${nightlyRustfmt}/bin/rustfmt";
         };
@@ -58,6 +64,10 @@
             pkgs.jadx # dex -> java for the apk splits
             pkgs.apktool # decode resources + AndroidManifest
             pkgs.unzip # extract .so / split apks
+            # tshark parses BLE btsnoop captures; the decrypt-btsnoop.py tool
+            # shells out to it. python3 has cryptography for the V1 Safe decrypt.
+            pkgs.wireshark-cli
+            (pkgs.python3.withPackages (ps: [ps.cryptography]))
           ];
         };
       }

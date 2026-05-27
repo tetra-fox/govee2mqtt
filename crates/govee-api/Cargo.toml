@@ -29,6 +29,9 @@ strum = { version = "0.28.0", features = ["strum_macros"] }
 thiserror = "2.0.18"
 arc-swap = "1.9.1"
 parking_lot = "0.12.5"
+aes = "0.8"
+aes-gcm = "0.10"
+getrandom = "0.2"
 
 [dev-dependencies]
 anyhow = "1"

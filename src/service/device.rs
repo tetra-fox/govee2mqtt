@@ -345,6 +345,19 @@ impl Device {
         self.socket_outlet_bits.map(|bits| bits & (1 << index) != 0)
     }
 
+    /// The device's BLE MAC, from the undoc API's per-device settings. None if the
+    /// device has no BLE address (e.g. wifi-only devices). Used to find and connect
+    /// the peripheral for direct BLE control.
+    pub fn ble_address(&self) -> Option<&str> {
+        self.undoc_device_info
+            .as_ref()?
+            .entry
+            .device_ext
+            .device_settings
+            .address
+            .as_deref()
+    }
+
     /// The user-assigned name for outlet `index` of a multi-outlet socket, as
     /// configured in the Govee app. Comes from the undoc API's per-device
     /// `subDevices` metadata (`{"sub_0": {"name": "..."}}`), where `sub_<index>`

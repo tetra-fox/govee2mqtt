@@ -273,6 +273,13 @@ impl Base64HexBytes {
         result
     }
 
+    /// The raw frame bytes (20 bytes per command). Used by the BLE transport,
+    /// which writes them to the device directly rather than base64-wrapping them
+    /// into a cloud message.
+    pub fn bytes(&self) -> &[u8] {
+        &self.0.0
+    }
+
     pub fn with_bytes(bytes: Vec<u8>) -> Self {
         Self(HexBytes(finish(bytes)))
     }

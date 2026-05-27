@@ -27,7 +27,7 @@ color-backtrace = "0.7.2"
 chrono = { version = "0.4.44", features = ["serde"] }
 chrono-tz = "0.10"
 iana-time-zone = "0.1.65"
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive", "env"] }
 dirs-next = "2.0.0"
 rusqlite = { version = "0.32.0", features = ["bundled"] }
 once_cell = "1.21.4"
@@ -43,6 +43,8 @@ tower-http = { version = "0.6.11", features = ["fs"] }
 async-trait = "0.1.89"
 rumqttc = "0.25.1"
 thiserror = "2.0.18"
+btleplug = "0.12"
+futures-util = "0.3"
 
 [dev-dependencies]
 anyhow = "1"

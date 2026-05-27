@@ -102,6 +102,11 @@ if bashio::config.has_value scan ; then
   export GOVEE2MQTT_LAN_SCAN
 fi
 
+if bashio::config.has_value enable_ble ; then
+  GOVEE2MQTT_ENABLE_BLE="$(bashio::config enable_ble)"
+  export GOVEE2MQTT_ENABLE_BLE
+fi
+
 if bashio::config.has_value temperature_scale ; then
   GOVEE2MQTT_TEMPERATURE_SCALE="$(bashio::config temperature_scale)"
   export GOVEE2MQTT_TEMPERATURE_SCALE

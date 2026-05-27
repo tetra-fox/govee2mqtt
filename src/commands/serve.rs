@@ -34,7 +34,9 @@ static AVAILABILITY_TIMEOUT: OnceCell<chrono::Duration> = OnceCell::new();
 pub fn availability_timeout() -> chrono::Duration {
     *AVAILABILITY_TIMEOUT
         .get()
-        .unwrap_or(&chrono::Duration::seconds(DEFAULT_AVAILABILITY_TIMEOUT_SECS))
+        .unwrap_or(&chrono::Duration::seconds(
+            DEFAULT_AVAILABILITY_TIMEOUT_SECS,
+        ))
 }
 
 /// How soon we re-send an IoT status request for a device we have no fresh
@@ -59,6 +61,12 @@ pub struct ServeCommand {
     /// GOVEE2MQTT_AVAILABILITY_TIMEOUT environment variable.
     #[arg(long)]
     availability_timeout: Option<i64>,
+
+    /// Enable direct Bluetooth (BLE) control of owned devices, preferred over the
+    /// cloud when a device is in range. Requires a Bluetooth adapter on the host;
+    /// if none is found this has no effect and the cloud transports are used.
+    #[arg(long, env = "GOVEE2MQTT_ENABLE_BLE")]
+    enable_ble: bool,
 }
 
 async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Result<()> {
@@ -443,6 +451,17 @@ impl ServeCommand {
                     });
                 }
             });
+        }
+
+        // Start direct BLE control if requested and a Bluetooth adapter exists.
+        // When no adapter is found start_ble_client returns None and the BLE
+        // client is never set, so the transport cascade skips BLE.
+        if self.enable_ble {
+            match crate::service::ble::start_ble_client().await {
+                Ok(Some(client)) => state.set_ble_client(client).await,
+                Ok(None) => {}
+                Err(err) => log::warn!("Could not start direct BLE control: {err:#}"),
+            }
         }
 
         // Log the resolved device set once, off the startup critical path. When
