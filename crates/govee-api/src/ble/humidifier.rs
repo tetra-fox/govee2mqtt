@@ -1,6 +1,5 @@
 //! BLE command structs for H7160-class humidifiers and the codecs that encode
-//! and decode them. See hatest/api-map/04-sku-encoders.md for how these opcodes
-//! line up with the app's H71xx controllers.
+//! and decode them. The opcodes line up with the app's H71xx controllers.
 
 use super::codec::{DecodePacketParam, PacketCodec};
 use crate::packet;

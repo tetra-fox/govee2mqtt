@@ -1,8 +1,7 @@
 //! BLE command structs for the H6093 "Stars" aurora/laser projector and the
 //! codecs that encode and decode them. The frame layouts were captured from the
-//! app's MQTT control stream and the device's status echoes; see
-//! hatest/mitm/H6093-protocol.md for the decode and hatest/api-map/04-sku-encoders.md
-//! for how these line up with the other families.
+//! app's MQTT control stream and the device's status echoes, and decoded by
+//! correlating wire bytes against the app's per-field state writes.
 //!
 //! The projector has two independent light layers (aurora/nebula and
 //! laser/stars) plus a settings panel. Each control is a 20-byte frame: a 0x33
@@ -467,8 +466,7 @@ impl NotifyLaser {
 /// (cmd:"ptReal"). It is a flat 15-byte head followed by two count-prefixed RGB
 /// arrays (a coarse and a fine aurora segment), then chunked into 0xA3 frames
 /// the same way `SetSceneCode` frames its scene data. The byte map was decoded by
-/// correlating the wire bytes against the app's per-field state writes; see
-/// hatest/mitm/H6093-protocol.md.
+/// correlating the wire bytes against the app's per-field state writes.
 ///
 /// This is distinct from the 0x48 DIY-effect blob (Pro4H6093Diy), which is a
 /// server-stored effect format, not the live control path.
@@ -655,8 +653,8 @@ mod test {
     use crate::ble::codec::GoveeBlePacket;
 
     /// Encode a typed command for the H6093 and return the raw frame bytes.
-    /// The expected values are the exact frames captured from the app
-    /// (hatest/mitm/mqtt-pub-fulltoggle.jsonl); encoding must reproduce them
+    /// The expected values are the exact frames captured from the app's MQTT
+    /// control stream; encoding must reproduce them
     /// byte-for-byte, including the trailing XOR checksum.
     fn enc<T: 'static>(value: &T) -> Vec<u8> {
         Base64HexBytes::encode_for_sku("H6093", value).unwrap().0.0
@@ -759,7 +757,7 @@ mod test {
 
     #[test]
     fn aurora_laser_live_blob_matches_capture() {
-        // Captured 3-frame blob (18:19:42, hatest/mitm/mqtt-pub-fulltoggle.jsonl):
+        // Captured 3-frame blob from the app's MQTT control stream (18:19:42):
         //   A3 00 01 02 0C 01 64 01 59 01 55 01 13 64 01 45 01 01 03 <ck>
         //   A3 01 FF 00 B5 FF 07 E3 00 F0 FF 01 03 FF 00 00 00 FF 00 <ck>
         //   A3 FF FF 07 FF 00 00 00 00 00 00 00 00 00 00 00 00 00 00 <ck>

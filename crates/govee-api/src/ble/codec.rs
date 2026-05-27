@@ -1,7 +1,7 @@
 //! The BLE-frame codec engine, shared across all device families.
 //!
 //! Govee devices speak a 20-byte BLE frame format (`0x33` write / `0xaa` read,
-//! XOR checksum in the last byte, see hatest/api-map/04-sku-encoders.md). This
+//! XOR checksum in the last byte). This
 //! module holds the machinery that encodes and decodes those frames and the
 //! per-SKU codec registry; the actual per-device command structs and their
 //! registrations live in the sibling family modules (humidifier, light, ...).
