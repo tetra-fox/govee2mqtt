@@ -6,7 +6,7 @@
 ARG BUILD_ARCH=amd64
 
 ####################################################################################################
-## Builder: compiles the daemon once (musl static-ish), shared by both targets below
+## Builder: compiles the daemon once (musl, dynamically linked), shared by both targets below
 ####################################################################################################
 FROM rust:1-alpine AS builder
 
@@ -39,10 +39,15 @@ RUN case "${BUILD_ARCH}" in \
 
 WORKDIR /src
 COPY . .
+# musl targets default to a fully static binary, but btleplug links the system
+# dbus C library and Alpine ships no static libdbus. disable crt-static so dbus
+# (plus musl libc and libgcc) links dynamically; the runtime stages install the
+# matching shared libs.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     target="$(cat /tmp/rust-target)" \
-    && cargo build --release --bin govee2mqtt --target "${target}" \
+    && RUSTFLAGS="-C target-feature=-crt-static" \
+       cargo build --release --bin govee2mqtt --target "${target}" \
     && cp "target/${target}/release/govee2mqtt" /govee2mqtt
 
 ####################################################################################################
@@ -50,8 +55,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 ####################################################################################################
 FROM alpine:3.21 AS standalone
 
-# libdbus runtime shared lib, dynamically linked by btleplug's Linux backend.
-RUN apk add --no-cache dbus-libs
+# shared libs the dynamically-linked daemon loads at runtime: libdbus-1
+# (btleplug's Linux backend) and libgcc_s (rust stack unwinding). musl libc is
+# already present in the base image.
+RUN apk add --no-cache dbus-libs libgcc
 
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
@@ -81,8 +88,10 @@ CMD ["/app/govee2mqtt", \
 ####################################################################################################
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.21 AS addon
 
-# libdbus runtime shared lib, dynamically linked by btleplug's Linux backend.
-RUN apk add --no-cache dbus-libs
+# shared libs the dynamically-linked daemon loads at runtime: libdbus-1
+# (btleplug's Linux backend) and libgcc_s (rust stack unwinding). musl libc is
+# already present in the base image.
+RUN apk add --no-cache dbus-libs libgcc
 
 COPY common/run.sh /run.sh
 COPY --from=builder /govee2mqtt /app/govee2mqtt
