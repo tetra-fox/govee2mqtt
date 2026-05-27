@@ -514,17 +514,17 @@ impl GoveeUndocumentedApi {
             event_state: None,
             instance: inst.to_string(),
         };
-        // The aurora effect picker (codes 1-4). No app-facing names captured yet,
-        // so the options are numbered; refine when we have the effect labels.
+        // The aurora effect picker. Code->name confirmed by capture: tapping the
+        // app dropdown Gradient,Breathe,Rainbow,Twinkle produced codes 1,2,4,3 (so
+        // 3=Twinkle and 4=Rainbow, NOT the intuitive order).
         let aurora_effect = DeviceCapability {
             kind: DeviceCapabilityKind::Mode,
             parameters: Some(DeviceParameters::Enum {
-                // Effect codes 1-4 and their app names.
                 options: [
                     (1, "Gradient"),
                     (2, "Breathe"),
-                    (3, "Rainbow"),
-                    (4, "Twinkle"),
+                    (4, "Rainbow"),
+                    (3, "Twinkle"),
                 ]
                 .into_iter()
                 .map(|(code, name)| EnumOption {

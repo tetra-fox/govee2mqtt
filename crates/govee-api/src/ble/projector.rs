@@ -472,9 +472,9 @@ impl NotifyLaser {
 /// server-stored effect format, not the live control path.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SetAuroraLaser {
-    /// byte[1]: the stars (laser) layer on/off. Confirmed on the device: toggling
-    /// this flips the stars, not the aurora. The head is laser-first ([1..6]),
-    /// then aurora ([7..12]).
+    /// byte[7]: the stars (laser) layer on/off. Confirmed via isolated capture
+    /// (toggling stars in the app flips byte[7]). The head interleaves the layers:
+    /// aurora on at [1], stars on at [7], with each layer's sliders around them.
     pub laser_on: bool,
     /// byte[2]: the laser (app: "stars") relative-brightness slider, 0-100.
     pub laser_brightness: u8,
@@ -484,7 +484,8 @@ pub struct SetAuroraLaser {
     /// app label: "orbit"
     pub swim_on: bool,
     pub swim_value: u8,
-    /// byte[7]: the aurora (nebula) layer on/off.
+    /// byte[1]: the aurora (nebula) layer on/off. Confirmed via isolated capture
+    /// (toggling aurora in the app flips byte[1]).
     pub aurora_on: bool,
     pub aurora_flow: u8,
     /// byte[9]: the aurora (nebula) relative-brightness slider, 0-100. Distinct
@@ -519,27 +520,36 @@ impl SetAuroraLaser {
     const CONTROL_TYPE: u8 = 0x0C;
 
     fn encode(&self) -> anyhow::Result<Vec<u8>> {
+        // Head byte map confirmed by decrypting isolated-action BLE captures
+        // (research/api-map/07-frame-reference.md). The aurora and stars on/off
+        // are at [1] and [7] respectively -- NOT the reverse, which was the
+        // "toggling aurora flips the stars" bug.
         let mut payload = vec![
-            Self::CONTROL_TYPE,
-            u8::from(self.laser_on),
-            self.laser_brightness,
-            u8::from(self.flicker_on),
-            self.flicker_value,
-            u8::from(self.swim_on),
-            self.swim_value,
-            u8::from(self.aurora_on),
-            self.aurora_flow,
-            self.aurora_brightness,
-            self.aurora_effect_code,
-            self.aurora_effect_speed,
+            Self::CONTROL_TYPE,         // [0]
+            u8::from(self.aurora_on),   // [1] aurora layer on/off
+            self.laser_brightness,      // [2] stars relative brightness
+            u8::from(self.flicker_on),  // [3] flashing on/off
+            self.flicker_value,         // [4] flashing speed
+            u8::from(self.swim_on),     // [5] orbit on/off
+            self.swim_value,            // [6] orbit speed
+            u8::from(self.laser_on),    // [7] stars layer on/off
+            self.aurora_flow,           // [8] aurora flow rate
+            self.aurora_brightness,     // [9] aurora relative brightness
+            self.aurora_effect_code,    // [10] aurora mode (1=Gradient 2=Breathe 4=Rainbow 3=Twinkle)
+            self.aurora_effect_speed,   // [11] aurora speed
             match self.color_mode {
                 AuroraColorMode::Basic => 0,
                 AuroraColorMode::Advanced => 1,
             },
         ];
-        // The color tail layout depends on the mode (confirmed by capture):
-        //   Basic:    [count][count x RGB]                     (auroraColorArray)
+        // The color tail layout depends on the mode:
+        //   Basic:    [count][count x RGB]                     (CONFIRMED by capture)
         //   Advanced: [coarseN][fineN][coarse RGB][fine RGB]   (waves + flows)
+        // TODO: the Advanced (waves/flows) layout is NOT fully confirmed. Decrypted
+        // captures (research/mitm/h6093-advanced.btsnoop) show an extra trailing
+        // field and a waves/flows enable encoding this simple two-array form does
+        // not model, so Advanced multi-color edits may be incomplete. Basic mode is
+        // the reliable color path until the advanced layout is pinned.
         match self.color_mode {
             AuroraColorMode::Basic => {
                 payload.push(self.basic_colors.len() as u8);
@@ -820,6 +830,34 @@ mod test {
         // it the device receives the data but never commits the change.
         let trailer = &got[got.len() - 20..];
         assert_eq!(trailer[..3], [0x33, 0x05, 0x0C]);
+    }
+
+    #[test]
+    fn aurora_and_stars_on_off_are_distinct_bytes() {
+        // Regression guard for the [1]/[7] swap: aurora on at byte[1], stars
+        // (laser) on at byte[7], confirmed by isolated captures. With aurora ON and
+        // stars OFF, [1] must be 1 and [7] must be 0 -- a both-on fixture (as the
+        // other blob tests use) can't catch the swap.
+        let cmd = SetAuroraLaser {
+            aurora_on: true,
+            laser_on: false,
+            color_mode: AuroraColorMode::Basic,
+            ..Default::default()
+        };
+        let payload = reassemble_a3(&enc(&cmd));
+        assert_eq!(payload[1], 1, "byte[1] is aurora on/off");
+        assert_eq!(payload[7], 0, "byte[7] is stars on/off");
+
+        // and the inverse
+        let cmd = SetAuroraLaser {
+            aurora_on: false,
+            laser_on: true,
+            color_mode: AuroraColorMode::Basic,
+            ..Default::default()
+        };
+        let payload = reassemble_a3(&enc(&cmd));
+        assert_eq!(payload[1], 0);
+        assert_eq!(payload[7], 1);
     }
 
     #[test]
