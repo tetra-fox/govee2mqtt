@@ -161,46 +161,44 @@ impl Topics {
     }
 
     /// Command topic for a generic platform-API Range capability exposed as a
-    /// number. The instance name is part of the path so multiple range
-    /// capabilities on one device don't collide.
+    /// number. The instance name is part of the path (verbatim, as on the switch
+    /// topics) so multiple range capabilities on one device don't collide; the
+    /// inbound lookup is case-insensitive.
     pub fn capability_number_command(&self, device: &ServiceDevice, instance: &str) -> String {
         format!(
-            "{}/number/{}/capability/{inst}/command",
+            "{}/number/{}/capability/{instance}/command",
             self.base,
             topic_safe_id(device),
-            inst = topic_safe_string(instance),
         )
     }
 
     pub fn capability_number_state(&self, device: &ServiceDevice, instance: &str) -> String {
         format!(
-            "{}/number/{}/capability/{inst}/state",
+            "{}/number/{}/capability/{instance}/state",
             self.base,
             topic_safe_id(device),
-            inst = topic_safe_string(instance),
         )
     }
 
     // ---- generic mode / music ----
 
     /// Command topic for a generic platform-API Mode capability exposed as a
-    /// select. The instance name is part of the path so multiple mode
-    /// capabilities on one device don't collide.
+    /// select. The instance name is part of the path (verbatim, as on the switch
+    /// topics) so multiple mode capabilities on one device don't collide; the
+    /// inbound lookup is case-insensitive.
     pub fn capability_mode_command(&self, device: &ServiceDevice, instance: &str) -> String {
         format!(
-            "{}/select/{}/capability/{inst}/command",
+            "{}/select/{}/capability/{instance}/command",
             self.base,
             topic_safe_id(device),
-            inst = topic_safe_string(instance),
         )
     }
 
     pub fn capability_mode_state(&self, device: &ServiceDevice, instance: &str) -> String {
         format!(
-            "{}/select/{}/capability/{inst}/state",
+            "{}/select/{}/capability/{instance}/state",
             self.base,
             topic_safe_id(device),
-            inst = topic_safe_string(instance),
         )
     }
 
