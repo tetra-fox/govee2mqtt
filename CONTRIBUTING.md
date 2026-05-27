@@ -73,3 +73,7 @@ the decompiles, traffic captures, and protocol notes are kept under a gitignored
 `research/` directory. they are not in the repo: they contain a specific app
 version's decompiled bytecode and captured account traffic. the toolchain above
 lets you regenerate equivalent artifacts yourself from your own capture.
+
+## a note on ble
+
+the RE stack I used was Apple's own `PacketLogger` tool + their `Bluetooth for iOS Profile`. guide: [A Practical Guide to Debugging BLE Communication on iOS](https://novelbits.io/debugging-sniffing-secure-ble-ios/)
