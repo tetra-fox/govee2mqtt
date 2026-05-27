@@ -72,6 +72,12 @@ pub struct ServeCommand {
 async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Result<()> {
     let now = Utc::now();
 
+    // The H6093 projector's relative brightness, color mode, effect and flow
+    // aren't in the platform or IoT status; they come from the app's stored
+    // common-datas. Seed the held state from it once so those entities populate
+    // at startup instead of staying default until the user changes one.
+    crate::service::transport::ensure_projector_state_seeded(state, device).await;
+
     if device.is_ble_only_device() == Some(true) {
         // We can't poll this device, we have no ble support
         return Ok(());

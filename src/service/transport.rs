@@ -411,13 +411,43 @@ async fn send_iot_frame<T: 'static>(
     Ok(())
 }
 
-/// Return the device's held aurora+laser state, seeding it from the app's stored
-/// common-datas blob if we don't have it yet. A single-field edit re-sends the
-/// whole frame, so it must start from the device's real current state; the app
-/// keeps that state in common-datas (bizType 3, key `<sku>_<device>`) and we
-/// read it the same way the app does. If the read fails or there's no record,
-/// fall back to the default so control still works (it just may not preserve
-/// fields the user hasn't set through us).
+/// Fetch the app's stored common-datas for this device, store it as the held
+/// aurora/laser state, and return the seeded state. None if the SKU isn't seeded
+/// from common-datas, there's no undoc client, no stored record, or the read
+/// failed. The SKU's (bizType, bizKey) comes from the projector module, so the
+/// device-specific knowledge stays there and the SKU gate runs before any HTTP.
+async fn try_seed_aurora_laser_state(
+    state: &StateHandle,
+    device: &Device,
+) -> Option<govee_api::ble::SetAuroraLaser> {
+    let (biz_type, biz_key) = govee_api::ble::projector_common_datas_seed(&device.sku, &device.id)?;
+    let undoc = state.get_undoc_client().await?;
+    match undoc.get_common_datas(biz_type, &biz_key).await {
+        Ok(Some(json)) => {
+            let seeded = govee_api::ble::SetAuroraLaser::from_common_datas(&json);
+            log::debug!("{device}: seeded aurora/laser state from common-datas");
+            state
+                .device_mut(&device.sku, &device.id)
+                .await
+                .set_aurora_laser_state(seeded.clone());
+            Some(seeded)
+        }
+        Ok(None) => {
+            log::warn!("{device}: no common-datas record to seed aurora/laser state");
+            None
+        }
+        Err(err) => {
+            log::warn!("{device}: failed to read common-datas to seed state: {err:#}");
+            None
+        }
+    }
+}
+
+/// Return the device's held aurora+laser state, seeding it from common-datas if we
+/// don't have it yet. A single-field edit re-sends the whole frame, so it must
+/// start from the device's real current state. If the read fails or there's no
+/// record, fall back to the default so control still works (it just may not
+/// preserve fields the user hasn't set through us).
 async fn seeded_aurora_laser_state(
     state: &StateHandle,
     device: &Device,
@@ -425,24 +455,25 @@ async fn seeded_aurora_laser_state(
     if let Some(held) = &device.aurora_laser_state {
         return held.clone();
     }
+    try_seed_aurora_laser_state(state, device)
+        .await
+        .unwrap_or_else(|| device.aurora_laser_state())
+}
 
-    if let Some(undoc) = state.get_undoc_client().await {
-        let biz_key = format!("{}_{}", device.sku, device.id);
-        match undoc.get_common_datas(3, &biz_key).await {
-            Ok(Some(json)) => {
-                let seeded = govee_api::ble::SetAuroraLaser::from_common_datas(&json);
-                log::debug!("{device}: seeded aurora/laser state from common-datas");
-                state
-                    .device_mut(&device.sku, &device.id)
-                    .await
-                    .set_aurora_laser_state(seeded.clone());
-                return seeded;
-            }
-            Ok(None) => log::warn!("{device}: no common-datas record to seed aurora/laser state"),
-            Err(err) => log::warn!("{device}: failed to read common-datas to seed state: {err:#}"),
-        }
+/// Seed a projector's held aurora/laser state from common-datas at poll time, so
+/// the entities whose values aren't in the platform or IoT status (relative
+/// brightness, color mode, effect, flow) show their real values at startup instead
+/// of staying default until the user changes one. No-op once the state is already
+/// held; `try_seed_aurora_laser_state` no-ops for SKUs that don't seed.
+pub(crate) async fn ensure_projector_state_seeded(state: &StateHandle, device: &Device) {
+    if device.aurora_laser_state.is_some() {
+        return;
     }
-    device.aurora_laser_state()
+    if try_seed_aurora_laser_state(state, device).await.is_some() {
+        // Publish the seeded values so the synthesized entities populate; a failed
+        // notify is retried on the next poll.
+        state.notify_of_state_change(&device.id).await.ok();
+    }
 }
 
 /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the zero-based

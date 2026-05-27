@@ -82,6 +82,19 @@ fn encode_toggle<T: 'static>(sku: &str, value: T) -> anyhow::Result<Vec<String>>
     Ok(Base64HexBytes::encode_for_sku(sku, &value)?.base64())
 }
 
+/// The common-datas record that seeds this SKU's held control state, as
+/// `(bizType, bizKey)`, or None if the SKU isn't seeded from common-datas.
+/// common-datas is the app's generic per-device UI-state store; only SKUs whose
+/// synthesized entities have no platform/IoT status source need seeding from it.
+/// The H6093 keeps its full aurora/laser state under bizType 3, key `<sku>_<id>`
+/// (parsed by `SetAuroraLaser::from_common_datas`).
+pub fn common_datas_seed(sku: &str, device_id: &str) -> Option<(i32, String)> {
+    match sku {
+        "H6093" => Some((3, format!("{sku}_{device_id}"))),
+        _ => None,
+    }
+}
+
 /// Apply a single aurora/stars control change onto the held aurora+laser state.
 /// Returns true if `instance` is one of the shared-blob fields (so the caller
 /// re-encodes and sends the whole `SetAuroraLaser`); false if it isn't, so the
