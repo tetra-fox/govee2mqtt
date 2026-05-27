@@ -50,6 +50,16 @@
           # `cargo fmt` shells out to this rustfmt; point it at the nightly one.
           RUSTFMT = "${nightlyRustfmt}/bin/rustfmt";
         };
+
+        # reverse-engineering toolchain
+        re = pkgs.mkShell {
+          packages = [
+            pkgs.mitmproxy # capture the app's HTTPS/MQTT traffic
+            pkgs.jadx # dex -> java for the apk splits
+            pkgs.apktool # decode resources + AndroidManifest
+            pkgs.unzip # extract .so / split apks
+          ];
+        };
       }
     );
 

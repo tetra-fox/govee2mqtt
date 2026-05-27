@@ -6,7 +6,14 @@ docker-target
 node_modules
 package.json
 package-lock.json
-/hatest/
+# research/ is private RE scratch (decompiles, captures, notes), except the
+# reusable mitmproxy capture addon, which ships as tooling. to re-include a file
+# under an ignored tree, every parent dir must be re-included too, so this walks
+# the path down instead of ignoring the dir wholesale.
+/research/*
+!/research/mitm/
+/research/mitm/*
+!/research/mitm/capture.py
 .direnv/
 
 # the devcontainer bootstrap stages a source-building dev add-on here
