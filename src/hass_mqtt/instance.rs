@@ -47,8 +47,8 @@ pub struct Component {
 
 /// Build a discovery component from an entity config. `config` must be the
 /// struct that embeds `base` via `#[serde(flatten)]`, so its serialized form
-/// carries the same fields plus the entity-specific ones. The platform string
-/// is the one each entity passed to the old per-entity publish path.
+/// carries the same fields plus the entity-specific ones. `platform` is the
+/// entity's Home Assistant discovery component type (e.g. "sensor", "light").
 pub fn component<T: Serialize>(
     platform: &'static str,
     base: &EntityConfig,

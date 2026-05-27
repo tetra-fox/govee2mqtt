@@ -935,9 +935,9 @@ mod test {
             Some(Utc::now() - (availability_timeout() - chrono::Duration::seconds(10)));
         assert_eq!(device.availability_status(), Reachability::Available);
 
-        // Past the availability timeout: Missing. The device stopped answering.
-        // This must not depend on POLL_INTERVAL (the old bug tied it to the
-        // 15min state poll, so a device never went offline).
+        // Past the availability timeout: Missing. Availability is driven by the
+        // timeout, not POLL_INTERVAL (the 15min state poll), so a slow poll can't
+        // keep a dead device marked Available.
         device.last_iot_device_status_update =
             Some(Utc::now() - (availability_timeout() + chrono::Duration::seconds(10)));
         assert_eq!(device.availability_status(), Reachability::Missing);

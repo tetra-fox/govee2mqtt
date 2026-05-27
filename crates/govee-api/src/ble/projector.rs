@@ -500,8 +500,14 @@ pub struct SetAuroraLaser {
     pub color_mode: AuroraColorMode,
     /// basic-mode color list (auroraColorArray); used when color_mode == Basic
     pub basic_colors: Vec<Rgb>,
+    /// advanced-mode "waves" (coarse) segment on/off. In advanced mode each
+    /// segment carries its own on-flag, count, and colors; a segment stays in the
+    /// blob with its colors even when off. At least one of waves/flows must be on.
+    pub coarse_on: bool,
     /// advanced-mode coarse segment ("waves") colors; used when Advanced
     pub coarse_colors: Vec<Rgb>,
+    /// advanced-mode "flows" (fine) segment on/off. See coarse_on.
+    pub fine_on: bool,
     /// advanced-mode fine segment ("flows") colors; used when Advanced
     pub fine_colors: Vec<Rgb>,
 }
@@ -520,10 +526,8 @@ impl SetAuroraLaser {
     const CONTROL_TYPE: u8 = 0x0C;
 
     fn encode(&self) -> anyhow::Result<Vec<u8>> {
-        // Head byte map confirmed by decrypting isolated-action BLE captures
-        // (research/api-map/07-frame-reference.md). The aurora and stars on/off
-        // are at [1] and [7] respectively -- NOT the reverse, which was the
-        // "toggling aurora flips the stars" bug.
+        // Head byte map (research/api-map/07-frame-reference.md). Aurora on/off is
+        // byte[1], stars on/off is byte[7].
         let mut payload = vec![
             Self::CONTROL_TYPE,        // [0]
             u8::from(self.aurora_on),  // [1] aurora layer on/off
@@ -542,14 +546,11 @@ impl SetAuroraLaser {
                 AuroraColorMode::Advanced => 1,
             },
         ];
-        // The color tail layout depends on the mode:
-        //   Basic:    [count][count x RGB]                     (CONFIRMED by capture)
-        //   Advanced: [coarseN][fineN][coarse RGB][fine RGB]   (waves + flows)
-        // TODO: the Advanced (waves/flows) layout is NOT fully confirmed. Decrypted
-        // captures (research/mitm/h6093-advanced.btsnoop) show an extra trailing
-        // field and a waves/flows enable encoding this simple two-array form does
-        // not model, so Advanced multi-color edits may be incomplete. Basic mode is
-        // the reliable color path until the advanced layout is pinned.
+        // Color tail layout by mode:
+        //   Basic:    [count][count x RGB]
+        //   Advanced: [wavesOn][wavesN][waves RGB] [flowsOn][flowsN][flows RGB]
+        // Advanced "waves"=coarse, "flows"=fine; each segment carries its on-flag,
+        // count, and colors, and keeps its colors when its on-flag is 0.
         match self.color_mode {
             AuroraColorMode::Basic => {
                 payload.push(self.basic_colors.len() as u8);
@@ -558,10 +559,15 @@ impl SetAuroraLaser {
                 }
             }
             AuroraColorMode::Advanced => {
-                payload.push(self.coarse_colors.len() as u8);
-                payload.push(self.fine_colors.len() as u8);
-                for c in self.coarse_colors.iter().chain(&self.fine_colors) {
-                    payload.extend_from_slice(&[c.r, c.g, c.b]);
+                for (on, colors) in [
+                    (self.coarse_on, &self.coarse_colors),
+                    (self.fine_on, &self.fine_colors),
+                ] {
+                    payload.push(u8::from(on));
+                    payload.push(colors.len() as u8);
+                    for c in colors {
+                        payload.extend_from_slice(&[c.r, c.g, c.b]);
+                    }
                 }
             }
         }
@@ -618,8 +624,13 @@ impl SetAuroraLaser {
                 _ => AuroraColorMode::Basic,
             },
             // basic mode uses auroraColorArray; advanced uses coarse "waves" +
-            // fine "flows". We keep all three so the held state round-trips the
-            // device's full color picture regardless of which mode is active.
+            // fine "flows", each with its own on-flag. We keep all three color
+            // lists plus the two flags so the held state round-trips the device's
+            // full color picture regardless of which mode is active. A missing
+            // on-flag defaults on: a segment is normally on, and both-off is an
+            // invalid advanced state the device rejects.
+            coarse_on: boolf("auroraCoarseIsOn").unwrap_or(true),
+            fine_on: boolf("auroraFineIsOn").unwrap_or(true),
             basic_colors: colors("auroraColorArray"),
             coarse_colors: colors("auroraCoarseColorArray"),
             fine_colors: colors("auroraFineColorArray"),
@@ -767,12 +778,11 @@ mod test {
 
     #[test]
     fn aurora_laser_live_blob_matches_capture() {
-        // Captured 3-frame blob from the app's MQTT control stream (18:19:42):
-        //   A3 00 01 02 0C 01 64 01 59 01 55 01 13 64 01 45 01 01 03 <ck>
-        //   A3 01 FF 00 B5 FF 07 E3 00 F0 FF 01 03 FF 00 00 00 FF 00 <ck>
-        //   A3 FF FF 07 FF 00 00 00 00 00 00 00 00 00 00 00 00 00 00 <ck>
-        // payload: 0C 01 64 01 59 01 55 01 13 64 01 45 01 01 03
-        //          coarse(1): FF 00 B5   fine(3): FF 07 E3, 00 F0 FF, 01 03 FF
+        // Captured advanced-mode blob. Reassembled payload (A3 markers + checksums
+        // stripped):
+        //   0C 01 64 01 59 01 55 01 13 64 01 45 01   head ([12]=01 advanced)
+        //   01 03 FF00B5 FF07E3 00F0FF                waves on, 3 colors
+        //   01 03 FF0000 00FF00 FF07FF                flows on, 3 colors
         let cmd = SetAuroraLaser {
             laser_on: true,
             laser_brightness: 0x64,
@@ -787,12 +797,13 @@ mod test {
             aurora_effect_speed: 0x45,
             color_mode: AuroraColorMode::Advanced,
             basic_colors: vec![],
-            coarse_colors: vec![Rgb {
-                r: 0xFF,
-                g: 0x00,
-                b: 0xB5,
-            }],
-            fine_colors: vec![
+            coarse_on: true,
+            coarse_colors: vec![
+                Rgb {
+                    r: 0xFF,
+                    g: 0x00,
+                    b: 0xB5,
+                },
                 Rgb {
                     r: 0xFF,
                     g: 0x07,
@@ -803,26 +814,36 @@ mod test {
                     g: 0xF0,
                     b: 0xFF,
                 },
+            ],
+            fine_on: true,
+            fine_colors: vec![
                 Rgb {
-                    r: 0x01,
-                    g: 0x03,
+                    r: 0xFF,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                Rgb {
+                    r: 0x00,
+                    g: 0xFF,
+                    b: 0x00,
+                },
+                Rgb {
+                    r: 0xFF,
+                    g: 0x07,
                     b: 0xFF,
                 },
             ],
         };
         let got = enc(&cmd);
-        // Verify the reassembled PAYLOAD (the bytes the device parses) matches the
-        // capture exactly. We assert on the payload rather than the exact frame
-        // boundaries: the captured blob split these 27 payload bytes across 3 A3
-        // frames where our framer uses 2, with the remainder being zero padding.
-        // The payload is what's provably correct from the capture; the device's
-        // exact frame-splitting rule isn't pinned from a single sample (see the
-        // framing note on frame_a3), so we don't assert on it here.
+        // Assert on the reassembled PAYLOAD (the bytes the device parses), not the
+        // exact frame boundaries: the device's frame-splitting rule isn't pinned
+        // from a single sample (see the framing note on frame_a3), so we don't
+        // assert on it here.
         #[rustfmt::skip]
         let expect_payload: Vec<u8> = vec![
-            0x0C, 0x01, 0x64, 0x01, 0x59, 0x01, 0x55, 0x01, 0x13, 0x64, 0x01, 0x45, 0x01, 0x01, 0x03,
-            0xFF, 0x00, 0xB5,                 // coarse
-            0xFF, 0x07, 0xE3, 0x00, 0xF0, 0xFF, 0x01, 0x03, 0xFF, // fine
+            0x0C, 0x01, 0x64, 0x01, 0x59, 0x01, 0x55, 0x01, 0x13, 0x64, 0x01, 0x45, 0x01,
+            0x01, 0x03, 0xFF, 0x00, 0xB5, 0xFF, 0x07, 0xE3, 0x00, 0xF0, 0xFF, // waves on, 3
+            0x01, 0x03, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0x07, 0xFF, // flows on, 3
         ];
         assert_eq!(reassemble_a3(&got), expect_payload);
 
@@ -834,10 +855,9 @@ mod test {
 
     #[test]
     fn aurora_and_stars_on_off_are_distinct_bytes() {
-        // Regression guard for the [1]/[7] swap: aurora on at byte[1], stars
-        // (laser) on at byte[7], confirmed by isolated captures. With aurora ON and
-        // stars OFF, [1] must be 1 and [7] must be 0 -- a both-on fixture (as the
-        // other blob tests use) can't catch the swap.
+        // Aurora on is byte[1], stars on is byte[7]. Checked independently
+        // (aurora on / stars off, then the inverse) so each byte is pinned; a
+        // both-on fixture wouldn't tell the two apart.
         let cmd = SetAuroraLaser {
             aurora_on: true,
             laser_on: false,
@@ -858,6 +878,22 @@ mod test {
         let payload = reassemble_a3(&enc(&cmd));
         assert_eq!(payload[1], 0);
         assert_eq!(payload[7], 1);
+    }
+
+    #[test]
+    fn aurora_flow_and_change_speed_are_distinct_bytes() {
+        // The two aurora sliders are distinct bytes: flow rate is byte[8], change
+        // speed (effect speed) is byte[11].
+        let cmd = SetAuroraLaser {
+            aurora_on: true,
+            aurora_flow: 52,
+            aurora_effect_speed: 37,
+            color_mode: AuroraColorMode::Basic,
+            ..Default::default()
+        };
+        let payload = reassemble_a3(&enc(&cmd));
+        assert_eq!(payload[8], 52, "byte[8] is aurora flow rate");
+        assert_eq!(payload[11], 37, "byte[11] is aurora change speed");
     }
 
     #[test]
@@ -891,7 +927,9 @@ mod test {
                     b: 0xFF,
                 },
             ],
+            coarse_on: true,
             coarse_colors: vec![Rgb { r: 1, g: 2, b: 3 }], // present but unused in basic
+            fine_on: true,
             fine_colors: vec![],
         };
         #[rustfmt::skip]
@@ -908,8 +946,8 @@ mod test {
     /// Inverse of `frame_a3`: pull the payload back out of the framed bytes,
     /// dropping the A3 line markers and checksums, and trimming the trailing zero
     /// frame-padding to the true payload length. The length depends on byte[12]
-    /// (color mode): basic = 14 head + 1 count + 3*count; advanced = 13 head +
-    /// 2 counts + 3*(coarse+fine).
+    /// (color mode): basic = 13 head + 1 count + 3*count; advanced = 13 head +
+    /// 2 (wavesOn,wavesN) + 3*wavesN + 2 (flowsOn,flowsN) + 3*flowsN.
     fn reassemble_a3(framed: &[u8]) -> Vec<u8> {
         let mut logical = vec![];
         let mut first = true;
@@ -928,11 +966,14 @@ mod test {
             }
         }
         let len = if logical[12] == 0 {
-            // basic: bytes [0..12] head incl mode (13), byte[13] count, then RGBs
+            // basic: head [0..12] (13), byte[13] count, then count RGBs
             14 + 3 * logical[13] as usize
         } else {
-            // advanced: byte[13]=coarse, byte[14]=fine, then their RGBs
-            15 + 3 * (logical[13] as usize + logical[14] as usize)
+            // advanced: head (13), [13]=wavesOn [14]=wavesN + waves RGBs, then
+            // [.]=flowsOn [.+1]=flowsN + flows RGBs right after the waves colors.
+            let waves_n = logical[14] as usize;
+            let flows_n = logical[16 + 3 * waves_n] as usize;
+            17 + 3 * (waves_n + flows_n)
         };
         logical.truncate(len);
         logical

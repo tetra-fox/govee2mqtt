@@ -468,7 +468,7 @@ impl ServeCommand {
         // LAN discovery is enabled we wait for it to settle first, so the
         // "didn't respond to LAN probing" warnings don't fire for devices that
         // simply hadn't been probed yet (query_status has a 10s timeout).
-        // Startup no longer blocks on this: hass registration and polling start
+        // Startup does not block on this: hass registration and polling start
         // immediately below, and each device's state streams into hass via
         // notify_of_state_change as discovery and polling respond.
         {
