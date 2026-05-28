@@ -1,4 +1,3 @@
-# Govee2MQTT: a Govee to MQTT bridge for Home Assistant (App)
+# Govee2MQTT: a Govee to MQTT bridge for Home Assistant
 
-This app provides a bridge between [Govee](https://govee.com) lights and Home Assistant,
-via the [Home Assistant MQTT Integration](https://www.home-assistant.io/integrations/mqtt/).
+Bridges your [Govee](https://govee.com) devices (lights, plugs, humidifiers, fans, kettles, sensors, and more) into Home Assistant via the [MQTT integration](https://www.home-assistant.io/integrations/mqtt/).

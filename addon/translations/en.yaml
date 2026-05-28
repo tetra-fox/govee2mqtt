@@ -54,7 +54,9 @@ configuration:
     name: Debug Filter
     description: >-
       If you need to troubleshoot, set this to a Rust debug level filter.
-      The easiest value to enter for this is "govee=trace".
+      A useful value is "govee2mqtt=trace,govee_api=trace", which
+      captures every inbound IoT message and LAN discovery reply,
+      including from devices govee2mqtt doesn't recognize yet.
       Be aware that in trace mode some sensitive information will
       be output to the log. Take care to redact any topic or token
       strings before you paste and share it with others.

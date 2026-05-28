@@ -1,15 +1,11 @@
-# Privacy Policy for Govee2MQTT
+# Privacy
 
-Beyond data that is unavoidably sent to Govee's cloud servers (which are hosted
-in AWS) as a necessary part of controlling your devices, **no** data about your
-device(s) or `govee2mqtt` usage leave your device or are sent to the maintainers
-of `govee2mqtt`.
+Beyond the data that necessarily reaches Govee's cloud (hosted on AWS) to control your devices, no data about your devices or your govee2mqtt usage leaves your host. Nothing is sent to the maintainers of govee2mqtt.
 
-Any credentials you configure `govee2mqtt` to use are used solely to authenticate
-with Govee's cloud servers and are not used for any other purpose.
+The credentials you configure are used only to authenticate with Govee's cloud and aren't used for anything else.
 
-## Data Maintained by Govee2MQTT
+Direct BLE control doesn't talk to the cloud at all. Commands and state updates that fit through BLE never leave your local network.
 
-Information about your list of Govee devices and their configuration is cached
-on the local filesystem to avoid exhausting API limits with the Govee cloud
-service.
+## Cached data
+
+govee2mqtt caches the device list and its configuration on the local filesystem to stay under Govee's API rate limits. The cache lives in the data volume mount point configured when you start the service (`/data` by default in the Docker image, or the addon-managed path under Home Assistant).
