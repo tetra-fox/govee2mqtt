@@ -246,6 +246,31 @@ fn load_quirks() -> HashMap<String, Quirk> {
             .with_iot_api_support(true)
             .with_rgb()
             .with_brightness(),
+        // Additional humidifiers grouped with H7160 in homebridge-govee's
+        // `humidifier` bucket (lib/utils/constants.js). Added without
+        // with_broken_platform because we have not verified that the platform
+        // API misreports them like it does H7160; flip the flag per-SKU if a
+        // user reports the same mangled-metadata issue. RGB+brightness left
+        // off for the same reason (not every humidifier has the nightlight).
+        Quirk::humidifier("H7140").with_iot_api_support(true),
+        Quirk::humidifier("H7141").with_iot_api_support(true),
+        Quirk::humidifier("H7142").with_iot_api_support(true),
+        Quirk::humidifier("H7143").with_iot_api_support(true),
+        Quirk::humidifier("H7145").with_iot_api_support(true),
+        Quirk::humidifier("H7147").with_iot_api_support(true),
+        Quirk::humidifier("H7148").with_iot_api_support(true),
+        Quirk::humidifier("H7149").with_iot_api_support(true),
+        Quirk::humidifier("H714E").with_iot_api_support(true),
+        // Dehumidifiers grouped under homebridge-govee's `dehumidifier` bucket.
+        // We do not have any dehumidifier quirks yet; the Dehumidifier device
+        // type already routes through the humidifier controller and HA entity,
+        // so registering these enables basic on/off + mode + humidity reading.
+        Quirk::device("H7150", DeviceType::Dehumidifier, "mdi:air-humidifier-off")
+            .with_iot_api_support(true),
+        Quirk::device("H7151", DeviceType::Dehumidifier, "mdi:air-humidifier-off")
+            .with_iot_api_support(true),
+        Quirk::device("H7152", DeviceType::Dehumidifier, "mdi:air-humidifier-off")
+            .with_iot_api_support(true),
         Quirk::space_heater("H7130")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         Quirk::space_heater("H7131")
@@ -256,6 +281,10 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::space_heater("H713A")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         Quirk::space_heater("H713B")
+            .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
+        // H713C is grouped with H713A/H713B in homebridge-govee's `heater1` bucket
+        // (lib/utils/constants.js); same shape applies.
+        Quirk::space_heater("H713C")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         Quirk::space_heater("H7132")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
@@ -273,17 +302,32 @@ fn load_quirks() -> HashMap<String, Quirk> {
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         // <https://github.com/wez/govee2mqtt/issues/343>
         Quirk::ice_maker("H7172").with_iot_api_support(false),
+        // Additional ice makers grouped with H7172 in homebridge-govee's
+        // `iceMaker` bucket (lib/utils/constants.js). Mirror the H7172 setup
+        // until per-model behavior is verified.
+        Quirk::ice_maker("H717D").with_iot_api_support(false),
+        Quirk::ice_maker("H8120").with_iot_api_support(false),
         // Dual smart plug. The platform API only exposes a single combined
         // powerSwitch, but the IoT status packet reports each outlet as one
         // bit of the onOff value, so we can report per-outlet state.
         // <https://github.com/wez/govee2mqtt/issues/65>
         Quirk::device("H5082", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(2),
+        // Triple smart plug; same per-outlet bitfield situation as H5082.
+        // Grouped under homebridge-govee's `switchTriple` bucket
+        // (lib/utils/constants.js).
+        Quirk::device("H5160", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(3),
         // Single Wi-Fi smart plugs/switches. The platform API returns no
         // metadata for these, so without a quirk they map to nothing; with one,
         // they get a synthesized powerSwitch driven over IoT. iot_api_support is
         // required for control to route over IoT (the only available transport).
         Quirk::device("H5080", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
         Quirk::device("H5083", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        // Additional single-outlet smart plugs grouped with H5080/H5083 in
+        // homebridge-govee's `switchSingle` bucket (lib/utils/constants.js).
+        Quirk::device("H5001", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        Quirk::device("H5081", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        Quirk::device("H5086", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        Quirk::device("H7014", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
         // H6093 "Stars" aurora/laser projector. The platform API lists it as a
         // light but reports no brightness/color capability, so without this it
         // surfaces as a bare power switch. The device takes cmd:"turn" and
@@ -315,6 +359,13 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::device("H7173", DeviceType::Kettle, "mdi:kettle")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit)
             .with_show_as_preset_modes(&["Tea", "Coffee", "DIY"]),
+        // Additional kettles grouped with the H717x series in homebridge-govee's
+        // `kettle` bucket (lib/utils/constants.js). Per-SKU preset mode lists
+        // unverified; left off until we know them.
+        Quirk::device("H7175", DeviceType::Kettle, "mdi:kettle")
+            .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
+        Quirk::device("H717A", DeviceType::Kettle, "mdi:kettle")
+            .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
         // Lights from the list of LAN API enabled devices
         // at <https://app-h5.govee.com/user-manual/wlan-guide>
         Quirk::lan_api_capable_light("H6072", FLOOR_LAMP),
