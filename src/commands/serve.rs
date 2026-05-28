@@ -380,10 +380,10 @@ impl ServeCommand {
             // initial platform disco attempt
             state.set_platform_client(client).await;
 
-            if let Ok(api_key) = args.api_args.api_key() {
-                if let Err(err) = start_platform_iot(api_key, state.clone()).await {
-                    log::warn!("Platform MQTT event subscribe failed to start: {err:#}");
-                }
+            if let Ok(api_key) = args.api_args.api_key()
+                && let Err(err) = start_platform_iot(api_key, state.clone()).await
+            {
+                log::warn!("Platform MQTT event subscribe failed to start: {err:#}");
             }
 
             // spawn periodic discovery task
