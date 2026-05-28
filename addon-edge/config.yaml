@@ -45,7 +45,7 @@ schema:
   mqtt_port: "int?"
   mqtt_username: "str?"
   mqtt_password: "password?"
-  base_topic: "str?"
+  mqtt_base_topic: "str?"
   debug_level: "str?"
   no_multicast: "bool?"
   broadcast_all: "bool?"

@@ -37,9 +37,9 @@ else
   fi
   GOVEE2MQTT_MQTT_HOST="$(bashio::services mqtt 'host')"
   GOVEE2MQTT_MQTT_PORT="$(bashio::services mqtt 'port')"
-  GOVEE2MQTT_MQTT_USER="$(bashio::services mqtt 'username')"
+  GOVEE2MQTT_MQTT_USERNAME="$(bashio::services mqtt 'username')"
   GOVEE2MQTT_MQTT_PASSWORD="$(bashio::services mqtt 'password')"
-  export GOVEE2MQTT_MQTT_HOST GOVEE2MQTT_MQTT_PORT GOVEE2MQTT_MQTT_USER GOVEE2MQTT_MQTT_PASSWORD
+  export GOVEE2MQTT_MQTT_HOST GOVEE2MQTT_MQTT_PORT GOVEE2MQTT_MQTT_USERNAME GOVEE2MQTT_MQTT_PASSWORD
 fi
 
 if bashio::config.has_value mqtt_port ; then
@@ -48,8 +48,8 @@ if bashio::config.has_value mqtt_port ; then
 fi
 
 if bashio::config.has_value mqtt_username ; then
-  GOVEE2MQTT_MQTT_USER="$(bashio::config mqtt_username)"
-  export GOVEE2MQTT_MQTT_USER
+  GOVEE2MQTT_MQTT_USERNAME="$(bashio::config mqtt_username)"
+  export GOVEE2MQTT_MQTT_USERNAME
 fi
 
 if bashio::config.has_value mqtt_password ; then
@@ -57,8 +57,8 @@ if bashio::config.has_value mqtt_password ; then
   export GOVEE2MQTT_MQTT_PASSWORD
 fi
 
-if bashio::config.has_value base_topic ; then
-  GOVEE2MQTT_MQTT_BASE_TOPIC="$(bashio::config base_topic)"
+if bashio::config.has_value mqtt_base_topic ; then
+  GOVEE2MQTT_MQTT_BASE_TOPIC="$(bashio::config mqtt_base_topic)"
   export GOVEE2MQTT_MQTT_BASE_TOPIC
 fi
 
@@ -93,8 +93,8 @@ if bashio::config.has_value broadcast_all ; then
 fi
 
 if bashio::config.has_value global_broadcast ; then
-  GOVEE2MQTT_LAN_BROADCAST_GLOBAL="$(bashio::config global_broadcast)"
-  export GOVEE2MQTT_LAN_BROADCAST_GLOBAL
+  GOVEE2MQTT_LAN_GLOBAL_BROADCAST="$(bashio::config global_broadcast)"
+  export GOVEE2MQTT_LAN_GLOBAL_BROADCAST
 fi
 
 if bashio::config.has_value scan ; then

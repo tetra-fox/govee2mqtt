@@ -19,7 +19,7 @@ GOVEE2MQTT_API_KEY=UUID
 GOVEE2MQTT_MQTT_HOST=mqtt
 GOVEE2MQTT_MQTT_PORT=1883
 # Uncomment if your mqtt broker requires authentication
-#GOVEE2MQTT_MQTT_USER=user
+#GOVEE2MQTT_MQTT_USERNAME=user
 #GOVEE2MQTT_MQTT_PASSWORD=password
 
 # Specify the temperature scale to use, either C for Celsius

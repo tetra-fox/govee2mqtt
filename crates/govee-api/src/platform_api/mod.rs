@@ -49,7 +49,7 @@ fn new_request_id() -> String {
 pub struct GoveeApiArguments {
     /// The Govee API Key. If not passed here, it will be read from
     /// the GOVEE2MQTT_API_KEY environment variable.
-    #[arg(long, global = true)]
+    #[arg(long = "govee-api-key", global = true)]
     pub api_key: Option<String>,
 }
 
@@ -65,7 +65,7 @@ impl GoveeApiArguments {
         self.opt_api_key()?.ok_or_else(|| {
             GoveeApiError::Auth(
                 "specify the api key either via the \
-                 --api-key parameter or by setting $GOVEE2MQTT_API_KEY"
+                 --govee-api-key parameter or by setting $GOVEE2MQTT_API_KEY"
                     .into(),
             )
         })

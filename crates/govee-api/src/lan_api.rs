@@ -44,7 +44,7 @@ pub struct LanDiscoArguments {
     pub broadcast_all: bool,
 
     /// Broadcast to the global broadcast address 255.255.255.255
-    /// You may also set GOVEE2MQTT_LAN_BROADCAST_GLOBAL=true via the environment.
+    /// You may also set GOVEE2MQTT_LAN_GLOBAL_BROADCAST=true via the environment.
     #[arg(long, global = true)]
     pub global_broadcast: bool,
 
@@ -98,7 +98,7 @@ impl LanDiscoArguments {
             options.broadcast_all_interfaces = truthy(&v)?;
         }
 
-        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_BROADCAST_GLOBAL")? {
+        if let Some(v) = opt_env_var::<String>("GOVEE2MQTT_LAN_GLOBAL_BROADCAST")? {
             options.global_broadcast = truthy(&v)?;
         }
 

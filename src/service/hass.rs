@@ -36,7 +36,7 @@ pub struct HassArguments {
     mqtt_port: Option<u16>,
 
     /// The username to authenticate against the broker
-    /// You may also set this via the GOVEE2MQTT_MQTT_USER environment variable.
+    /// You may also set this via the GOVEE2MQTT_MQTT_USERNAME environment variable.
     #[arg(long, global = true)]
     mqtt_username: Option<String>,
 
@@ -57,7 +57,7 @@ pub struct HassArguments {
     /// The temperature scale to use when showing temperature values as
     /// entities in home assistant. Can be either "C" or "F" for Celsius
     /// or Fahrenheit respectively.
-    /// You may also set this vai the GOVEE2MQTT_TEMPERATURE_SCALE environment
+    /// You may also set this via the GOVEE2MQTT_TEMPERATURE_SCALE environment
     /// variable.
     #[arg(long, global = true)]
     temperature_scale: Option<String>,
@@ -90,7 +90,7 @@ impl HassArguments {
     pub fn mqtt_username(&self) -> anyhow::Result<Option<String>> {
         match self.mqtt_username.clone() {
             Some(u) => Ok(Some(u)),
-            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_USER")?),
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_USERNAME")?),
         }
     }
 

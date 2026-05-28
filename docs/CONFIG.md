@@ -18,7 +18,7 @@ here](https://developer.govee.com/reference/apply-you-govee-api-key).
 | ------------------ | --------------------- | ---------------- | -------------------------------------------------------- |
 | `--govee-email`    | `GOVEE2MQTT_EMAIL`    | `govee_email`    | The email address you registered with your govee account |
 | `--govee-password` | `GOVEE2MQTT_PASSWORD` | `govee_password` | The password you registered for your govee account       |
-| `--api-key`        | `GOVEE2MQTT_API_KEY`  | `govee_api_key`  | The API key you requested from Govee support             |
+| `--govee-api-key`  | `GOVEE2MQTT_API_KEY`  | `govee_api_key`  | The API key you requested from Govee support             |
 
 _Concerned about sharing your credentials? See [Privacy](PRIVACY.md) for
 information about how data is used and retained by `govee2mqtt`_
@@ -46,7 +46,7 @@ on some networks, especially across wifi access points and routers.
 | -------------------- | --------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--no-multicast`     | `GOVEE2MQTT_LAN_NO_MULTICAST=true`      | `no_multicast`     | Do not multicast discovery packets to the Govee multicast group `239.255.255.250`. It is not recommended to use this option.                                                                                                                                                                                                                                                                                         |
 | `--broadcast-all`    | `GOVEE2MQTT_LAN_BROADCAST_ALL=true`     | `broadcast_all`    | Enumerate all non-loopback network interfaces and send discovery packets to the broadcast address of each one, individually. This may be a good option if multicast-UDP doesn't work well on your network                                                                                                                                                                                                            |
-| `--global-broadcast` | `GOVEE2MQTT_LAN_BROADCAST_GLOBAL=true`  | `global_broadcast` | Send discovery packets to the global broadcast address `255.255.255.255`. This may be a possible solution if multicast-UDP doesn't work well on your network.                                                                                                                                                                                                                                                        |
+| `--global-broadcast` | `GOVEE2MQTT_LAN_GLOBAL_BROADCAST=true`  | `global_broadcast` | Send discovery packets to the global broadcast address `255.255.255.255`. This may be a possible solution if multicast-UDP doesn't work well on your network.                                                                                                                                                                                                                                                        |
 | `--scan`             | `GOVEE2MQTT_LAN_SCAN=10.0.0.1,10.0.0.2` | `scan`             | Specify a list of addresses that should be scanned by sending them discovery packets. Each element in the list can be an individual IP address (eg: the address of a specific device: be sure to assign it a static IP in your DHCP or other network setup!) or a network broadcast address like `10.0.0.255` for networks that are reachable but not directly plumbed on the machine where `govee2mqtt` is running. |
 
 [Read more about LAN API Requirements here](LAN.md)
@@ -59,18 +59,28 @@ In order to make your devices appear in Home Assistant, you will need to have co
 
 You will also need to configure `govee2mqtt` to use the same broker:
 
-| CLI                 | ENV                          | App             | Purpose                                                                                                                                                                                                                       |
-| ------------------- | ---------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mqtt-host`       | `GOVEE2MQTT_MQTT_HOST`       | `mqtt_host`     | The host name or IP address of your mqtt broker. This should be the same broker that you have configured in Home Assistant.                                                                                                   |
-| `--mqtt-port`       | `GOVEE2MQTT_MQTT_PORT`       | `mqtt_port`     | The port number of the mqtt broker. The default is `1883`                                                                                                                                                                     |
-| `--mqtt-username`   | `GOVEE2MQTT_MQTT_USER`       | `mqtt_username` | If your broker requires authentication, the username to use                                                                                                                                                                   |
-| `--mqtt-password`   | `GOVEE2MQTT_MQTT_PASSWORD`   | `mqtt_password` | If your broker requires authentication, the password to use                                                                                                                                                                   |
-| `--mqtt-base-topic` | `GOVEE2MQTT_MQTT_BASE_TOPIC` | `base_topic`    | The prefix for all MQTT topics and Home Assistant entity unique ids. Defaults to `govee2mqtt`. If you are migrating from an upstream `wez/govee2mqtt` install and want to keep your existing entities, set this to `gv2mqtt`. |
+| CLI                 | ENV                          | App               | Purpose                                                                                                                                                                                                                       |
+| ------------------- | ---------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mqtt-host`       | `GOVEE2MQTT_MQTT_HOST`       | `mqtt_host`       | The host name or IP address of your mqtt broker. This should be the same broker that you have configured in Home Assistant.                                                                                                   |
+| `--mqtt-port`       | `GOVEE2MQTT_MQTT_PORT`       | `mqtt_port`       | The port number of the mqtt broker. The default is `1883`                                                                                                                                                                     |
+| `--mqtt-username`   | `GOVEE2MQTT_MQTT_USERNAME`   | `mqtt_username`   | If your broker requires authentication, the username to use                                                                                                                                                                   |
+| `--mqtt-password`   | `GOVEE2MQTT_MQTT_PASSWORD`   | `mqtt_password`   | If your broker requires authentication, the password to use                                                                                                                                                                   |
+| `--mqtt-base-topic` | `GOVEE2MQTT_MQTT_BASE_TOPIC` | `mqtt_base_topic` | The prefix for all MQTT topics and Home Assistant entity unique ids. Defaults to `govee2mqtt`. If you are migrating from an upstream `wez/govee2mqtt` install and want to keep your existing entities, set this to `gv2mqtt`. |
 
 ## Device Availability
 
 A device is reported unavailable in Home Assistant once `govee2mqtt` hasn't heard from it for `availability_timeout` seconds. Lower values detect an unplugged or offline device faster, at the cost of polling each device for its status more often over the (free) AWS IoT channel. The Govee cloud itself marks a device offline within about a minute.
 
-| CLI                      | ENV                              | App                    | Purpose                                                                       |
-| ------------------------ | -------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
-| `--availability-timeout` | `GOVEE2MQTT_AVAILABILITY_TIMEOUT`| `availability_timeout` | Seconds of silence before a device is reported offline. Defaults to `300`.    |
+| CLI                      | ENV                               | App                    | Purpose                                                                    |
+| ------------------------ | --------------------------------- | ---------------------- | -------------------------------------------------------------------------- |
+| `--availability-timeout` | `GOVEE2MQTT_AVAILABILITY_TIMEOUT` | `availability_timeout` | Seconds of silence before a device is reported offline. Defaults to `300`. |
+
+## Direct BLE Control
+
+For owned devices that are in range of the host's Bluetooth adapter, `govee2mqtt`
+can talk to them directly over BLE, skipping the cloud round trip. When no
+adapter is found this option has no effect and the cloud transports are used.
+
+| CLI            | ENV                     | App          | Purpose                                                                              |
+| -------------- | ----------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `--enable-ble` | `GOVEE2MQTT_ENABLE_BLE` | `enable_ble` | Enable direct BLE control of owned devices, preferred over the cloud when in range.  |
