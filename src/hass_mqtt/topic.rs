@@ -359,6 +359,14 @@ impl Topics {
         format!("{}/switch/:id/outlet/:index/command", self.base)
     }
 
+    /// Topic for the H5082 timer-write endpoint. Payload is the JSON shape
+    /// documented on [`govee_api::ble::socket::parse_timer_request`]. There
+    /// is no read counterpart; the device echoes timer state in its periodic
+    /// status broadcast.
+    pub fn route_h5082_timer_command(&self) -> String {
+        format!("{}/h5082/:id/timer/set", self.base)
+    }
+
     pub fn route_request_platform_data(&self) -> String {
         format!("{}/:id/request-platform-data", self.base)
     }

@@ -99,6 +99,147 @@ fn parse_duration_minutes(value: &JsonValue) -> u32 {
     n.clamp(0, 23 * 60 + 59) as u32
 }
 
+/// Parse a timer-slot write request from the MQTT JSON payload into the
+/// typed `SetTimerSlot` frame. The shape:
+///
+/// ```json
+/// {
+///   "outlet":  1 | 2,
+///   "slot":    0..N,
+///   "kind":    "on" | "off",
+///   "time":    "HH:MM",
+///   "days":    ["mon","tue",...] | "all" | [],
+///   "enabled": true | false   // optional, default true
+/// }
+/// ```
+///
+/// Returns a structured parse error so the handler can reply meaningfully
+/// rather than a generic 400.
+pub fn parse_timer_request(payload: &JsonValue) -> Result<SetTimerSlot, TimerParseError> {
+    let outlet_n = payload
+        .get("outlet")
+        .and_then(|v| v.as_i64())
+        .ok_or(TimerParseError::MissingOutlet)?;
+    let outlet =
+        outlet_wire(outlet_n.try_into().unwrap_or(0)).ok_or(TimerParseError::BadOutlet)?;
+
+    let slot = payload
+        .get("slot")
+        .and_then(|v| v.as_i64())
+        .ok_or(TimerParseError::MissingSlot)?;
+    if !(0..=255).contains(&slot) {
+        return Err(TimerParseError::BadSlot);
+    }
+    let slot = slot as u8;
+
+    let kind_str = payload
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .ok_or(TimerParseError::MissingKind)?;
+    let kind_bit = match kind_str {
+        "on" | "ON" | "On" => 1u8,
+        "off" | "OFF" | "Off" => 0u8,
+        _ => return Err(TimerParseError::BadKind),
+    };
+
+    let time_str = payload
+        .get("time")
+        .and_then(|v| v.as_str())
+        .ok_or(TimerParseError::MissingTime)?;
+    let (hh, mm) = parse_hhmm(time_str).ok_or(TimerParseError::BadTime)?;
+
+    // Days: array of weekday names, or "all" for the every-day sentinel.
+    // Empty array also means "every-day sentinel" by convention.
+    let days = match payload.get("days") {
+        Some(JsonValue::String(s)) if s.eq_ignore_ascii_case("all") => 0x00u8,
+        Some(JsonValue::Array(arr)) if arr.is_empty() => 0x00u8,
+        Some(JsonValue::Array(arr)) => {
+            let mut mask: u8 = 0;
+            for d in arr {
+                let name = d.as_str().ok_or(TimerParseError::BadDays)?;
+                mask |= day_bit(name).ok_or(TimerParseError::BadDays)?;
+            }
+            // bit 7 = "selective" flag; required whenever a non-zero day mask
+            // is sent so the device picks the day-mask interpretation rather
+            // than the "every day" sentinel.
+            mask | 0x80
+        }
+        None => return Err(TimerParseError::MissingDays),
+        _ => return Err(TimerParseError::BadDays),
+    };
+
+    let enabled = payload
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    // flags byte: bit 7 = enable, bit 0 = type (1 = fire-on, 0 = fire-off).
+    let flags = (if enabled { 0x80 } else { 0x00 }) | kind_bit;
+
+    Ok(SetTimerSlot {
+        outlet,
+        slot,
+        flags,
+        hh,
+        mm,
+        days,
+    })
+}
+
+/// Parse `"HH:MM"` (e.g. `"17:11"`, `"7:5"`) into a `(hh, mm)` pair with
+/// both fields in their device-side ranges. Returns `None` for malformed
+/// input or out-of-range values.
+fn parse_hhmm(s: &str) -> Option<(u8, u8)> {
+    let (h, m) = s.split_once(':')?;
+    let hh: u8 = h.trim().parse().ok()?;
+    let mm: u8 = m.trim().parse().ok()?;
+    if hh >= 24 || mm >= 60 {
+        return None;
+    }
+    Some((hh, mm))
+}
+
+/// Map a weekday name to its bit position in the H5082's day mask.
+/// Mon=bit0..Sun=bit6.
+fn day_bit(name: &str) -> Option<u8> {
+    Some(match name.to_ascii_lowercase().as_str() {
+        "mon" | "monday" => 1 << 0,
+        "tue" | "tues" | "tuesday" => 1 << 1,
+        "wed" | "weds" | "wednesday" => 1 << 2,
+        "thu" | "thur" | "thurs" | "thursday" => 1 << 3,
+        "fri" | "friday" => 1 << 4,
+        "sat" | "saturday" => 1 << 5,
+        "sun" | "sunday" => 1 << 6,
+        _ => return None,
+    })
+}
+
+/// Parse error variants for [`parse_timer_request`]. Each variant maps to a
+/// distinct user-facing message so a misshaped payload tells the caller
+/// exactly which field to fix.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum TimerParseError {
+    #[error("missing 'outlet'")]
+    MissingOutlet,
+    #[error("'outlet' must be 1 or 2")]
+    BadOutlet,
+    #[error("missing 'slot'")]
+    MissingSlot,
+    #[error("'slot' must be 0..255")]
+    BadSlot,
+    #[error("missing 'kind'")]
+    MissingKind,
+    #[error("'kind' must be \"on\" or \"off\"")]
+    BadKind,
+    #[error("missing 'time'")]
+    MissingTime,
+    #[error("'time' must be \"HH:MM\" with HH in 0..23 and MM in 0..59")]
+    BadTime,
+    #[error("missing 'days'")]
+    MissingDays,
+    #[error("'days' must be an array of weekday names, [] or \"all\" for every day")]
+    BadDays,
+}
+
 /// Optimistic post-write hook: given the instance and value the user just
 /// wrote, return the `NotifyCountdown` that should be inserted into the
 /// device's held state so HA's state-topic readback reflects the new value
@@ -514,6 +655,94 @@ mod test {
             .expect("encodes");
         let bytes = data_encoding::BASE64.decode(frames[0].as_bytes()).unwrap();
         assert_eq!(&bytes[..6], &[0x33, 0xB0, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn parse_timer_request_matches_capture_tue_fri() {
+        // Reconstruct outlet 1, slot 0, off, 17:11, Tue+Fri from the
+        // h5082-full.btsnoop capture (wire `33 13 01 00 80 11 0b 92 00`).
+        let req = parse_timer_request(&serde_json::json!({
+            "outlet": 1,
+            "slot": 0,
+            "kind": "off",
+            "time": "17:11",
+            "days": ["tue", "fri"],
+        }))
+        .unwrap();
+        assert_eq!(
+            req,
+            SetTimerSlot {
+                outlet: 0x01,
+                slot: 0,
+                flags: 0x80,
+                hh: 17,
+                mm: 11,
+                days: 0x92,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_timer_request_every_day_sentinel() {
+        // Empty array AND "all" both produce the 0x00 every-day sentinel
+        // the device expects.
+        for days_value in [serde_json::json!([]), serde_json::json!("all")] {
+            let req = parse_timer_request(&serde_json::json!({
+                "outlet": 1,
+                "slot": 1,
+                "kind": "on",
+                "time": "13:10",
+                "days": days_value,
+            }))
+            .unwrap();
+            assert_eq!(req.days, 0x00);
+            assert_eq!(req.flags, 0x81);
+        }
+    }
+
+    #[test]
+    fn parse_timer_request_disabled_clears_enable_bit() {
+        let req = parse_timer_request(&serde_json::json!({
+            "outlet": 2,
+            "slot": 0,
+            "kind": "off",
+            "time": "00:00",
+            "days": [],
+            "enabled": false,
+        }))
+        .unwrap();
+        // bit 7 = 0 (disabled), bit 0 = 0 (off-kind)
+        assert_eq!(req.flags, 0x00);
+    }
+
+    #[test]
+    fn parse_timer_request_returns_specific_errors() {
+        let bad_outlet = parse_timer_request(&serde_json::json!({
+            "outlet": 5,
+            "slot": 0,
+            "kind": "on",
+            "time": "0:00",
+            "days": "all",
+        }));
+        assert_eq!(bad_outlet, Err(TimerParseError::BadOutlet));
+
+        let bad_time = parse_timer_request(&serde_json::json!({
+            "outlet": 1,
+            "slot": 0,
+            "kind": "on",
+            "time": "25:00",
+            "days": "all",
+        }));
+        assert_eq!(bad_time, Err(TimerParseError::BadTime));
+
+        let bad_day = parse_timer_request(&serde_json::json!({
+            "outlet": 1,
+            "slot": 0,
+            "kind": "on",
+            "time": "0:00",
+            "days": ["funday"],
+        }));
+        assert_eq!(bad_day, Err(TimerParseError::BadDays));
     }
 
     #[test]

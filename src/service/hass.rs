@@ -610,6 +610,46 @@ async fn mqtt_outlet_command(
     Ok(())
 }
 
+/// Set or clear an H5082 recurring timer slot from an MQTT JSON payload.
+/// Power-user write path with no HA-side editor entities; users invoke this
+/// via HA automations, `mosquitto_pub`, or the like. Payload shape and field
+/// semantics are documented on
+/// [`govee_api::ble::socket::parse_timer_request`].
+async fn mqtt_h5082_timer_command(
+    Payload(payload): Payload<String>,
+    Params(IdParameter { id }): Params<IdParameter>,
+    State(state): State<StateHandle>,
+) -> anyhow::Result<()> {
+    let json: serde_json::Value = serde_json::from_str(&payload)
+        .with_context(|| format!("H5082 timer payload for {id} is not valid JSON: {payload}"))?;
+    let req = govee_api::ble::socket::parse_timer_request(&json)
+        .map_err(|e| anyhow::anyhow!("H5082 timer payload for {id} rejected: {e}"))?;
+
+    let device = state.resolve_device_for_control(&id).await?;
+    if device.sku != "H5082" {
+        anyhow::bail!(
+            "device {id} sku {sku} is not H5082; timer-set is per-SKU",
+            sku = device.sku
+        );
+    }
+
+    let iot = state
+        .get_iot_client()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
+    let info = device
+        .undoc_device_info
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device}"))?;
+
+    let frame = govee_api::ble::Base64HexBytes::encode_for_sku(&device.sku, &req)
+        .context("encoding SetTimerSlot")?;
+    log::info!("Setting H5082 timer on {device}: {req:?}");
+    iot.send_real(&info.entry, frame.base64()).await?;
+
+    Ok(())
+}
+
 /// HASS is advising us that its status has changed
 async fn mqtt_homeassitant_status(
     Payload(status): Payload<String>,
@@ -664,6 +704,12 @@ async fn build_router_and_register(
             .await?;
         router
             .route(topics.route_outlet_command(), mqtt_outlet_command)
+            .await?;
+        router
+            .route(
+                topics.route_h5082_timer_command(),
+                mqtt_h5082_timer_command,
+            )
             .await?;
 
         router.route(topics.oneclick(), mqtt_oneclick).await?;
