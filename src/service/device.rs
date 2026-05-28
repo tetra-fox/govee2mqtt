@@ -171,6 +171,32 @@ pub struct DeviceState {
     pub updated: DateTime<Utc>,
 }
 
+/// Wire shape used by the http /api/devices list and the /ws state-change
+/// stream. A clean projection of Device so internal fields (http_device_info,
+/// raw quirks, transport handles) don't leak over the wire.
+#[derive(Serialize, Clone, Debug)]
+pub struct DeviceItem {
+    pub sku: String,
+    pub id: String,
+    pub name: String,
+    pub room: Option<String>,
+    pub ip: Option<IpAddr>,
+    pub state: Option<DeviceState>,
+}
+
+impl DeviceItem {
+    pub fn snapshot(d: &Device) -> Self {
+        Self {
+            sku: d.sku.clone(),
+            id: d.id.clone(),
+            name: d.name(),
+            room: d.room_name().map(|r| r.to_string()),
+            ip: d.ip_addr(),
+            state: d.device_state(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UndocDeviceInfo {
     pub room_name: Option<String>,
@@ -338,10 +364,7 @@ impl Device {
     /// Record one H5082 countdown slot from an `aa b0` read on the IoT status
     /// broadcast. Keyed by the `(outlet_wire, kind_wire)` pair the frame
     /// carries; overwrites any prior value for that slot.
-    pub fn record_h5082_countdown(
-        &mut self,
-        c: govee_api::ble::socket::NotifyCountdown,
-    ) {
+    pub fn record_h5082_countdown(&mut self, c: govee_api::ble::socket::NotifyCountdown) {
         self.h5082_countdowns.insert((c.outlet, c.kind), c);
     }
 
@@ -836,9 +859,7 @@ impl Device {
             &self.auto_off_state(),
             &self.projector_settings,
         )
-        .or_else(|| {
-            govee_api::ble::socket::state_value(instance, &self.h5082_countdowns)
-        })?;
+        .or_else(|| govee_api::ble::socket::state_value(instance, &self.h5082_countdowns))?;
         Some(DeviceCapabilityState {
             kind,
             instance: instance.to_string(),

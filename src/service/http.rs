@@ -1,14 +1,14 @@
 use crate::service::coordinator::Coordinator;
-use crate::service::device::{Device, DeviceState};
-use crate::service::state::StateHandle;
+use crate::service::device::{Device, DeviceItem};
+use crate::service::state::{StateEvent, StateHandle};
 use anyhow::Context;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Serialize;
-use std::net::IpAddr;
+use tokio::sync::broadcast::error::RecvError;
 
 fn response_with_code<T: ToString + std::fmt::Display>(code: StatusCode, err: T) -> Response {
     if !code.is_success() {
@@ -52,32 +52,15 @@ async fn resolve_device_read_only(state: &StateHandle, id: &str) -> Result<Devic
 
 /// Returns a json array of device information
 async fn list_devices(State(state): State<StateHandle>) -> Result<Response, Response> {
+    Ok(Json(snapshot_all(&state).await).into_response())
+}
+
+/// Sorted projection of the current device set, used by /api/devices and as
+/// the StateEvent::Snapshot payload on ws connect and lag-resync.
+async fn snapshot_all(state: &StateHandle) -> Vec<DeviceItem> {
     let mut devices = state.devices().await;
     devices.sort_by_key(|d| (d.room_name().map(|name| name.to_string()), d.name()));
-
-    #[derive(Serialize)]
-    struct DeviceItem {
-        pub sku: String,
-        pub id: String,
-        pub name: String,
-        pub room: Option<String>,
-        pub ip: Option<IpAddr>,
-        pub state: Option<DeviceState>,
-    }
-
-    let devices: Vec<_> = devices
-        .into_iter()
-        .map(|d| DeviceItem {
-            name: d.name(),
-            room: d.room_name().map(|r| r.to_string()),
-            ip: d.ip_addr(),
-            state: d.device_state(),
-            sku: d.sku,
-            id: d.id,
-        })
-        .collect();
-
-    Ok(Json(devices).into_response())
+    devices.iter().map(DeviceItem::snapshot).collect()
 }
 
 /// Turns on a given device
@@ -224,6 +207,60 @@ async fn activate_one_click(
     Ok(response_with_code(StatusCode::OK, "ok"))
 }
 
+/// Upgrade handler for /ws. Subscribe before sending the initial snapshot so
+/// no state change that lands between snapshot and subscribe is lost.
+async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<StateHandle>) -> Response {
+    ws.on_upgrade(|socket| ws_session(socket, state))
+}
+
+async fn ws_session(mut socket: WebSocket, state: StateHandle) {
+    let mut rx = state.subscribe();
+
+    let initial = StateEvent::Snapshot {
+        devices: snapshot_all(&state).await,
+    };
+    if send_event(&mut socket, &initial).await.is_err() {
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            event = rx.recv() => match event {
+                Ok(ev) => {
+                    if send_event(&mut socket, &ev).await.is_err() {
+                        return;
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {
+                    // dropped frames past the ring capacity; resend a full
+                    // snapshot so the client's view is consistent again
+                    let resync = StateEvent::Snapshot {
+                        devices: snapshot_all(&state).await,
+                    };
+                    if send_event(&mut socket, &resync).await.is_err() {
+                        return;
+                    }
+                }
+                Err(RecvError::Closed) => return,
+            },
+            // pump inbound so close and ping frames are handled; commands go
+            // over rest, so any client text is ignored for now
+            msg = socket.recv() => match msg {
+                Some(Ok(_)) => {}
+                _ => return,
+            },
+        }
+    }
+}
+
+async fn send_event(socket: &mut WebSocket, ev: &StateEvent) -> Result<(), ()> {
+    let text = serde_json::to_string(ev).map_err(|_| ())?;
+    socket
+        .send(Message::Text(text.into()))
+        .await
+        .map_err(|_| ())
+}
+
 fn build_router(state: StateHandle) -> Router {
     Router::new()
         .route("/api/devices", get(list_devices))
@@ -242,6 +279,7 @@ fn build_router(state: StateHandle) -> Router {
         .route("/api/device/{id}/scenes", get(device_list_scenes))
         .route("/api/oneclicks", get(list_one_clicks))
         .route("/api/oneclick/activate/{scene}", get(activate_one_click))
+        .route("/ws", get(ws_upgrade))
         .with_state(state)
 }
 

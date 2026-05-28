@@ -2,7 +2,7 @@ use crate::hass_mqtt::topic::Topics;
 use crate::service::ble::BleClient;
 use crate::service::control::controller_for;
 use crate::service::coordinator::Coordinator;
-use crate::service::device::Device;
+use crate::service::device::{Device, DeviceItem};
 use crate::service::hass::{HassClient, topic_safe_id};
 use crate::service::iot::IotClient;
 use anyhow::Context;
@@ -12,12 +12,25 @@ use govee_api::platform_api::{
 };
 use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore};
+use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast};
 
-#[derive(Default)]
+/// Events fanned out to subscribers of state.subscribe(). Currently the only
+/// internal consumer is the http /ws handler; mqtt publication stays in its
+/// own path through notify_of_state_change.
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StateEvent {
+    /// Full current device list. Sent on ws connect and on broadcast lag so
+    /// a client that fell behind can resync without reconnecting.
+    Snapshot { devices: Vec<DeviceItem> },
+    /// One device's state changed. Subscribers patch their local view by id.
+    DeviceUpdated { device: DeviceItem },
+}
+
 pub struct State {
     devices_by_id: Mutex<HashMap<String, Device>>,
     semaphore_by_id: Mutex<HashMap<String, Arc<Semaphore>>>,
@@ -50,6 +63,35 @@ pub struct State {
     /// waits on this so it doesn't fire into the void. notify_one stores a
     /// permit, so a wait that starts after the signal still completes.
     iot_ready: Notify,
+    /// Fan-out for ui websocket subscribers. send is non-blocking and returns
+    /// Err when no receivers exist (the normal case when no ui is open), so
+    /// the publish path drops the result. Capacity 256 absorbs slow clients;
+    /// a receiver that falls further behind gets a Lagged error and is
+    /// expected to resync from a fresh Snapshot.
+    events: broadcast::Sender<StateEvent>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let (events, _) = broadcast::channel(256);
+        Self {
+            devices_by_id: Default::default(),
+            semaphore_by_id: Default::default(),
+            lan_client: Default::default(),
+            platform_client: Default::default(),
+            undoc_client: Default::default(),
+            iot_client: Default::default(),
+            ble_client: Default::default(),
+            hass_client: Default::default(),
+            hass_discovery_prefix: Default::default(),
+            base_topic: Default::default(),
+            temperature_scale: Default::default(),
+            published_components: Default::default(),
+            registration_lock: Default::default(),
+            iot_ready: Default::default(),
+            events,
+        }
+    }
 }
 
 pub type StateHandle = Arc<State>;
@@ -61,6 +103,13 @@ pub type PublishedComponents = HashMap<String, HashMap<String, String>>;
 impl State {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Subscribe to state-change events. Each receiver gets every event sent
+    /// after it subscribed; lag past the 256-slot ring yields RecvError::Lagged
+    /// and the receiver should re-snapshot rather than reconnect.
+    pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
+        self.events.subscribe()
     }
 
     pub async fn set_temperature_scale(&self, scale: TemperatureScale) {
@@ -498,6 +547,15 @@ impl State {
         let Some(canonical_device) = self.device_by_id(device_id).await else {
             anyhow::bail!("cannot find device {device_id}!?");
         };
+
+        // skip the snapshot allocation when no ws client is connected. send
+        // returns Err only when receiver_count is zero, but the snapshot work
+        // happens before send, so the guard is what actually saves the clones.
+        if self.events.receiver_count() > 0 {
+            let _ = self.events.send(StateEvent::DeviceUpdated {
+                device: DeviceItem::snapshot(&canonical_device),
+            });
+        }
 
         if let Some(hass) = self.get_hass_client().await {
             hass.advise_hass_of_light_state(&canonical_device, self)

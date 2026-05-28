@@ -38,7 +38,7 @@ uuid = { version = "1.23.1", features = ["v4", "v5"] }
 uncased = "0.9.10"
 pem = "3"
 p12 = "0.6.3"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 async-trait = "0.1.89"
 rumqttc = "0.25.1"
 thiserror = "2.0.18"
