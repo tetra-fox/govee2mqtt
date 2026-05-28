@@ -143,7 +143,7 @@ pub async fn mqtt_fan_set_speed(
     Params(IdParameter { id }): Params<IdParameter>,
     State(state): State<StateHandle>,
 ) -> anyhow::Result<()> {
-    log::info!("mqtt_fan_set_speed: {id}: {speed}");
+    log::info!("set fan speed for {id}: {speed}");
     let device = state.resolve_device_for_control(&id).await?;
 
     let work_modes = ParsedWorkMode::with_device(&device)?;

@@ -226,8 +226,9 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
 /// Runs off the startup critical path (see the caller) so registration and
 /// polling don't block on it.
 async fn log_device_summary(state: &StateHandle) {
-    log::info!("Devices returned from Govee's APIs");
-    for device in state.devices().await {
+    let devices = state.devices().await;
+    log::info!("Discovered {n} device(s)", n = devices.len());
+    for device in devices {
         log::info!("{device}");
         if let Some(lan) = &device.lan_device {
             log::info!("  LAN API: ip={:?}", lan.ip);
@@ -250,7 +251,7 @@ async fn log_device_summary(state: &StateHandle) {
             log::trace!("{undoc:#?}");
         }
         if let Some(quirk) = device.resolve_quirk() {
-            log::info!("  {quirk:?}");
+            log::trace!("  {quirk:?}");
 
             // Sanity check for LAN devices: if we don't see an API for it,
             // it may indicate a networking issue
@@ -276,8 +277,6 @@ async fn log_device_summary(state: &StateHandle) {
                 );
             }
         }
-
-        log::info!("");
     }
 }
 

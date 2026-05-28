@@ -708,7 +708,7 @@ impl Device {
                 .unwrap_or_default();
             let scene_state = (info.color, info.kelvin);
             if current != scene_state {
-                log::info!(
+                log::debug!(
                     "Clearing reported scene because current {current:?} != {scene_state:?}"
                 );
                 self.active_scene.take();

@@ -270,9 +270,9 @@ pub async fn run_http_server(state: StateHandle, port: u16) -> anyhow::Result<()
         .await
         .with_context(|| format!("run_http_server: binding to port {port}"))?;
     let addr = listener.local_addr()?;
-    log::info!("http server addr is {addr:?}");
+    log::info!("HTTP server listening on {addr}");
     if let Err(err) = axum::serve(listener, app).await {
-        log::error!("http server stopped: {err:#}");
+        log::error!("HTTP server stopped: {err:#}");
     }
 
     Ok(())

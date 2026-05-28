@@ -30,7 +30,7 @@ pub(crate) async fn power_on_generic(
     on: bool,
 ) -> anyhow::Result<()> {
     if let Some(lan_dev) = &device.lan_device {
-        log::info!("Using LAN API to set {device} power state");
+        log::debug!("Using LAN API to set {device} power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
         return Ok(());
@@ -44,7 +44,7 @@ pub(crate) async fn power_on_generic(
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} power state");
+        log::debug!("Using IoT API to set {device} power state");
         iot.set_power_state(&info.entry, on).await?;
         return Ok(());
     }
@@ -52,7 +52,7 @@ pub(crate) async fn power_on_generic(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} power state");
+        log::debug!("Using Platform API to set {device} power state");
         client.set_power_state(info, on).await?;
         return Ok(());
     }
@@ -80,7 +80,7 @@ async fn power_via_ble(state: &StateHandle, device: &Device, on: bool) -> bool {
             return false;
         }
     };
-    log::info!("Using BLE to set {device} power state");
+    log::debug!("Using BLE to set {device} power state");
     // The connection is kept warm and auto-released after an idle period (see
     // BleClient::send_frames), so bursts reuse one session instead of
     // re-handshaking per command.
@@ -108,7 +108,7 @@ pub(crate) async fn light_power_on_generic(
         })?;
 
     if let Some(lan_dev) = &device.lan_device {
-        log::info!("Using LAN API to set {device} light power state");
+        log::debug!("Using LAN API to set {device} light power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
         return Ok(());
@@ -118,7 +118,7 @@ pub(crate) async fn light_power_on_generic(
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} light power state");
+        log::debug!("Using IoT API to set {device} light power state");
         iot.set_power_state(&info.entry, on).await?;
         return Ok(());
     }
@@ -126,7 +126,7 @@ pub(crate) async fn light_power_on_generic(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} light {instance_name} state");
+        log::debug!("Using Platform API to set {device} light {instance_name} state");
         client.set_toggle_state(info, instance_name, on).await?;
         return Ok(());
     }
@@ -140,7 +140,7 @@ pub(crate) async fn set_brightness_generic(
     percent: u8,
 ) -> anyhow::Result<()> {
     if let Some(lan_dev) = &device.lan_device {
-        log::info!("Using LAN API to set {device} brightness");
+        log::debug!("Using LAN API to set {device} brightness");
         lan_dev.send_brightness(percent).await?;
         poll_lan_api(state, lan_dev, |status| status.brightness == percent).await?;
         return Ok(());
@@ -150,7 +150,7 @@ pub(crate) async fn set_brightness_generic(
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} brightness");
+        log::debug!("Using IoT API to set {device} brightness");
         iot.set_brightness(&info.entry, percent).await?;
         return Ok(());
     }
@@ -158,7 +158,7 @@ pub(crate) async fn set_brightness_generic(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} brightness");
+        log::debug!("Using Platform API to set {device} brightness");
         client.set_brightness(info, percent).await?;
         return Ok(());
     }
@@ -171,7 +171,7 @@ pub(crate) async fn set_color_temperature_generic(
     kelvin: u32,
 ) -> anyhow::Result<()> {
     if let Some(lan_dev) = &device.lan_device {
-        log::info!("Using LAN API to set {device} color temperature");
+        log::debug!("Using LAN API to set {device} color temperature");
         lan_dev.send_color_temperature_kelvin(kelvin).await?;
         poll_lan_api(state, lan_dev, |status| {
             status.color_temperature_kelvin == kelvin
@@ -188,7 +188,7 @@ pub(crate) async fn set_color_temperature_generic(
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} color temperature");
+        log::debug!("Using IoT API to set {device} color temperature");
         iot.set_color_temperature(&info.entry, kelvin).await?;
         return Ok(());
     }
@@ -196,7 +196,7 @@ pub(crate) async fn set_color_temperature_generic(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} color temperature");
+        log::debug!("Using Platform API to set {device} color temperature");
         client.set_color_temperature(info, kelvin).await?;
         state
             .device_mut(&device.sku, &device.id)
@@ -216,7 +216,7 @@ pub(crate) async fn set_color_rgb_generic(
 ) -> anyhow::Result<()> {
     if let Some(lan_dev) = &device.lan_device {
         let color = govee_api::lan_api::DeviceColor { r, g, b };
-        log::info!("Using LAN API to set {device} color");
+        log::debug!("Using LAN API to set {device} color");
         lan_dev.send_color_rgb(color).await?;
         poll_lan_api(state, lan_dev, |status| status.color == color).await?;
         state
@@ -230,7 +230,7 @@ pub(crate) async fn set_color_rgb_generic(
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} color");
+        log::debug!("Using IoT API to set {device} color");
         iot.set_color_rgb(&info.entry, r, g, b).await?;
         return Ok(());
     }
@@ -238,7 +238,7 @@ pub(crate) async fn set_color_rgb_generic(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} color");
+        log::debug!("Using Platform API to set {device} color");
         client.set_color_rgb(info, r, g, b).await?;
         state
             .device_mut(&device.sku, &device.id)
@@ -264,7 +264,7 @@ pub(crate) async fn device_set_scene(
         && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to set {device} to scene {scene}");
+        log::debug!("Using Platform API to set {device} to scene {scene}");
         client
             .set_scene_by_name_with_music(
                 info,
@@ -281,7 +281,7 @@ pub(crate) async fn device_set_scene(
     }
 
     if let Some(lan_dev) = &device.lan_device {
-        log::info!("Using LAN API to set {device} to scene {scene}");
+        log::debug!("Using LAN API to set {device} to scene {scene}");
         lan_dev.set_scene_by_name(scene).await?;
 
         state
@@ -315,7 +315,7 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
-        log::info!("Using Platform API to send {value:?} control to {device}");
+        log::debug!("Using Platform API to send {value:?} control to {device}");
         client.control_device(info, capability, value).await?;
         return Ok(());
     }
@@ -340,7 +340,7 @@ pub(crate) async fn try_iot_capability(
     // we haven't got it yet, seed it from the app's stored common-datas.
     let mut blob_state = seeded_aurora_laser_state(state, device).await;
     if govee_api::ble::projector_apply_blob_field(instance, value, &mut blob_state) {
-        log::info!("Using IoT API to set {device} {instance} = {value:?}");
+        log::debug!("Using IoT API to set {device} {instance} = {value:?}");
         send_iot_frame(state, device, &blob_state).await?;
         state
             .device_mut(&device.sku, &device.id)
@@ -381,7 +381,7 @@ pub(crate) async fn try_iot_capability(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device} {instance}"))?;
 
-    log::info!("Using IoT API to set {device} {instance} = {value:?}");
+    log::debug!("Using IoT API to set {device} {instance} = {value:?}");
     iot.send_real(&info.entry, frames).await?;
 
     // These settings toggles aren't echoed by the device or stored in
@@ -432,7 +432,7 @@ async fn send_iot_frame<T: 'static>(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device}"))?;
 
-    log::info!("Using IoT API to send a ptReal frame to {device}");
+    log::debug!("Using IoT API to send a ptReal frame to {device}");
     iot.send_real(&info.entry, command.base64()).await?;
     Ok(())
 }
@@ -534,7 +534,7 @@ pub(crate) async fn socket_turn(
     if let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
+        log::debug!("Using IoT API to set {device} outlet {outlet} -> {on}");
         return iot.set_socket_power(&info.entry, outlet, on).await;
     }
 
@@ -547,7 +547,7 @@ pub(crate) async fn socket_turn(
         // platform API.
         let instance = format!("socketToggle{}", outlet + 1);
         if http_dev.capability_by_instance(&instance).is_some() {
-            log::info!("Using Platform API to set {device} {instance} -> {on}");
+            log::debug!("Using Platform API to set {device} {instance} -> {on}");
             client.set_toggle_state(http_dev, &instance, on).await?;
             return Ok(());
         }
@@ -626,7 +626,7 @@ pub(crate) async fn try_set_nightlight<F: Fn(&mut SetHumidifierNightlightParams)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
-        log::info!("Using IoT API to set {device} color");
+        log::debug!("Using IoT API to set {device} color");
         iot.send_real(&info.entry, command.base64()).await?;
         return Ok(true);
     }
@@ -657,7 +657,7 @@ pub(crate) async fn poll_after_control(state: &StateHandle, id: String) {
     // right away :-/
     sleep(Duration::from_secs(5)).await;
 
-    log::info!("Polling {device} to get latest state after control");
+    log::debug!("Polling {device} to get latest state after control");
     if let Err(err) = state.poll_platform_api(&device).await {
         log::error!("Polling {device} failed: {err:#}");
     }

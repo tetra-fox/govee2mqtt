@@ -231,7 +231,7 @@ pub async fn mqtt_device_set_work_mode(
     Params(IdParameter { id }): Params<IdParameter>,
     State(state): State<StateHandle>,
 ) -> anyhow::Result<()> {
-    log::info!("mqtt_humidifier_set_mode: {id}: {mode}");
+    log::info!("set work mode for {id}: {mode}");
     let device = state.resolve_device_for_control(&id).await?;
 
     let work_modes = ParsedWorkMode::with_device(&device)?;
@@ -257,7 +257,7 @@ pub async fn mqtt_humidifier_set_target(
     Params(IdParameter { id }): Params<IdParameter>,
     State(state): State<StateHandle>,
 ) -> anyhow::Result<()> {
-    log::info!("mqtt_humidifier_set_target: {id}: {percent}");
+    log::info!("set humidifier target for {id}: {percent}%");
 
     let device = state.resolve_device_for_control(&id).await?;
 

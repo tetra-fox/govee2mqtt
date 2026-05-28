@@ -66,6 +66,7 @@ pub async fn http_response_body<R: serde::de::DeserializeOwned>(
     let url = response.url().clone();
 
     let status = response.status();
+    log::trace!("HTTP {status} {url}");
     if !status.is_success() {
         let body_bytes = response.bytes().await.map_err(|err| {
             GoveeApiError::Network(

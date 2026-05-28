@@ -102,7 +102,7 @@ pub(super) async fn run_iot_subscriber(
 
                 match from_json::<Packet, _>(&msg.payload) {
                     Ok(packet) => {
-                        log::debug!("{packet:?}");
+                        log::trace!("{packet:?}");
                         if let Some((sku, device_id)) = packet.sku_and_device() {
                             {
                                 let mut device = state.device_mut(sku, device_id).await;
@@ -135,7 +135,7 @@ pub(super) async fn run_iot_subscriber(
                                 if let Some(op) = &packet.op {
                                     for cmd in &op.command {
                                         let decoded = cmd.decode_for_sku(sku);
-                                        log::debug!("Decoded: {decoded:?} for {sku}");
+                                        log::trace!("Decoded: {decoded:?} for {sku}");
                                         match decoded {
                                             GoveeBlePacket::NotifyHumidifierNightlight(nl) => {
                                                 state.brightness = nl.brightness;
@@ -216,7 +216,7 @@ pub(super) async fn run_iot_subscriber(
                 }
             }
             Event::Incoming(MqttPacket::ConnAck(_)) => {
-                log::info!("IoT (re)connected");
+                log::info!("IoT connected");
 
                 client
                     .subscribe(acct.topic.as_str(), QoS::AtMostOnce)

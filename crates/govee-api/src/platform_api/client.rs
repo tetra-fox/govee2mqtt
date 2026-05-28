@@ -79,7 +79,7 @@ impl GoveeApiClient {
             .request_with_json_response(Method::POST, url, &request)
             .await?;
 
-        log::info!("control_device result: {resp:?}");
+        log::trace!("control_device result: {resp:?}");
 
         Ok(resp.capability)
     }
@@ -194,7 +194,7 @@ impl GoveeApiClient {
         let undoc_caps = match undoc_caps {
             Ok(caps) => caps,
             Err(err) => {
-                log::warn!("synthesize_platform_api_scene_list: {err}");
+                log::warn!("Synthesizing undoc scene list failed for {sku}: {err}", sku = device.sku);
                 vec![]
             }
         };
@@ -225,9 +225,8 @@ impl GoveeApiClient {
                     }
                     _ => {
                         log::warn!(
-                            "get_scene_caps(sku={sku} device={id}): \
-                            Unexpected cap.parameters in {origin}: {cap:#?}. \
-                            Ignoring this entry.",
+                            "Unexpected scene capability shape from {origin} for \
+                             sku={sku} device={id}, ignoring: {cap:#?}",
                             sku = device.sku,
                             id = device.device
                         );
@@ -390,8 +389,7 @@ impl GoveeApiClient {
         let celsius = requested.max(min).min(max);
         if celsius != requested {
             log::info!(
-                "set_target_temperature: constraining requested {requested} to \
-                       {celsius} because min={min} and max={max}"
+                "Clamping target temperature {requested} to {celsius} (allowed range {min}..={max})"
             );
         }
 

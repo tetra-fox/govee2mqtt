@@ -481,7 +481,7 @@ async fn mqtt_light_segment_command(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("HTTP device info is missing"))?;
 
-        log::info!("Using Platform API to control {device} segment");
+        log::debug!("Using Platform API to control {device} segment");
 
         if let Some(brightness) = command.brightness {
             client
@@ -506,7 +506,7 @@ async fn mqtt_light_segment_command(
 }
 
 async fn mqtt_purge_caches(State(state): State<StateHandle>) -> anyhow::Result<()> {
-    log::info!("mqtt_purge_caches");
+    log::info!("Purging caches and re-registering with Home Assistant");
     govee_api::cache::purge_cache()?;
     state
         .get_hass_client()
@@ -521,7 +521,7 @@ async fn mqtt_oneclick(
     Payload(name): Payload<String>,
     State(state): State<StateHandle>,
 ) -> anyhow::Result<()> {
-    log::info!("mqtt_oneclick: {name}");
+    log::info!("Activating one-click scene: {name}");
 
     let undoc = state
         .get_undoc_client()

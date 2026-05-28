@@ -284,10 +284,11 @@ impl LanDevice {
                             &SetSceneCode::new(effect.scene_code, effect.scence_param),
                         )?
                         .base64();
-                        log::info!(
-                            "sending scene packet {encoded:x?} for {scene_name}, code {}",
+                        log::debug!(
+                            "sending scene packet for {scene_name}, code {}",
                             effect.scene_code
                         );
+                        log::trace!("scene packet bytes: {encoded:x?}");
                         return self.send_real(encoded).await;
                     }
                 }
@@ -447,7 +448,7 @@ async fn send_scan(options: &DiscoOptions) -> ApiResult<()> {
         match Broadcaster::new(addr).await {
             Ok(b) => broadcasters.push(b),
             Err(err) => {
-                log::error!("{addr}: {err:#}");
+                log::error!("LAN broadcaster setup for {addr} failed: {err:#}");
             }
         }
     }
@@ -564,7 +565,7 @@ async fn lan_disco(
 
     tokio::spawn(async move {
         if let Err(err) = run_disco(&options, listen, tx, inner).await {
-            log::error!("Error at the disco: {err}");
+            log::error!("LAN discovery loop failed: {err}");
         }
     });
 

@@ -268,7 +268,7 @@ impl State {
             && iot.is_device_compatible(&info.entry)
         {
             let device_state = device.device_state();
-            log::info!("requesting update via IoT MQTT {device} {device_state:?}");
+            log::debug!("requesting update via IoT MQTT {device} {device_state:?}");
             match iot
                 .request_status_update(&info.entry)
                 .await
@@ -305,7 +305,7 @@ impl State {
             }
 
             let device_state = device.device_state();
-            log::info!("requesting update via Platform API {device} {device_state:?}");
+            log::debug!("requesting update via Platform API {device} {device_state:?}");
             if let Some(info) = &device.http_device_info {
                 let http_state = client
                     .get_device_state(info)
@@ -474,7 +474,7 @@ impl State {
         if let Some(client) = self.get_platform_client().await
             && let Some(info) = &device.http_device_info
         {
-            log::info!("Using Platform API to set {device} target temperature to {target}");
+            log::debug!("Using Platform API to set {device} target temperature to {target}");
             client
                 .set_target_temperature(info, instance_name, target, None)
                 .await?;

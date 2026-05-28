@@ -99,7 +99,7 @@ async fn run_platform_iot(
 
         match event {
             Event::Incoming(MqttPacket::ConnAck(_)) => {
-                log::info!("Platform MQTT (re)connected");
+                log::info!("Platform MQTT connected");
                 // The published docs say the topic is `GA/<api-key>`, but the
                 // JS example on the same page subscribes to just `<api-key>`.
                 // Subscribe to both so we receive events regardless of which
@@ -122,7 +122,7 @@ async fn run_platform_iot(
                     Ok(event) => {
                         for cap in &event.capabilities {
                             for st in &cap.state {
-                                log::info!(
+                                log::debug!(
                                     "Platform event: sku={} device={} instance={} {}={}{}",
                                     event.sku,
                                     event.device,
