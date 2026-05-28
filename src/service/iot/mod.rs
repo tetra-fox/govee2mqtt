@@ -84,8 +84,14 @@ impl IotClient {
     }
 
     pub async fn set_power_state(&self, device: &DeviceEntry, on: bool) -> anyhow::Result<()> {
-        log::trace!("set_power_state for {} to {on}", device.device);
-        self.send_msg(device, "turn", Some(json!({ "val": on as u8 })), 1, 0)
+        // Most devices use 1/0 for the turn `val`. A few SKUs (H5080, H5083)
+        // expect 17/16 instead; the override comes from the per-SKU quirk.
+        let (on_val, off_val) = crate::service::quirks::resolve_quirk(&device.sku)
+            .and_then(|q| q.iot_power_values)
+            .unwrap_or((1, 0));
+        let val = if on { on_val } else { off_val };
+        log::trace!("set_power_state for {} to {on} (val={val})", device.device);
+        self.send_msg(device, "turn", Some(json!({ "val": val })), 1, 0)
             .await
     }
 

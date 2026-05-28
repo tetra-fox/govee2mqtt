@@ -45,6 +45,13 @@ pub struct Quirk {
     /// bit of the onOff value, so we can at least report the per-outlet
     /// state. See <https://github.com/wez/govee2mqtt/issues/65>
     pub socket_outlet_count: Option<u8>,
+    /// Override for the `val` byte sent in the `cmd:"turn"` IoT data
+    /// payload, as `(on, off)`. Defaults to (1, 0). H5080 and H5083
+    /// use (17, 16) per Govee app captures (see homebridge-govee's
+    /// device-capabilities.js awsPowerOn/awsPowerOff). Single-outlet
+    /// path only; multi-outlet sockets pack their own `val` via
+    /// `socket_turn_val`.
+    pub iot_power_values: Option<(u8, u8)>,
 }
 
 impl Quirk {
@@ -68,6 +75,7 @@ impl Quirk {
             iot_api_supported: false,
             show_as_preset_buttons: None,
             socket_outlet_count: None,
+            iot_power_values: None,
         }
     }
 
@@ -142,6 +150,11 @@ impl Quirk {
 
     pub fn with_socket_outlets(mut self, count: u8) -> Self {
         self.socket_outlet_count.replace(count);
+        self
+    }
+
+    pub fn with_iot_power_values(mut self, on: u8, off: u8) -> Self {
+        self.iot_power_values.replace((on, off));
         self
     }
 
@@ -321,8 +334,14 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // metadata for these, so without a quirk they map to nothing; with one,
         // they get a synthesized powerSwitch driven over IoT. iot_api_support is
         // required for control to route over IoT (the only available transport).
-        Quirk::device("H5080", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
-        Quirk::device("H5083", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        // H5080 and H5083 send 17/16 (not 1/0) as the turn-cmd `val`, matching
+        // the Govee app's capture; see homebridge-govee's device-capabilities.js.
+        Quirk::device("H5080", DeviceType::Socket, POWER_SOCKET)
+            .with_iot_api_support(true)
+            .with_iot_power_values(17, 16),
+        Quirk::device("H5083", DeviceType::Socket, POWER_SOCKET)
+            .with_iot_api_support(true)
+            .with_iot_power_values(17, 16),
         // Additional single-outlet smart plugs grouped with H5080/H5083 in
         // homebridge-govee's `switchSingle` bucket (lib/utils/constants.js).
         Quirk::device("H5001", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
