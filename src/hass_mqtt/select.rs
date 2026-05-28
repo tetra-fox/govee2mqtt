@@ -76,7 +76,7 @@ impl EntityInstance for WorkModeSelect {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if let Some(mode_value) = device.humidifier_work_mode {
             if let Ok(work_mode) = ParsedWorkMode::with_device(device) {
@@ -156,7 +156,7 @@ impl EntityInstance for SceneModeSelect {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if let Some(device_state) = device.device_state() {
             client
@@ -253,7 +253,7 @@ impl EntityInstance for CapabilityModeSelect {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         // Map the reported enum value back to its option name, if Govee
         // reports state for this instance.

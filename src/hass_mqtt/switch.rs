@@ -132,7 +132,7 @@ impl EntityInstance for OutletSwitch {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         // No reported state yet; leave the entity unknown rather than guessing
         if let Some(on) = device.socket_outlet_state(self.outlet_index) {
@@ -194,7 +194,7 @@ impl EntityInstance for PowerSwitch {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         // Leave the entity unknown until we have a reported state
         if let Some(device_state) = device.device_state() {
@@ -258,7 +258,7 @@ impl EntityInstance for MusicAutoColorSwitch {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
         client
             .publish(
                 &self.switch.state_topic,
@@ -307,7 +307,7 @@ impl EntityInstance for CapabilitySwitch {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if self.instance_name == "powerSwitch" {
             if let Some(state) = device.device_state() {

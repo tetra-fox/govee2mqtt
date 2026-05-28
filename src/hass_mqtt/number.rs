@@ -126,7 +126,7 @@ impl EntityInstance for WorkModeNumber {
             .as_ref()
             .ok_or_else(|| anyhow!("state_topic is None!?"))?;
 
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if let Some(cap) = device.get_state_capability_by_instance("workMode")
             && let Some(work_mode) = cap.state.pointer("/value/workMode")
@@ -252,7 +252,7 @@ impl EntityInstance for CapabilityNumber {
             .as_ref()
             .ok_or_else(|| anyhow!("state_topic is None!?"))?;
 
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name)
             && let Some(n) = cap.state.pointer("/value").and_then(|v| v.as_f64())
@@ -352,7 +352,7 @@ impl EntityInstance for MusicSensitivityNumber {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
         self.number
             .notify_state(client, &device.music_sensitivity().to_string())
             .await

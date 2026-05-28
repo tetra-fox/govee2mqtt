@@ -40,7 +40,10 @@ impl UndocCommand {
 
                 let state = Arc::new(crate::service::state::State::new());
                 start_iot_client(&args.undoc_args, state.clone(), None).await?;
-                let iot = state.get_iot_client().await.expect("just started iot");
+                let iot = state
+                    .get_iot_client()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("AWS IoT client is not available"))?;
 
                 iot.activate_one_click(item).await?;
             }

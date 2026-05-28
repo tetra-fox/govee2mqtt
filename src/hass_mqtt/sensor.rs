@@ -233,7 +233,7 @@ impl EntityInstance for CapabilitySensor {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         let quirk = device.resolve_quirk();
 
@@ -347,7 +347,7 @@ impl EntityInstance for CapabilityEventSensor {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         if let Some(cap) = device.get_state_capability_by_instance(&self.instance_name) {
             // Prefer a scalar /value for the sensor state, falling back to the
@@ -433,7 +433,7 @@ impl EntityInstance for DeviceStatusDiagnostic {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         let iot_state = device.compute_iot_device_state();
         let lan_state = device.compute_lan_device_state();

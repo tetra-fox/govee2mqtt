@@ -10,23 +10,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub static CACHE: Lazy<ArcSwap<Cache>> =
-    Lazy::new(|| open_cache().expect("failed to initialize cache").into());
+pub static CACHE: Lazy<ArcSwap<Cache>> = Lazy::new(|| match open_cache() {
+    Ok(cache) => cache.into(),
+    Err(err) => panic!("{err:#}"),
+});
 
-fn cache_file_name() -> PathBuf {
+fn cache_file_name() -> anyhow::Result<PathBuf> {
     let cache_dir = std::env::var("GOVEE2MQTT_CACHE_DIR")
         .ok()
         .map(PathBuf::from)
         .or_else(dirs_next::cache_dir)
-        .expect("failed to resolve cache dir");
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not resolve a cache directory; set GOVEE2MQTT_CACHE_DIR \
+                 to a writable path"
+            )
+        })?;
 
-    cache_dir.join("govee2mqtt-cache.sqlite")
+    Ok(cache_dir.join("govee2mqtt-cache.sqlite"))
 }
 
 fn open_cache() -> anyhow::Result<Arc<Cache>> {
-    let cache_file = cache_file_name();
+    let cache_file = cache_file_name()?;
     let conn = sqlite_cache::rusqlite::Connection::open(&cache_file)
-        .unwrap_or_else(|_| panic!("failed to open {cache_file:?}"));
+        .with_context(|| format!("opening cache database {}", cache_file.display()))?;
     Ok(Arc::new(Cache::new(
         // We have low cardinality and can be pretty relaxed
         CacheConfig {
@@ -39,9 +46,9 @@ fn open_cache() -> anyhow::Result<Arc<Cache>> {
 }
 
 pub fn purge_cache() -> anyhow::Result<()> {
-    let cache_file = cache_file_name();
+    let cache_file = cache_file_name()?;
     std::fs::remove_file(&cache_file)
-        .with_context(|| format!("removing cache file {cache_file:?}"))?;
+        .with_context(|| format!("removing cache file {}", cache_file.display()))?;
     CACHE.store(open_cache()?);
     Ok(())
 }

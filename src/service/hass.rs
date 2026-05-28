@@ -510,7 +510,7 @@ async fn mqtt_purge_caches(State(state): State<StateHandle>) -> anyhow::Result<(
     state
         .get_hass_client()
         .await
-        .expect("have hass client")
+        .ok_or_else(|| anyhow::anyhow!("HA client is not available"))?
         .register_with_hass(&state)
         .await
         .context("register_with_hass")
@@ -617,7 +617,7 @@ async fn mqtt_homeassitant_status(
     let client = state
         .get_hass_client()
         .await
-        .expect("hass client to be present");
+        .ok_or_else(|| anyhow::anyhow!("HA client is not available"))?;
 
     log::info!("Home Assistant status changed: {status}, re-registering entities");
 
@@ -730,7 +730,7 @@ async fn build_router_and_register(
     state
         .get_hass_client()
         .await
-        .expect("have hass client")
+        .ok_or_else(|| anyhow::anyhow!("HA client is not available"))?
         .register_with_hass(state)
         .await
         .context("register_with_hass")?;

@@ -159,7 +159,7 @@ impl EntityInstance for Humidifier {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         match device.device_state() {
             Some(device_state) => {

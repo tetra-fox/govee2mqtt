@@ -86,7 +86,7 @@ impl EntityInstance for TargetTemperatureEntity {
         device: Option<&ServiceDevice>,
         client: &HassClient,
     ) -> anyhow::Result<()> {
-        let device = device.expect("device to exist");
+        let Some(device) = device else { return Ok(()) };
 
         let quirk = device.resolve_quirk();
 
