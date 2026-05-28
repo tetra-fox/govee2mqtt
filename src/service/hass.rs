@@ -706,10 +706,7 @@ async fn build_router_and_register(
             .route(topics.route_outlet_command(), mqtt_outlet_command)
             .await?;
         router
-            .route(
-                topics.route_h5082_timer_command(),
-                mqtt_h5082_timer_command,
-            )
+            .route(topics.route_h5082_timer_command(), mqtt_h5082_timer_command)
             .await?;
 
         router.route(topics.oneclick(), mqtt_oneclick).await?;

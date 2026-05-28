@@ -194,7 +194,10 @@ impl GoveeApiClient {
         let undoc_caps = match undoc_caps {
             Ok(caps) => caps,
             Err(err) => {
-                log::warn!("Synthesizing undoc scene list failed for {sku}: {err}", sku = device.sku);
+                log::warn!(
+                    "Synthesizing undoc scene list failed for {sku}: {err}",
+                    sku = device.sku
+                );
                 vec![]
             }
         };

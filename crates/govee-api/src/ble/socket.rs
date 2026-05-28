@@ -81,8 +81,7 @@ fn duration_instance_to_slot(instance: &str) -> Option<(u8, u8)> {
 /// Any instance this family owns, for the entity_category and entity_name
 /// dispatch.
 fn owned_instance(instance: &str) -> bool {
-    remaining_instance_to_slot(instance).is_some()
-        || duration_instance_to_slot(instance).is_some()
+    remaining_instance_to_slot(instance).is_some() || duration_instance_to_slot(instance).is_some()
 }
 
 /// Parse a Duration Number's HA-side value into a clamped 0..1439 minute
@@ -120,8 +119,7 @@ pub fn parse_timer_request(payload: &JsonValue) -> Result<SetTimerSlot, TimerPar
         .get("outlet")
         .and_then(|v| v.as_i64())
         .ok_or(TimerParseError::MissingOutlet)?;
-    let outlet =
-        outlet_wire(outlet_n.try_into().unwrap_or(0)).ok_or(TimerParseError::BadOutlet)?;
+    let outlet = outlet_wire(outlet_n.try_into().unwrap_or(0)).ok_or(TimerParseError::BadOutlet)?;
 
     let slot = payload
         .get("slot")
@@ -250,10 +248,7 @@ pub enum TimerParseError {
 /// device's wall-clock at the moment we record; the real value arrives on
 /// the next status broadcast. HA shows the preset duration immediately,
 /// and the live seconds populate when the broadcast lands.
-pub fn record_optimistic_write(
-    instance: &str,
-    value: &JsonValue,
-) -> Option<NotifyCountdown> {
+pub fn record_optimistic_write(instance: &str, value: &JsonValue) -> Option<NotifyCountdown> {
     let (outlet, kind) = duration_instance_to_slot(instance)?;
     let minutes_total = parse_duration_minutes(value);
     Some(NotifyCountdown {
@@ -502,7 +497,10 @@ mod test {
     use crate::ble::codec::GoveeBlePacket;
 
     fn enc<T: 'static>(value: &T) -> Vec<u8> {
-        Base64HexBytes::encode_for_sku("H5082", value).unwrap().bytes().to_vec()
+        Base64HexBytes::encode_for_sku("H5082", value)
+            .unwrap()
+            .bytes()
+            .to_vec()
     }
 
     #[test]
@@ -545,9 +543,8 @@ mod test {
     fn countdown_read_decodes_armed_slot() {
         // From research/mitm/h5082-followup.btsnoop t=3.78: outlet 2 fire-ON,
         // preset 15h 0m, 53388 seconds remaining (BE24 = 00 d0 8c).
-        let bytes = Base64HexBytes::with_bytes(vec![
-            0xAA, 0xB0, 0x00, 0x01, 0x0F, 0x00, 0x00, 0xD0, 0x8C,
-        ]);
+        let bytes =
+            Base64HexBytes::with_bytes(vec![0xAA, 0xB0, 0x00, 0x01, 0x0F, 0x00, 0x00, 0xD0, 0x8C]);
         assert_eq!(
             bytes.decode_for_sku("H5082"),
             GoveeBlePacket::NotifyCountdown(NotifyCountdown {
@@ -563,7 +560,8 @@ mod test {
     #[test]
     fn countdown_read_decodes_empty_slot() {
         // From research/iot-trace.log 2026-05-28: outlet 2 fire-ON, all zero.
-        let bytes = Base64HexBytes::with_bytes(vec![0xAA, 0xB0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let bytes =
+            Base64HexBytes::with_bytes(vec![0xAA, 0xB0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
         assert_eq!(
             bytes.decode_for_sku("H5082"),
             GoveeBlePacket::NotifyCountdown(NotifyCountdown {
@@ -638,7 +636,11 @@ mod test {
         // research/mitm/h5082-full.btsnoop t=119.0).
         use crate::ble::family::FamilyModule;
         let frames = Module
-            .encode_capability("H5082", instance::O1_AUTO_ON_DURATION, &serde_json::json!(1130))
+            .encode_capability(
+                "H5082",
+                instance::O1_AUTO_ON_DURATION,
+                &serde_json::json!(1130),
+            )
             .expect("instance owned")
             .expect("encodes");
         let bytes = data_encoding::BASE64.decode(frames[0].as_bytes()).unwrap();
@@ -650,7 +652,11 @@ mod test {
         // 0 minutes is the disarm sentinel: 33 b0 <outlet> <kind> 00 00.
         use crate::ble::family::FamilyModule;
         let frames = Module
-            .encode_capability("H5082", instance::O2_AUTO_OFF_DURATION, &serde_json::json!(0))
+            .encode_capability(
+                "H5082",
+                instance::O2_AUTO_OFF_DURATION,
+                &serde_json::json!(0),
+            )
             .expect("instance owned")
             .expect("encodes");
         let bytes = data_encoding::BASE64.decode(frames[0].as_bytes()).unwrap();
@@ -765,11 +771,8 @@ mod test {
 
     #[test]
     fn record_optimistic_write_round_trips() {
-        let c = record_optimistic_write(
-            instance::O1_AUTO_OFF_DURATION,
-            &serde_json::json!(1),
-        )
-        .unwrap();
+        let c =
+            record_optimistic_write(instance::O1_AUTO_OFF_DURATION, &serde_json::json!(1)).unwrap();
         assert_eq!(c.outlet, 0x01);
         assert_eq!(c.kind, 0x00);
         assert_eq!(c.hh, 0);
@@ -780,9 +783,11 @@ mod test {
     #[test]
     fn encode_capability_unknown_instance_is_none() {
         use crate::ble::family::FamilyModule;
-        assert!(Module
-            .encode_capability("H5082", "noSuchInstance", &serde_json::json!(1))
-            .is_none());
+        assert!(
+            Module
+                .encode_capability("H5082", "noSuchInstance", &serde_json::json!(1))
+                .is_none()
+        );
     }
 
     #[test]

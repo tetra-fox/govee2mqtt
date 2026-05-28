@@ -193,12 +193,20 @@ impl CapabilitySensor {
         // declared on the capability itself (eg synthesized H5082 countdown
         // remaining-seconds carries `unit: "s"` in its parameters).
         let unit_of_measurement = if instance.instance == "sensorTemperature" {
-            Some(state.get_temperature_scale().await.unit_of_measurement().to_string())
+            Some(
+                state
+                    .get_temperature_scale()
+                    .await
+                    .unit_of_measurement()
+                    .to_string(),
+            )
         } else {
-            meta.unit.map(str::to_string).or_else(|| match &instance.parameters {
-                Some(govee_api::model::DeviceParameters::Integer { unit, .. }) => unit.clone(),
-                _ => None,
-            })
+            meta.unit
+                .map(str::to_string)
+                .or_else(|| match &instance.parameters {
+                    Some(govee_api::model::DeviceParameters::Integer { unit, .. }) => unit.clone(),
+                    _ => None,
+                })
         };
         let device_class = meta.device_class;
         let state_class = meta.state_class;
