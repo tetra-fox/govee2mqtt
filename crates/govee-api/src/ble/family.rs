@@ -48,7 +48,10 @@ pub trait FamilyModule: Send + Sync + 'static {
 
 /// All registered family modules. Adding a family is one line here plus the
 /// `impl FamilyModule` in its module.
-static FAMILIES: &[&(dyn FamilyModule + Sync)] = &[&crate::ble::projector::Module];
+static FAMILIES: &[&(dyn FamilyModule + Sync)] = &[
+    &crate::ble::projector::Module,
+    &crate::ble::socket::Module,
+];
 
 /// HA `entity_category` for an instance, across every registered family.
 /// Returns the first owning family's value; `None` if no family owns it.

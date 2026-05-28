@@ -12,6 +12,7 @@ pub mod family;
 pub mod humidifier;
 pub mod light;
 pub mod projector;
+pub mod socket;
 
 use once_cell::sync::Lazy;
 

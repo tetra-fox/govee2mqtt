@@ -129,6 +129,7 @@ impl PacketManager {
         crate::ble::humidifier::register(&mut all_codecs);
         crate::ble::light::register(&mut all_codecs);
         crate::ble::projector::register(&mut all_codecs);
+        crate::ble::socket::register(&mut all_codecs);
 
         Self {
             codec_by_sku: Mutex::new(HashMap::new()),
@@ -281,6 +282,10 @@ pub enum GoveeBlePacket {
     SetAurora(super::projector::SetAurora),
     NotifyAurora(super::projector::NotifyAurora),
     NotifyLaser(super::projector::NotifyLaser),
+    SetCountdown(super::socket::SetCountdown),
+    NotifyCountdown(super::socket::NotifyCountdown),
+    SetTimerSlot(super::socket::SetTimerSlot),
+    NotifyTimerCount(super::socket::NotifyTimerCount),
 }
 
 #[derive(Debug)]
