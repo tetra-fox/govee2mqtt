@@ -917,10 +917,10 @@ pub async fn spawn_hass_integration(
     Ok(())
 }
 
-/// The HA display name for a capability instance: a projector instance's
+/// The HA display name for a capability instance: any registered family's
 /// curated label if it has one, else the generic camelCase humanizer.
 pub fn entity_display_name(instance: &str) -> String {
-    govee_api::ble::projector_entity_name(instance)
+    govee_api::ble::entity_name(instance)
         .map(str::to_string)
         .unwrap_or_else(|| camel_case_to_space_separated(instance))
 }

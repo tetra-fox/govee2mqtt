@@ -8,6 +8,7 @@
 
 pub mod codec;
 pub mod encryption;
+pub mod family;
 pub mod humidifier;
 pub mod light;
 pub mod projector;
@@ -21,19 +22,20 @@ static MGR: Lazy<codec::PacketManager> = Lazy::new(codec::PacketManager::new);
 // codec engine types (PacketManager, PacketCodec, ...) stay in `ble::codec`;
 // nothing outside this module uses them directly.
 pub use codec::{Base64HexBytes, GoveeBlePacket};
+pub use family::{common_datas_seed, encode_capability, entity_category, entity_name};
 pub use humidifier::{
     HumidifierAutoMode, NotifyHumidifierMode, NotifyHumidifierNightlightParams, SetHumidifierMode,
     SetHumidifierNightlightParams, TargetHumidity,
 };
 pub use light::{SetDevicePower, SetSceneCode};
+// State-mutation helpers that take H6093-specific structs stay as direct
+// `projector_*` calls in src/; the FamilyModule trait owns only the
+// SKU-agnostic surface.
 pub use projector::{
     AuroraColorMode, NotifyAurora, NotifyLaser, ProjectorSettings, SetAurora, SetAuroraLaser,
     SetAutoOff, SetDreamViewLaser, SetPairingSound, SetPairingStatus, SetSilentPowerUp,
     apply_auto_off_field as projector_apply_auto_off_field,
-    apply_blob_field as projector_apply_blob_field,
-    common_datas_seed as projector_common_datas_seed,
-    encode_capability as projector_encode_capability, entity_category as projector_entity_category,
-    entity_name as projector_entity_name, state_value as projector_state_value,
+    apply_blob_field as projector_apply_blob_field, state_value as projector_state_value,
 };
 
 #[cfg(test)]

@@ -364,9 +364,10 @@ pub(crate) async fn try_iot_capability(
         return Ok(true);
     }
 
-    // Standalone IoT-framed capabilities (eg: settings toggles).
-    let Some(frames) = govee_api::ble::projector_encode_capability(&device.sku, instance, value)
-    else {
+    // Standalone IoT-framed capabilities (eg: settings toggles). Routed by
+    // the FamilyModule registry: any family that owns this (sku, instance)
+    // returns the base64 frames; None falls through to the platform API below.
+    let Some(frames) = govee_api::ble::encode_capability(&device.sku, instance, value) else {
         return Ok(false);
     };
     let frames = frames?;
@@ -439,7 +440,7 @@ async fn try_seed_aurora_laser_state(
     state: &StateHandle,
     device: &Device,
 ) -> Option<govee_api::ble::SetAuroraLaser> {
-    let (biz_type, biz_key) = govee_api::ble::projector_common_datas_seed(&device.sku, &device.id)?;
+    let (biz_type, biz_key) = govee_api::ble::common_datas_seed(&device.sku, &device.id)?;
     let undoc = state.get_undoc_client().await?;
     match undoc.get_common_datas(biz_type, &biz_key).await {
         Ok(Some(json)) => {

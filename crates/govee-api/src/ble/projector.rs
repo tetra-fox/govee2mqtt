@@ -8,9 +8,43 @@
 //! write mirrors the 0xaa status read for the same opcode.
 
 use super::codec::{Base64HexBytes, PacketCodec, finish};
+use super::family::FamilyModule;
+use crate::error::ApiResult;
 use crate::packet;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+
+/// SKUs handled by this family. Single-entry today; kept as a slice so the
+/// `FamilyModule` registry can multi-SKU families without changing shape.
+const SUPPORTED_SKUS: &[&str] = &["H6093"];
+
+/// Zero-sized handle for [`FamilyModule`] registration. The actual logic
+/// stays in the existing free functions so the in-module tests can call them
+/// directly; the trait impl just delegates.
+pub struct Module;
+
+impl FamilyModule for Module {
+    fn supported_skus(&self) -> &'static [&'static str] {
+        SUPPORTED_SKUS
+    }
+    fn entity_category(&self, instance: &str) -> Option<Option<String>> {
+        entity_category(instance)
+    }
+    fn entity_name(&self, instance: &str) -> Option<&'static str> {
+        entity_name(instance).map(|n| n)
+    }
+    fn encode_capability(
+        &self,
+        sku: &str,
+        instance: &str,
+        value: &JsonValue,
+    ) -> Option<ApiResult<Vec<String>>> {
+        encode_capability(sku, instance, value)
+    }
+    fn common_datas_seed(&self, sku: &str, device_id: &str) -> Option<(i32, String)> {
+        common_datas_seed(sku, device_id)
+    }
+}
 
 /// Instance names for the H6093's IoT-encoded capabilities. These are the keys
 /// that tie a synthesized `DeviceCapability` (what HA enumerates) to its frame
