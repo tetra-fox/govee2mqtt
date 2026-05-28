@@ -3,6 +3,7 @@ use crate::service::device::Device;
 use crate::service::hass::spawn_hass_integration;
 use crate::service::http::run_http_server;
 use crate::service::iot::start_iot_client;
+use crate::service::platform_iot::start_platform_iot;
 use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
 use anyhow::Context;
@@ -378,6 +379,12 @@ impl ServeCommand {
             // only record the client after we've completed the
             // initial platform disco attempt
             state.set_platform_client(client).await;
+
+            if let Ok(api_key) = args.api_args.api_key() {
+                if let Err(err) = start_platform_iot(api_key, state.clone()).await {
+                    log::warn!("Platform MQTT event subscribe failed to start: {err:#}");
+                }
+            }
 
             // spawn periodic discovery task
             let state = state.clone();

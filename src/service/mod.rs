@@ -5,6 +5,7 @@ pub mod device;
 pub mod hass;
 pub mod http;
 pub mod iot;
+pub mod platform_iot;
 pub mod quirks;
 pub mod state;
 pub mod transport;
