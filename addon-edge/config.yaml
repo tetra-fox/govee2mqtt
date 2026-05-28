@@ -12,6 +12,8 @@ startup: services
 services:
   - mqtt:need
 
+stage: experimental
+
 apparmor: true
 
 webui: http://[HOST]:[PORT:8056]/assets/index.html
