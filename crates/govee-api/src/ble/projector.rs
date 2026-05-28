@@ -31,7 +31,7 @@ impl FamilyModule for Module {
         entity_category(instance)
     }
     fn entity_name(&self, instance: &str) -> Option<&'static str> {
-        entity_name(instance).map(|n| n)
+        entity_name(instance)
     }
     fn encode_capability(
         &self,
