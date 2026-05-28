@@ -18,6 +18,7 @@ use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
 use anyhow::Context;
 use govee_api::platform_api::{DeviceCapability, DeviceCapabilityKind, DeviceType};
+use std::collections::HashSet;
 
 use uuid::Uuid;
 
@@ -205,8 +206,22 @@ pub async fn enumerate_entities_for_device(
         vec![]
     };
 
+    // Primary entities (the light, humidifier, fan, per-outlet switches) bind
+    // to specific platform-API capability instances for their own controls.
+    // The generic capability loop further down would otherwise emit duplicate
+    // CapabilitySwitch / CapabilityNumber entities for those same instances.
+    // Each primary entity records the instance names it claims here, and the
+    // capability loop skips anything in the set. Adding a new primary entity
+    // means recording its claims next to where it's added; no other site needs
+    // to change.
+    let mut covered_capabilities: HashSet<String> = HashSet::new();
+
     if is_light_capable {
         entities.add(DeviceLight::for_device(&topics, d, None, &scenes));
+        if let Some(instance) = d.get_light_power_toggle_instance_name() {
+            covered_capabilities.insert(instance.to_string());
+        }
+        covered_capabilities.insert("brightness".to_string());
     }
 
     if matches!(
@@ -214,10 +229,21 @@ pub async fn enumerate_entities_for_device(
         DeviceType::Humidifier | DeviceType::Dehumidifier
     ) {
         entities.add(Humidifier::new(&topics, d, state).await?);
+        covered_capabilities.insert("powerSwitch".to_string());
+        covered_capabilities.insert("humidity".to_string());
     }
 
-    if d.device_type() == DeviceType::Fan {
+    // Fan / purifier / diffuser all use the HA `fan` entity domain and the
+    // same workMode-STRUCT-with-speed shape on the platform API. The
+    // mqtt_fan_set_speed handler tries multiple known mode names (FanSpeed,
+    // gearMode, Manual) so a single entity works across the three device
+    // classes.
+    if matches!(
+        d.device_type(),
+        DeviceType::Fan | DeviceType::AirPurifier | DeviceType::AromaDiffuser
+    ) {
         entities.add(Fan::new(&topics, d, state).await?);
+        covered_capabilities.insert("powerSwitch".to_string());
     }
 
     if wants_scene_select && let Some(select) = SceneModeSelect::new(&topics, d, &scenes) {
@@ -225,15 +251,17 @@ pub async fn enumerate_entities_for_device(
     }
 
     // Multi-outlet sockets: surface one switch per outlet. The IoT status
-    // packet reports each outlet as one bit, and we drive control through the
-    // IoT API too (see socket_turn). The capability loop below skips the
-    // platform API's combined powerSwitch and per-outlet socketToggleN entries
-    // so we don't end up with duplicate entities.
+    // packet reports each outlet as one bit, and control goes back through
+    // IoT (see socket_turn). The platform API exposes the same outlets as
+    // `powerSwitch` plus `socketToggle1..N`, all of which we cover here.
     // <https://github.com/wez/govee2mqtt/issues/65>
-    let multi_outlet_count = d.socket_outlet_count();
-    if let Some(count) = multi_outlet_count {
+    if let Some(count) = d.socket_outlet_count() {
         for index in 0..count {
             entities.add(OutletSwitch::new(&topics, d, index));
+        }
+        covered_capabilities.insert("powerSwitch".to_string());
+        for n in 1..=count {
+            covered_capabilities.insert(format!("socketToggle{n}"));
         }
     }
 
@@ -250,15 +278,10 @@ pub async fn enumerate_entities_for_device(
     if let Some(info) = &d.http_device_info {
         for cap in &info.capabilities {
             match &cap.kind {
+                DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff
+                    if covered_capabilities.contains(cap.instance.as_str()) => {}
                 DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff => {
-                    if multi_outlet_count.is_some()
-                        && (cap.instance == "powerSwitch"
-                            || is_socket_toggle_instance(&cap.instance))
-                    {
-                        // handled by the per-outlet OutletSwitch above
-                    } else {
-                        entities.add(CapabilitySwitch::new(&topics, d, cap).await?);
-                    }
+                    entities.add(CapabilitySwitch::new(&topics, d, cap).await?);
                 }
                 // Color and scene capabilities are surfaced through the light
                 // entity and the Mode/Scene select, not as their own entities.
@@ -269,9 +292,8 @@ pub async fn enumerate_entities_for_device(
                 | DeviceCapabilityKind::MusicSetting
                 | DeviceCapabilityKind::DynamicScene => {}
 
-                // brightness is the light entity; humidity is the humidifier.
-                DeviceCapabilityKind::Range if cap.instance == "brightness" => {}
-                DeviceCapabilityKind::Range if cap.instance == "humidity" => {}
+                DeviceCapabilityKind::Range
+                    if covered_capabilities.contains(cap.instance.as_str()) => {}
                 DeviceCapabilityKind::Range => {
                     entities.add(CapabilityNumber::new(&topics, d, cap));
                 }
@@ -323,14 +345,4 @@ pub async fn enumerate_entities_for_device(
         }
     }
     Ok(())
-}
-
-/// True for platform-API instance names like `socketToggle1`, `socketToggle2`,
-/// which owned multi-outlet plugs (H5082, H5160) expose as one capability per
-/// outlet. We drive these outlets through the IoT API instead, so the matching
-/// CapabilitySwitch entities would just duplicate the OutletSwitch entities.
-fn is_socket_toggle_instance(instance: &str) -> bool {
-    instance
-        .strip_prefix("socketToggle")
-        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }

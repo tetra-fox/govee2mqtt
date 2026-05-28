@@ -77,6 +77,13 @@ impl SensorMeta {
                 Some("%"),
                 "Humidity",
             ),
+            // The H5140 CO2 monitor reports carbonDioxideConcentration in ppm.
+            "carbonDioxideConcentration" => (
+                Some("carbon_dioxide"),
+                Some(StateClass::Measurement),
+                Some("ppm"),
+                "CO2",
+            ),
             // airQuality and filterLifeTime are reported by Govee without a
             // declared unit, and the device_class differs by model (pm2.5
             // concentration vs an index, percent-remaining vs hours), so we

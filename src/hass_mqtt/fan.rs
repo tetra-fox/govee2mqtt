@@ -147,11 +147,19 @@ pub async fn mqtt_fan_set_speed(
     let device = state.resolve_device_for_control(&id).await?;
 
     let work_modes = ParsedWorkMode::with_device(&device)?;
-    // The lasswellt govee-homeassistant protocol reference documents the
-    // mode as "FanSpeed". Fall back to the first mode if the device names
-    // it differently (a few older SKUs might).
-    let fan_mode = work_modes
-        .mode_by_name("FanSpeed")
+    // Different Govee appliance classes use different names for "the user-
+    // controllable speed mode" on their workMode capability. The lasswellt
+    // protocol reference documents:
+    //   - Fans (H7101, H7107): "FanSpeed"
+    //   - Air purifiers (H7120/H7122/H7123/H7124/H7127): "gearMode"
+    //   - Dehumidifiers (H7151): "gearMode"
+    //   - Humidifiers (H7140): "Manual"
+    // Diffusers aren't documented but most likely share one of these names.
+    // Try each in order; fall back to the first listed mode so a device with
+    // an unknown name still gets _some_ speed control.
+    let fan_mode = ["FanSpeed", "gearMode", "Manual"]
+        .iter()
+        .find_map(|name| work_modes.mode_by_name(name))
         .or_else(|| work_modes.modes.values().next())
         .ok_or_else(|| anyhow::anyhow!("device {id} has no work modes to drive the fan"))?;
     let mode_num = fan_mode

@@ -120,6 +120,38 @@ impl Quirk {
         Self::device(sku, DeviceType::Thermometer, "mdi:thermometer")
     }
 
+    /// CO2 / air quality monitor (H5140). Per lasswellt's protocol doc this
+    /// uses `devices.types.air_quality_monitor` and exposes property
+    /// capabilities (carbonDioxideConcentration + sensorTemperature +
+    /// sensorHumidity) handled by the generic CapabilitySensor.
+    pub fn air_quality_monitor<SKU: Into<Cow<'static, str>>>(sku: SKU) -> Self {
+        Self::device(sku, DeviceType::AirQualityMonitor, "mdi:molecule-co2")
+    }
+
+    /// Water leak sensor (H5054, H5058, H5059). The platform-API capability
+    /// shape is undocumented in lasswellt's reference; registering as a
+    /// generic Sensor lets the device appear once Govee exposes its leak
+    /// state through a known capability.
+    pub fn leak_sensor<SKU: Into<Cow<'static, str>>>(sku: SKU) -> Self {
+        Self::device(sku, DeviceType::Sensor, "mdi:water-alert")
+    }
+
+    /// Motion / presence sensor (H5127). Same caveat as leak_sensor: shape
+    /// undocumented, registering enables visibility.
+    pub fn presence_sensor<SKU: Into<Cow<'static, str>>>(sku: SKU) -> Self {
+        Self::device(sku, DeviceType::Sensor, "mdi:motion-sensor")
+    }
+
+    /// Door/window contact sensor (H5123). Shape undocumented.
+    pub fn contact_sensor<SKU: Into<Cow<'static, str>>>(sku: SKU) -> Self {
+        Self::device(sku, DeviceType::Sensor, "mdi:door")
+    }
+
+    /// Smart button (H5122). Shape undocumented.
+    pub fn smart_button<SKU: Into<Cow<'static, str>>>(sku: SKU) -> Self {
+        Self::device(sku, DeviceType::Sensor, "mdi:gesture-tap-button")
+    }
+
     pub fn with_rgb(mut self) -> Self {
         self.supports_rgb = Some(true);
         self
@@ -198,6 +230,27 @@ impl Quirk {
         Self::device(sku, DeviceType::Fan, "mdi:fan")
             .with_iot_api_support(true)
             .with_fan_speed_max(8)
+    }
+
+    /// Air purifier (H7120 family). Same workMode STRUCT shape as a fan
+    /// (gearMode mode + modeValue speed); per lasswellt's protocol doc the
+    /// speeds are Low/Medium/High (1-3). Specific models may override
+    /// fan_speed_max (e.g. H7122 Custom mode goes 1-13).
+    pub fn purifier(sku: &'static str) -> Self {
+        Self::device(sku, DeviceType::AirPurifier, "mdi:air-purifier")
+            .with_iot_api_support(true)
+            .with_fan_speed_max(3)
+    }
+
+    /// Aroma diffuser (H7161/H7162). Same Fan-entity model as fans/purifiers
+    /// for mist speed, plus a colored nightlight surfaced via the existing
+    /// light entity (.with_rgb().with_brightness() on the quirk).
+    pub fn diffuser(sku: &'static str) -> Self {
+        Self::device(sku, DeviceType::AromaDiffuser, "mdi:scent")
+            .with_iot_api_support(true)
+            .with_fan_speed_max(8)
+            .with_rgb()
+            .with_brightness()
     }
 
     pub fn with_broken_platform(mut self) -> Self {
@@ -371,6 +424,40 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::fan("H7106"),
         Quirk::fan("H7107").with_fan_speed_max(12),
         Quirk::fan("H7111"),
+        // Air purifiers (H7120 family). Per lasswellt's protocol reference,
+        // H7120/H7122/H7123/H7124 share the same gearMode-with-Low/Medium/High
+        // shape; H7127 has its own simpler variant (no Sleep/Turbo). H7122's
+        // Custom mode reportedly accepts a 1-13 range so its fan_speed_max
+        // bumps up.
+        Quirk::purifier("H7120"),
+        Quirk::purifier("H7121"),
+        Quirk::purifier("H7122").with_fan_speed_max(13),
+        Quirk::purifier("H7123"),
+        Quirk::purifier("H7124"),
+        Quirk::purifier("H7126"),
+        Quirk::purifier("H7127"),
+        Quirk::purifier("H7128"),
+        Quirk::purifier("H7129"),
+        Quirk::purifier("H712C"),
+        // Aroma diffusers. The mist speed range is unverified; default to 8.
+        Quirk::diffuser("H7161"),
+        Quirk::diffuser("H7162"),
+        // CO2 / air-quality monitor (H5140). Lasswellt documents the property
+        // capability shape; CapabilitySensor + the carbonDioxideConcentration
+        // entry in sensor.rs's SensorMeta::for_instance surface CO2 in ppm
+        // with the proper HA device_class.
+        Quirk::air_quality_monitor("H5140"),
+        // Binary-style sensors grouped under homebridge-govee's bucket layout
+        // (lib/utils/constants.js). Their platform-API capability shapes
+        // aren't in the lasswellt reference yet, so these rows just register
+        // the devices; whatever capabilities Govee exposes flow through the
+        // generic CapabilitySensor / CapabilityEventSensor path.
+        Quirk::leak_sensor("H5054"),
+        Quirk::leak_sensor("H5058"),
+        Quirk::leak_sensor("H5059"),
+        Quirk::presence_sensor("H5127"),
+        Quirk::contact_sensor("H5123"),
+        Quirk::smart_button("H5122"),
         // <https://github.com/wez/govee2mqtt/issues/343>
         Quirk::ice_maker("H7172").with_iot_api_support(false),
         // Additional ice makers grouped with H7172 in homebridge-govee's
