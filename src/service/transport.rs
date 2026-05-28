@@ -396,6 +396,18 @@ pub(crate) async fn try_iot_capability(
             state.notify_of_state_change(&device.id).await.ok();
         }
     }
+    // H5082 countdowns: stamp the just-written preset onto the held
+    // countdown map so HA's state-topic readback reflects the new value
+    // before the device's next status broadcast arrives (otherwise the
+    // Number entity visually bounces back to whatever the previous
+    // broadcast carried).
+    if let Some(c) = govee_api::ble::socket::record_optimistic_write(instance, value) {
+        state
+            .device_mut(&device.sku, &device.id)
+            .await
+            .record_h5082_countdown(c);
+        state.notify_of_state_change(&device.id).await.ok();
+    }
     Ok(true)
 }
 

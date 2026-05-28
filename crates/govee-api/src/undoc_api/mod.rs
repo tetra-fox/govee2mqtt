@@ -644,8 +644,11 @@ impl GoveeUndocumentedApi {
         if sku != "H5082" {
             return vec![];
         }
+        // Remaining-seconds entities are read-only sensors (Property maps to
+        // CapabilitySensor in the HA enumerator). Duration entities below are
+        // Range so they get editable Number entities.
         let remaining = |inst: &str| DeviceCapability {
-            kind: DeviceCapabilityKind::Range,
+            kind: DeviceCapabilityKind::Property,
             parameters: Some(DeviceParameters::Integer {
                 unit: Some("s".to_string()),
                 range: IntegerRange {

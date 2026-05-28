@@ -85,6 +85,45 @@ fn owned_instance(instance: &str) -> bool {
         || duration_instance_to_slot(instance).is_some()
 }
 
+/// Parse a Duration Number's HA-side value into a clamped 0..1439 minute
+/// total. Accepts both `Value::Number` (the i64/f64 path) and
+/// `Value::String` (some MQTT discovery clients quote payloads), so a
+/// stringified "30" round-trips the same as a numeric `30`. Anything
+/// unparsable becomes 0 (disarm).
+fn parse_duration_minutes(value: &JsonValue) -> u32 {
+    let n = value
+        .as_i64()
+        .or_else(|| value.as_f64().map(|f| f.round() as i64))
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        .unwrap_or(0);
+    n.clamp(0, 23 * 60 + 59) as u32
+}
+
+/// Optimistic post-write hook: given the instance and value the user just
+/// wrote, return the `NotifyCountdown` that should be inserted into the
+/// device's held state so HA's state-topic readback reflects the new value
+/// before the device's next status broadcast arrives. `None` for any
+/// instance this family does not own.
+///
+/// Note: `seconds_remaining` is left at 0 because we don't know the
+/// device's wall-clock at the moment we record; the real value arrives on
+/// the next status broadcast. HA shows the preset duration immediately,
+/// and the live seconds populate when the broadcast lands.
+pub fn record_optimistic_write(
+    instance: &str,
+    value: &JsonValue,
+) -> Option<NotifyCountdown> {
+    let (outlet, kind) = duration_instance_to_slot(instance)?;
+    let minutes_total = parse_duration_minutes(value);
+    Some(NotifyCountdown {
+        outlet,
+        kind,
+        hh: (minutes_total / 60) as u8,
+        mm: (minutes_total % 60) as u8,
+        seconds_remaining: SecondsRemainingBe24(0),
+    })
+}
+
 /// HA-facing state for a synthesized H5082 instance, given the device's held
 /// `(outlet, kind) -> NotifyCountdown` map. Returns `(kind, json!({"value": N}))`
 /// for any instance this family owns; `None` for instances it does not. The
@@ -100,7 +139,7 @@ pub fn state_value(
             .map(|c| c.seconds_remaining.0.max(0))
             .unwrap_or(0);
         return Some((
-            crate::model::DeviceCapabilityKind::Range,
+            crate::model::DeviceCapabilityKind::Property,
             serde_json::json!({ "value": seconds }),
         ));
     }
@@ -157,15 +196,13 @@ impl FamilyModule for Module {
         value: &JsonValue,
     ) -> Option<ApiResult<Vec<String>>> {
         let (outlet, kind) = duration_instance_to_slot(instance)?;
-        // Clamp to the device's hh<24, mm<60 ranges. 0 minutes is the disarm
-        // sentinel (the device treats 0:00 as "no countdown armed"), so this
-        // path handles both arm and disarm.
-        let minutes_total = value
-            .as_i64()
-            .map(|n| n.clamp(0, 23 * 60 + 59))
-            .unwrap_or(0) as u32;
+        let minutes_total = parse_duration_minutes(value);
         let hh = (minutes_total / 60) as u8;
         let mm = (minutes_total % 60) as u8;
+        log::debug!(
+            "socket encode_capability {instance} value={value:?} \
+             -> outlet=0x{outlet:02x} kind=0x{kind:02x} {hh}:{mm:02}"
+        );
         let frames = Base64HexBytes::encode_for_sku(
             sku,
             &SetCountdown {
@@ -480,6 +517,38 @@ mod test {
     }
 
     #[test]
+    fn parse_duration_accepts_number_and_string() {
+        // Numeric payload (the typical HA path)
+        assert_eq!(parse_duration_minutes(&serde_json::json!(30)), 30);
+        // Float payload
+        assert_eq!(parse_duration_minutes(&serde_json::json!(30.4)), 30);
+        // String payload (some MQTT discovery clients quote)
+        assert_eq!(parse_duration_minutes(&serde_json::json!("30")), 30);
+        // Clamped to the 23:59 ceiling
+        assert_eq!(
+            parse_duration_minutes(&serde_json::json!(99_999)),
+            23 * 60 + 59
+        );
+        // Unparseable falls through to 0
+        assert_eq!(parse_duration_minutes(&serde_json::json!("nope")), 0);
+        assert_eq!(parse_duration_minutes(&serde_json::json!(null)), 0);
+    }
+
+    #[test]
+    fn record_optimistic_write_round_trips() {
+        let c = record_optimistic_write(
+            instance::O1_AUTO_OFF_DURATION,
+            &serde_json::json!(1),
+        )
+        .unwrap();
+        assert_eq!(c.outlet, 0x01);
+        assert_eq!(c.kind, 0x00);
+        assert_eq!(c.hh, 0);
+        assert_eq!(c.mm, 1);
+        assert!(record_optimistic_write("powerSwitch", &serde_json::json!(1)).is_none());
+    }
+
+    #[test]
     fn encode_capability_unknown_instance_is_none() {
         use crate::ble::family::FamilyModule;
         assert!(Module
@@ -500,12 +569,13 @@ mod test {
                 seconds_remaining: SecondsRemainingBe24(53388),
             },
         );
-        // Outlet 2 auto-on remaining
+        // Outlet 2 auto-on remaining (Property = read-only sensor)
         let (kind, value) = state_value(instance::O2_AUTO_ON_REMAINING, &state).unwrap();
-        assert_eq!(kind, crate::model::DeviceCapabilityKind::Range);
+        assert_eq!(kind, crate::model::DeviceCapabilityKind::Property);
         assert_eq!(value, serde_json::json!({ "value": 53388 }));
-        // Same slot's preset duration in minutes
-        let (_, value) = state_value(instance::O2_AUTO_ON_DURATION, &state).unwrap();
+        // Same slot's preset duration in minutes (Range = editable Number)
+        let (kind, value) = state_value(instance::O2_AUTO_ON_DURATION, &state).unwrap();
+        assert_eq!(kind, crate::model::DeviceCapabilityKind::Range);
         assert_eq!(value, serde_json::json!({ "value": 15 * 60 }));
     }
 

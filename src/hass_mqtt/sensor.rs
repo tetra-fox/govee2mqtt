@@ -280,7 +280,17 @@ impl EntityInstance for CapabilitySensor {
                         None => "".to_string(),
                     }
                 }
-                _ => cap.state.to_string(),
+                _ => cap
+                    .state
+                    .pointer("/value")
+                    .map(|v| match v {
+                        // Pull the numeric or string value out of the
+                        // synthesized state envelope so HA displays just the
+                        // value (eg `53388`) rather than `{"value":53388}`.
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_else(|| cap.state.to_string()),
             };
 
             return self.sensor.notify_state(client, &value).await;
