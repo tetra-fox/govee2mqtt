@@ -101,6 +101,12 @@ pub struct Device {
     /// only source for their HA state; each field is None until first written.
     pub projector_settings: ProjectorSettings,
 
+    /// Held H5082 countdown state, keyed by `(outlet_wire, kind_wire)`. The
+    /// device emits one `aa b0` per slot on every status broadcast (four slots
+    /// total: two outlets x two kinds), so the map is rebuilt as broadcasts
+    /// arrive. Empty until the first broadcast.
+    pub h5082_countdowns: HashMap<(u8, u8), govee_api::ble::socket::NotifyCountdown>,
+
     /// Whether the aurora/laser state has been seeded from common-datas yet.
     /// Tracked separately from `aurora_laser_state.is_some()` because status
     /// refinement (aa 11/34) creates a held state from device on/off before the
@@ -329,6 +335,16 @@ impl Device {
         self.projector_settings.record(instance, on)
     }
 
+    /// Record one H5082 countdown slot from an `aa b0` read on the IoT status
+    /// broadcast. Keyed by the `(outlet_wire, kind_wire)` pair the frame
+    /// carries; overwrites any prior value for that slot.
+    pub fn record_h5082_countdown(
+        &mut self,
+        c: govee_api::ble::socket::NotifyCountdown,
+    ) {
+        self.h5082_countdowns.insert((c.outlet, c.kind), c);
+    }
+
     /// Update the LAN device information
     pub fn set_lan_device(&mut self, device: LanDevice) {
         self.lan_device.replace(device);
@@ -407,6 +423,11 @@ impl Device {
         // The incoming info is fresh from the API each poll and never carries
         // these, so add any that aren't already present by instance.
         for cap in GoveeUndocumentedApi::synthesize_h6093_capabilities(&info.sku) {
+            if !info.capabilities.iter().any(|c| c.instance == cap.instance) {
+                info.capabilities.push(cap);
+            }
+        }
+        for cap in GoveeUndocumentedApi::synthesize_h5082_capabilities(&info.sku) {
             if !info.capabilities.iter().any(|c| c.instance == cap.instance) {
                 info.capabilities.push(cap);
             }
@@ -805,14 +826,19 @@ impl Device {
             return Some(cap.clone());
         }
         // Fall back to synthesized state for IoT-only controls (eg: the H6093
-        // aurora/laser, auto-off, and settings-toggle entities) whose value we
-        // hold ourselves rather than getting from the platform API.
+        // aurora/laser, auto-off, and settings-toggle entities; the H5082
+        // countdown remaining-seconds sensors) whose value we hold ourselves
+        // rather than getting from the platform API. Families are tried in
+        // order; each owns a disjoint instance namespace.
         let (kind, state) = govee_api::ble::projector_state_value(
             instance,
             &self.aurora_laser_state(),
             &self.auto_off_state(),
             &self.projector_settings,
-        )?;
+        )
+        .or_else(|| {
+            govee_api::ble::socket::state_value(instance, &self.h5082_countdowns)
+        })?;
         Some(DeviceCapabilityState {
             kind,
             instance: instance.to_string(),

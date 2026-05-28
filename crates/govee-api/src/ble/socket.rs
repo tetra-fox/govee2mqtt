@@ -22,21 +22,85 @@ use serde_json::Value as JsonValue;
 
 const SUPPORTED_SKUS: &[&str] = &["H5082"];
 
-/// Module handle for FamilyModule registration. The entity-side dispatch
-/// (instance names, encode_capability, entity_category, entity_name) lands in
-/// a later phase; right now this module only ships the codecs so the
-/// `aa b0`/`aa 12`/`aa 13` reads coming over IoT can be decoded.
+/// User-facing instance names. Outlet numbers in the names are 1-based to match
+/// the app and the existing per-outlet switches; the wire byte is the inverse
+/// (outlet 1 = 0x01, outlet 2 = 0x00) and is translated at the codec boundary.
+pub mod instance {
+    /// Live seconds remaining on outlet 1's fire-ON countdown, 0 when disarmed.
+    pub const O1_AUTO_ON_REMAINING: &str = "outlet1AutoOnRemaining";
+    pub const O1_AUTO_OFF_REMAINING: &str = "outlet1AutoOffRemaining";
+    pub const O2_AUTO_ON_REMAINING: &str = "outlet2AutoOnRemaining";
+    pub const O2_AUTO_OFF_REMAINING: &str = "outlet2AutoOffRemaining";
+}
+
+/// Translate the user-facing 1-based outlet number to the wire byte the device
+/// uses for `aa b0`/`33 b0` (`1 -> 0x01`, `2 -> 0x00`). Returns `None` for any
+/// other input so callers can fall through cleanly.
+pub fn outlet_wire(user_outlet: u8) -> Option<u8> {
+    match user_outlet {
+        1 => Some(0x01),
+        2 => Some(0x00),
+        _ => None,
+    }
+}
+
+/// Map a synthesized capability instance name to its `(outlet_wire, kind_wire)`
+/// pair. `kind_wire` is the same value the device uses on the wire
+/// (`0x00` = fire-OFF, `0x01` = fire-ON).
+pub fn instance_to_slot(instance: &str) -> Option<(u8, u8)> {
+    Some(match instance {
+        instance::O1_AUTO_ON_REMAINING => (0x01, 0x01),
+        instance::O1_AUTO_OFF_REMAINING => (0x01, 0x00),
+        instance::O2_AUTO_ON_REMAINING => (0x00, 0x01),
+        instance::O2_AUTO_OFF_REMAINING => (0x00, 0x00),
+        _ => return None,
+    })
+}
+
+/// HA-facing state for a synthesized H5082 instance, given the device's held
+/// `(outlet, kind) -> NotifyCountdown` map. Returns `(kind, json!({"value": N}))`
+/// for any instance this family owns; `None` for instances it does not. The
+/// caller (in `service/device.rs`) chains this after the projector family.
+pub fn state_value(
+    instance: &str,
+    countdowns: &std::collections::HashMap<(u8, u8), NotifyCountdown>,
+) -> Option<(crate::model::DeviceCapabilityKind, JsonValue)> {
+    let slot = instance_to_slot(instance)?;
+    let seconds = countdowns
+        .get(&slot)
+        .map(|c| c.seconds_remaining.0.max(0))
+        .unwrap_or(0);
+    Some((
+        crate::model::DeviceCapabilityKind::Range,
+        serde_json::json!({ "value": seconds }),
+    ))
+}
+
+/// Module handle for FamilyModule registration.
 pub struct Module;
 
 impl FamilyModule for Module {
     fn supported_skus(&self) -> &'static [&'static str] {
         SUPPORTED_SKUS
     }
-    fn entity_category(&self, _instance: &str) -> Option<Option<String>> {
-        None
+    fn entity_category(&self, instance: &str) -> Option<Option<String>> {
+        // Remaining-seconds sensors are diagnostic-flavored, parked under HA
+        // Configuration so the device's main page stays focused on the
+        // per-outlet switches.
+        if instance_to_slot(instance).is_some() {
+            Some(Some("config".to_string()))
+        } else {
+            None
+        }
     }
-    fn entity_name(&self, _instance: &str) -> Option<&'static str> {
-        None
+    fn entity_name(&self, instance: &str) -> Option<&'static str> {
+        Some(match instance {
+            instance::O1_AUTO_ON_REMAINING => "Outlet 1 Auto-On Remaining",
+            instance::O1_AUTO_OFF_REMAINING => "Outlet 1 Auto-Off Remaining",
+            instance::O2_AUTO_ON_REMAINING => "Outlet 2 Auto-On Remaining",
+            instance::O2_AUTO_OFF_REMAINING => "Outlet 2 Auto-Off Remaining",
+            _ => return None,
+        })
     }
     fn encode_capability(
         &self,
@@ -44,6 +108,7 @@ impl FamilyModule for Module {
         _instance: &str,
         _value: &JsonValue,
     ) -> Option<ApiResult<Vec<String>>> {
+        // Read-only sensors; the write path lands in a follow-up commit.
         None
     }
     fn common_datas_seed(&self, _sku: &str, _device_id: &str) -> Option<(i32, String)> {

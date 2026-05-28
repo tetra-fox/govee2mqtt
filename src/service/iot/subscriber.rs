@@ -166,6 +166,14 @@ pub(super) async fn run_iot_subscriber(
                                             GoveeBlePacket::NotifyLaser(laser) => {
                                                 device.refine_laser_from_status(laser);
                                             }
+                                            GoveeBlePacket::NotifyCountdown(countdown) => {
+                                                device.record_h5082_countdown(countdown);
+                                            }
+                                            GoveeBlePacket::NotifyTimerCount(_) => {
+                                                // Per-outlet timer count; held state
+                                                // wiring lands with the recurring-timer
+                                                // entities in a follow-up commit.
+                                            }
                                             GoveeBlePacket::Generic(_) => {
                                                 // Ignore packets that we can't decode
                                             }
