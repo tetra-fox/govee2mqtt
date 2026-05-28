@@ -631,18 +631,19 @@ impl GoveeUndocumentedApi {
         ]
     }
 
-    /// Synthesize the H5082 socket's read-only countdown sensors. These are
-    /// driven over IoT (no platform-API capability), so the device's HTTP info
-    /// list is augmented at init time to make HA discover them. Routed back to
-    /// the wire via [`ble::socket`]. Returns empty for any other SKU.
+    /// Synthesize the H5082 socket's per-outlet countdown entities: a
+    /// read-only `*Remaining` sensor and a writable `*Duration` Number for
+    /// each (outlet, kind) slot (four slots total). None of these are in the
+    /// platform-API capability list, so we add them here and the device's
+    /// HTTP info list is augmented at init time to make HA discover them.
+    /// Routed back to the wire via [`ble::socket`]. Returns empty for any
+    /// other SKU.
     pub fn synthesize_h5082_capabilities(sku: &str) -> Vec<DeviceCapability> {
         use crate::ble::socket::instance;
         use crate::model::IntegerRange;
         if sku != "H5082" {
             return vec![];
         }
-        // Each remaining-seconds sensor is a Range 0..86399 (one day of
-        // seconds), in the device's chosen unit. Disarmed reads 0.
         let remaining = |inst: &str| DeviceCapability {
             kind: DeviceCapabilityKind::Range,
             parameters: Some(DeviceParameters::Integer {
@@ -657,11 +658,33 @@ impl GoveeUndocumentedApi {
             event_state: None,
             instance: inst.to_string(),
         };
+        // Duration writes are minutes 0..1439 (24h); 0 is the disarm
+        // sentinel. The Number's value also reads back the device's currently
+        // armed preset so HA stays in sync if the user sets a countdown from
+        // the Govee app.
+        let duration = |inst: &str| DeviceCapability {
+            kind: DeviceCapabilityKind::Range,
+            parameters: Some(DeviceParameters::Integer {
+                unit: Some("min".to_string()),
+                range: IntegerRange {
+                    min: 0,
+                    max: 23 * 60 + 59,
+                    precision: 1,
+                },
+            }),
+            alarm_type: None,
+            event_state: None,
+            instance: inst.to_string(),
+        };
         vec![
             remaining(instance::O1_AUTO_ON_REMAINING),
             remaining(instance::O1_AUTO_OFF_REMAINING),
             remaining(instance::O2_AUTO_ON_REMAINING),
             remaining(instance::O2_AUTO_OFF_REMAINING),
+            duration(instance::O1_AUTO_ON_DURATION),
+            duration(instance::O1_AUTO_OFF_DURATION),
+            duration(instance::O2_AUTO_ON_DURATION),
+            duration(instance::O2_AUTO_OFF_DURATION),
         ]
     }
 

@@ -14,7 +14,7 @@
 //! `aa b0` connection-time poll order. Higher layers translate to/from the
 //! user-facing 1-based outlet number.
 
-use super::codec::{DecodePacketParam, PacketCodec};
+use super::codec::{Base64HexBytes, DecodePacketParam, PacketCodec};
 use super::family::FamilyModule;
 use crate::error::ApiResult;
 use crate::packet;
@@ -25,12 +25,21 @@ const SUPPORTED_SKUS: &[&str] = &["H5082"];
 /// User-facing instance names. Outlet numbers in the names are 1-based to match
 /// the app and the existing per-outlet switches; the wire byte is the inverse
 /// (outlet 1 = 0x01, outlet 2 = 0x00) and is translated at the codec boundary.
+///
+/// Each `(outlet, kind)` slot has two paired instances: a read-only
+/// `*Remaining` sensor (seconds) and a writable `*Duration` Number (minutes).
+/// Writing a non-zero value to the Duration arms the countdown; writing 0
+/// disarms it.
 pub mod instance {
-    /// Live seconds remaining on outlet 1's fire-ON countdown, 0 when disarmed.
     pub const O1_AUTO_ON_REMAINING: &str = "outlet1AutoOnRemaining";
     pub const O1_AUTO_OFF_REMAINING: &str = "outlet1AutoOffRemaining";
     pub const O2_AUTO_ON_REMAINING: &str = "outlet2AutoOnRemaining";
     pub const O2_AUTO_OFF_REMAINING: &str = "outlet2AutoOffRemaining";
+
+    pub const O1_AUTO_ON_DURATION: &str = "outlet1AutoOnDuration";
+    pub const O1_AUTO_OFF_DURATION: &str = "outlet1AutoOffDuration";
+    pub const O2_AUTO_ON_DURATION: &str = "outlet2AutoOnDuration";
+    pub const O2_AUTO_OFF_DURATION: &str = "outlet2AutoOffDuration";
 }
 
 /// Translate the user-facing 1-based outlet number to the wire byte the device
@@ -44,10 +53,10 @@ pub fn outlet_wire(user_outlet: u8) -> Option<u8> {
     }
 }
 
-/// Map a synthesized capability instance name to its `(outlet_wire, kind_wire)`
-/// pair. `kind_wire` is the same value the device uses on the wire
+/// Read-side of `instance_to_slot`: which `(outlet, kind)` does this
+/// `*Remaining` sensor describe? `kind_wire` is the wire value
 /// (`0x00` = fire-OFF, `0x01` = fire-ON).
-pub fn instance_to_slot(instance: &str) -> Option<(u8, u8)> {
+fn remaining_instance_to_slot(instance: &str) -> Option<(u8, u8)> {
     Some(match instance {
         instance::O1_AUTO_ON_REMAINING => (0x01, 0x01),
         instance::O1_AUTO_OFF_REMAINING => (0x01, 0x00),
@@ -55,6 +64,25 @@ pub fn instance_to_slot(instance: &str) -> Option<(u8, u8)> {
         instance::O2_AUTO_OFF_REMAINING => (0x00, 0x00),
         _ => return None,
     })
+}
+
+/// Write-side of `instance_to_slot`: which slot does this `*Duration` Number
+/// arm or disarm?
+fn duration_instance_to_slot(instance: &str) -> Option<(u8, u8)> {
+    Some(match instance {
+        instance::O1_AUTO_ON_DURATION => (0x01, 0x01),
+        instance::O1_AUTO_OFF_DURATION => (0x01, 0x00),
+        instance::O2_AUTO_ON_DURATION => (0x00, 0x01),
+        instance::O2_AUTO_OFF_DURATION => (0x00, 0x00),
+        _ => return None,
+    })
+}
+
+/// Any instance this family owns, for the entity_category and entity_name
+/// dispatch.
+fn owned_instance(instance: &str) -> bool {
+    remaining_instance_to_slot(instance).is_some()
+        || duration_instance_to_slot(instance).is_some()
 }
 
 /// HA-facing state for a synthesized H5082 instance, given the device's held
@@ -65,15 +93,31 @@ pub fn state_value(
     instance: &str,
     countdowns: &std::collections::HashMap<(u8, u8), NotifyCountdown>,
 ) -> Option<(crate::model::DeviceCapabilityKind, JsonValue)> {
-    let slot = instance_to_slot(instance)?;
-    let seconds = countdowns
-        .get(&slot)
-        .map(|c| c.seconds_remaining.0.max(0))
-        .unwrap_or(0);
-    Some((
-        crate::model::DeviceCapabilityKind::Range,
-        serde_json::json!({ "value": seconds }),
-    ))
+    // `*Remaining` sensors: live countdown in seconds, 0 if disarmed.
+    if let Some(slot) = remaining_instance_to_slot(instance) {
+        let seconds = countdowns
+            .get(&slot)
+            .map(|c| c.seconds_remaining.0.max(0))
+            .unwrap_or(0);
+        return Some((
+            crate::model::DeviceCapabilityKind::Range,
+            serde_json::json!({ "value": seconds }),
+        ));
+    }
+    // `*Duration` Numbers: the user-set preset in minutes, 0 if disarmed.
+    // Read back from the same `aa b0` slot so the Number stays in sync when
+    // the user (or the Govee app) changes it elsewhere.
+    if let Some(slot) = duration_instance_to_slot(instance) {
+        let minutes = countdowns
+            .get(&slot)
+            .map(|c| (c.hh as u32) * 60 + (c.mm as u32))
+            .unwrap_or(0);
+        return Some((
+            crate::model::DeviceCapabilityKind::Range,
+            serde_json::json!({ "value": minutes }),
+        ));
+    }
+    None
 }
 
 /// Module handle for FamilyModule registration.
@@ -84,10 +128,10 @@ impl FamilyModule for Module {
         SUPPORTED_SKUS
     }
     fn entity_category(&self, instance: &str) -> Option<Option<String>> {
-        // Remaining-seconds sensors are diagnostic-flavored, parked under HA
-        // Configuration so the device's main page stays focused on the
+        // Countdown remaining/duration entities are secondary controls; park
+        // them under HA Configuration so the device page leads with the
         // per-outlet switches.
-        if instance_to_slot(instance).is_some() {
+        if owned_instance(instance) {
             Some(Some("config".to_string()))
         } else {
             None
@@ -99,17 +143,39 @@ impl FamilyModule for Module {
             instance::O1_AUTO_OFF_REMAINING => "Outlet 1 Auto-Off Remaining",
             instance::O2_AUTO_ON_REMAINING => "Outlet 2 Auto-On Remaining",
             instance::O2_AUTO_OFF_REMAINING => "Outlet 2 Auto-Off Remaining",
+            instance::O1_AUTO_ON_DURATION => "Outlet 1 Auto-On Duration",
+            instance::O1_AUTO_OFF_DURATION => "Outlet 1 Auto-Off Duration",
+            instance::O2_AUTO_ON_DURATION => "Outlet 2 Auto-On Duration",
+            instance::O2_AUTO_OFF_DURATION => "Outlet 2 Auto-Off Duration",
             _ => return None,
         })
     }
     fn encode_capability(
         &self,
-        _sku: &str,
-        _instance: &str,
-        _value: &JsonValue,
+        sku: &str,
+        instance: &str,
+        value: &JsonValue,
     ) -> Option<ApiResult<Vec<String>>> {
-        // Read-only sensors; the write path lands in a follow-up commit.
-        None
+        let (outlet, kind) = duration_instance_to_slot(instance)?;
+        // Clamp to the device's hh<24, mm<60 ranges. 0 minutes is the disarm
+        // sentinel (the device treats 0:00 as "no countdown armed"), so this
+        // path handles both arm and disarm.
+        let minutes_total = value
+            .as_i64()
+            .map(|n| n.clamp(0, 23 * 60 + 59))
+            .unwrap_or(0) as u32;
+        let hh = (minutes_total / 60) as u8;
+        let mm = (minutes_total % 60) as u8;
+        let frames = Base64HexBytes::encode_for_sku(
+            sku,
+            &SetCountdown {
+                outlet,
+                kind,
+                hh,
+                mm,
+            },
+        );
+        Some(frames.map(|b| b.base64()))
     }
     fn common_datas_seed(&self, _sku: &str, _device_id: &str) -> Option<(i32, String)> {
         None
@@ -385,6 +451,62 @@ mod test {
                 count: 0,
             })
         );
+    }
+
+    #[test]
+    fn encode_capability_arm_outlet1_auto_on_18h50m() {
+        // 18*60+50 = 1130 minutes → SetCountdown { outlet: 0x01, kind: 0x01, hh: 18, mm: 50 }
+        // → wire frame 33 b0 01 01 12 32 (same bytes the BLE capture showed at
+        // research/mitm/h5082-full.btsnoop t=119.0).
+        use crate::ble::family::FamilyModule;
+        let frames = Module
+            .encode_capability("H5082", instance::O1_AUTO_ON_DURATION, &serde_json::json!(1130))
+            .expect("instance owned")
+            .expect("encodes");
+        let bytes = data_encoding::BASE64.decode(frames[0].as_bytes()).unwrap();
+        assert_eq!(&bytes[..6], &[0x33, 0xB0, 0x01, 0x01, 0x12, 0x32]);
+    }
+
+    #[test]
+    fn encode_capability_disarm_via_zero() {
+        // 0 minutes is the disarm sentinel: 33 b0 <outlet> <kind> 00 00.
+        use crate::ble::family::FamilyModule;
+        let frames = Module
+            .encode_capability("H5082", instance::O2_AUTO_OFF_DURATION, &serde_json::json!(0))
+            .expect("instance owned")
+            .expect("encodes");
+        let bytes = data_encoding::BASE64.decode(frames[0].as_bytes()).unwrap();
+        assert_eq!(&bytes[..6], &[0x33, 0xB0, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn encode_capability_unknown_instance_is_none() {
+        use crate::ble::family::FamilyModule;
+        assert!(Module
+            .encode_capability("H5082", "noSuchInstance", &serde_json::json!(1))
+            .is_none());
+    }
+
+    #[test]
+    fn state_value_remaining_reflects_held_countdown() {
+        let mut state = std::collections::HashMap::new();
+        state.insert(
+            (0x00, 0x01),
+            NotifyCountdown {
+                outlet: 0x00,
+                kind: 0x01,
+                hh: 15,
+                mm: 0,
+                seconds_remaining: SecondsRemainingBe24(53388),
+            },
+        );
+        // Outlet 2 auto-on remaining
+        let (kind, value) = state_value(instance::O2_AUTO_ON_REMAINING, &state).unwrap();
+        assert_eq!(kind, crate::model::DeviceCapabilityKind::Range);
+        assert_eq!(value, serde_json::json!({ "value": 53388 }));
+        // Same slot's preset duration in minutes
+        let (_, value) = state_value(instance::O2_AUTO_ON_DURATION, &state).unwrap();
+        assert_eq!(value, serde_json::json!({ "value": 15 * 60 }));
     }
 
     #[test]
