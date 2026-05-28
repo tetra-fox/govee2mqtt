@@ -825,8 +825,11 @@ impl Device {
     }
 
     pub fn get_color_temperature_range(&self) -> Option<(u32, u32)> {
-        if let Some(quirk) = self.resolve_quirk() {
-            return quirk.color_temp_range;
+        // Quirk is a layered override: Some(range) wins, None falls through.
+        // There is no way to express "I explicitly know this device has no
+        // color temp" today; if that case shows up we'll need a tri-state.
+        if let Some(range) = self.resolve_quirk().and_then(|q| q.color_temp_range) {
+            return Some(range);
         }
 
         if self.lan_device.is_some() {
@@ -840,8 +843,10 @@ impl Device {
     }
 
     pub fn supports_brightness(&self) -> bool {
-        if let Some(quirk) = self.resolve_quirk() {
-            return quirk.supports_brightness;
+        // Quirk is a layered override: Some(_) wins, None falls through to
+        // the LAN/platform sources below.
+        if let Some(value) = self.resolve_quirk().and_then(|q| q.supports_brightness) {
+            return value;
         }
 
         if self.lan_device.is_some() {
@@ -864,8 +869,10 @@ impl Device {
     }
 
     pub fn supports_rgb(&self) -> bool {
-        if let Some(quirk) = self.resolve_quirk() {
-            return quirk.supports_rgb;
+        // Quirk is a layered override: Some(_) wins, None falls through to
+        // the LAN/platform sources below.
+        if let Some(value) = self.resolve_quirk().and_then(|q| q.supports_rgb) {
+            return value;
         }
 
         if self.lan_device.is_some() {

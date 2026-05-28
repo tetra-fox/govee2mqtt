@@ -185,7 +185,7 @@ impl DeviceLight {
         let brightness = segment.is_some()
             || quirk
                 .as_ref()
-                .map(|q| q.supports_brightness)
+                .and_then(|q| q.supports_brightness)
                 .unwrap_or(false)
             || device
                 .http_device_info

@@ -21,12 +21,21 @@ impl HumidityUnits {
     }
 }
 
+/// Per-SKU overrides that layer on top of platform-API discovery. Each
+/// field that is `Option`-typed (`supports_rgb`, `supports_brightness`,
+/// `color_temp_range`, ...) is a LAYERED override: `Some(v)` overrides
+/// whatever the platform/LAN API would say, `None` means "fall through"
+/// to the platform's reported capability. Earlier this struct's bool
+/// fields were authoritative-or-nothing, which meant adding a quirk row
+/// for any reason (e.g. registering a LAN-capable light) silently
+/// suppressed every other capability the platform API would have
+/// reported. See `device.rs` for the resolution methods.
 #[derive(Clone, Debug)]
 pub struct Quirk {
     pub sku: Cow<'static, str>,
     pub icon: Cow<'static, str>,
-    pub supports_rgb: bool,
-    pub supports_brightness: bool,
+    pub supports_rgb: Option<bool>,
+    pub supports_brightness: Option<bool>,
     pub color_temp_range: Option<(u32, u32)>,
     pub avoid_platform_api: bool,
     pub ble_only: bool,
@@ -34,9 +43,9 @@ pub struct Quirk {
     pub device_type: DeviceType,
     pub platform_temperature_sensor_units: Option<TemperatureUnits>,
     pub platform_humidity_sensor_units: Option<HumidityUnits>,
-    /// If true, we can correctly parse all appropriate
-    /// packets from the MQTT subscription and apply
-    /// their state.
+    /// Whether this SKU is reachable via the AWS IoT MQTT path. Stays a
+    /// plain bool because the platform API doesn't tell us "this device
+    /// supports IoT"; the answer is always our judgement.
     pub iot_api_supported: bool,
     pub show_as_preset_buttons: Option<&'static [&'static str]>,
     /// For sockets that expose more than one independently switched
@@ -62,8 +71,8 @@ impl Quirk {
     ) -> Self {
         Self {
             sku: sku.into(),
-            supports_rgb: false,
-            supports_brightness: false,
+            supports_rgb: None,
+            supports_brightness: None,
             color_temp_range: None,
             avoid_platform_api: false,
             ble_only: false,
@@ -104,12 +113,26 @@ impl Quirk {
     }
 
     pub fn with_rgb(mut self) -> Self {
-        self.supports_rgb = true;
+        self.supports_rgb = Some(true);
+        self
+    }
+
+    pub fn without_rgb(mut self) -> Self {
+        self.supports_rgb = Some(false);
         self
     }
 
     pub fn with_brightness(mut self) -> Self {
-        self.supports_brightness = true;
+        self.supports_brightness = Some(true);
+        self
+    }
+
+    // Kept for symmetry with without_rgb() so callers can express either
+    // negative assertion. No current quirk needs it, but a future device
+    // that the platform API misreports as supporting brightness will.
+    #[allow(dead_code)]
+    pub fn without_brightness(mut self) -> Self {
+        self.supports_brightness = Some(false);
         self
     }
 
@@ -355,9 +378,11 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // it a brightness light driven over IoT; its aurora/laser/settings
         // controls are synthesized separately (synthesize_h6093_capabilities). No
         // master RGB/color-temp: the app only exposes per-layer colors, not a
-        // master color picker.
+        // master color picker. without_rgb() asserts the no-master-color story
+        // even if the platform API later starts reporting otherwise.
         Quirk::device("H6093", DeviceType::Light, PROJECTOR)
             .with_brightness()
+            .without_rgb()
             .with_iot_api_support(true),
         Quirk::thermometer("H5051")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit)
@@ -470,14 +495,17 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // alongside this quirk.
         Quirk::device("H6094", DeviceType::Light, PROJECTOR)
             .with_brightness()
+            .without_rgb()
             .with_iot_api_support(true)
             .with_lan_api(),
         Quirk::device("H6095", DeviceType::Light, PROJECTOR)
             .with_brightness()
+            .without_rgb()
             .with_iot_api_support(true)
             .with_lan_api(),
         Quirk::device("H609D", DeviceType::Light, PROJECTOR)
             .with_brightness()
+            .without_rgb()
             .with_iot_api_support(true)
             .with_lan_api(),
         // Ceiling fans with integrated lights. We do not have a dedicated fan
