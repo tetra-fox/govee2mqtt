@@ -239,20 +239,80 @@ fn is_projector_instance(name: &str) -> bool {
     )
 }
 
-/// Build the HA-facing state for one H6093 instance from the held aurora/laser
-/// and auto-off state, as a `(kind, value)` pair the entity's `notify_state`
-/// publishes (it reads `state["value"]`). Returns None for instances whose
-/// current value we don't track (eg: the settings toggles, which the device
-/// doesn't report back), so HA leaves those unknown rather than showing a guess.
-/// This is the readback counterpart to `apply_blob_field`/`apply_auto_off_field`.
+/// Held last-written state for the four standalone settings toggles
+/// (pairing status/sound, silent power up, DreamView laser). The device never
+/// echoes these back and they aren't in the app's common-datas, so the only
+/// value we can report to HA is the one we last wrote; None until first written,
+/// which leaves the entity unknown rather than guessing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProjectorSettings {
+    pub pairing_status: Option<bool>,
+    pub pairing_sound: Option<bool>,
+    pub silent_power_up: Option<bool>,
+    pub dreamview_laser: Option<bool>,
+}
+
+impl ProjectorSettings {
+    fn field_mut(&mut self, instance: &str) -> Option<&mut Option<bool>> {
+        match instance {
+            instance::PAIRING_STATUS => Some(&mut self.pairing_status),
+            instance::PAIRING_SOUND => Some(&mut self.pairing_sound),
+            instance::SILENT_POWER_UP => Some(&mut self.silent_power_up),
+            instance::DREAMVIEW_LASER => Some(&mut self.dreamview_laser),
+            _ => None,
+        }
+    }
+
+    /// Record a just-written settings-toggle value by instance. Returns true if
+    /// `instance` is one of the settings toggles, so the caller publishes the
+    /// new state; false for any instance this doesn't own.
+    pub fn record(&mut self, instance: &str, on: bool) -> bool {
+        match self.field_mut(instance) {
+            Some(field) => {
+                *field = Some(on);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The held value for a settings-toggle instance, if we've written one.
+    pub fn value(&self, instance: &str) -> Option<bool> {
+        match instance {
+            instance::PAIRING_STATUS => self.pairing_status,
+            instance::PAIRING_SOUND => self.pairing_sound,
+            instance::SILENT_POWER_UP => self.silent_power_up,
+            instance::DREAMVIEW_LASER => self.dreamview_laser,
+            _ => None,
+        }
+    }
+}
+
+/// Build the HA-facing state for one H6093 instance from the held aurora/laser,
+/// auto-off, and settings state, as a `(kind, value)` pair the entity's
+/// `notify_state` publishes (it reads `state["value"]`). Returns None for an
+/// instance whose current value we don't have yet (a settings toggle we haven't
+/// written), so HA leaves it unknown rather than showing a guess. This is the
+/// readback counterpart to `apply_blob_field`/`apply_auto_off_field` and the
+/// settings `record`.
 pub fn state_value(
     instance: &str,
     blob: &SetAuroraLaser,
     auto_off: &SetAutoOff,
+    settings: &ProjectorSettings,
 ) -> Option<(crate::model::DeviceCapabilityKind, JsonValue)> {
     use crate::model::DeviceCapabilityKind::{Mode, Range, Toggle};
     let on = |b: bool| (Toggle, serde_json::json!({ "value": i32::from(b) }));
     let num = |n: u8| (Range, serde_json::json!({ "value": n }));
+    if matches!(
+        instance,
+        instance::PAIRING_STATUS
+            | instance::PAIRING_SOUND
+            | instance::SILENT_POWER_UP
+            | instance::DREAMVIEW_LASER
+    ) {
+        return settings.value(instance).map(on);
+    }
     Some(match instance {
         instance::AURORA_ON => on(blob.aurora_on),
         instance::AURORA_COLOR_MODE => {
@@ -517,9 +577,10 @@ impl NotifyLaser {
 /// server-stored effect format, not the live control path.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct SetAuroraLaser {
-    /// byte[7]: the stars (laser) layer on/off. Confirmed via isolated capture
-    /// (toggling stars in the app flips byte[7]). The head interleaves the layers:
-    /// aurora on at [1], stars on at [7], with each layer's sliders around them.
+    /// byte[1]: the stars (laser) layer on/off. The head is two layer blocks,
+    /// each led by its on/off byte: stars on at [1] then the stars sliders [2-6]
+    /// (brightness, flashing, orbit), aurora on at [7] then the aurora sliders
+    /// [8-12] (flow, brightness, effect, speed, color mode).
     pub laser_on: bool,
     /// byte[2]: the laser (app: "stars") relative-brightness slider, 0-100.
     pub laser_brightness: u8,
@@ -529,8 +590,8 @@ pub struct SetAuroraLaser {
     /// app label: "orbit"
     pub swim_on: bool,
     pub swim_value: u8,
-    /// byte[1]: the aurora (nebula) layer on/off. Confirmed via isolated capture
-    /// (toggling aurora in the app flips byte[1]).
+    /// byte[7]: the aurora (nebula) layer on/off, heading the aurora slider
+    /// block [8-12] (see `laser_on`).
     pub aurora_on: bool,
     pub aurora_flow: u8,
     /// byte[9]: the aurora (nebula) relative-brightness slider, 0-100. Distinct
@@ -571,17 +632,19 @@ impl SetAuroraLaser {
     const CONTROL_TYPE: u8 = 0x0C;
 
     fn encode(&self) -> anyhow::Result<Vec<u8>> {
-        // Head byte map (research/api-map/07-frame-reference.md). Aurora on/off is
-        // byte[1], stars on/off is byte[7].
+        // Head byte map (research/api-map/07-frame-reference.md). Each layer's
+        // on/off byte heads that layer's block: byte[1] is the stars (laser)
+        // on/off followed by its sliders [2-6], byte[7] is the aurora on/off
+        // followed by its sliders [8-12].
         let mut payload = vec![
             Self::CONTROL_TYPE,        // [0]
-            u8::from(self.aurora_on),  // [1] aurora layer on/off
+            u8::from(self.laser_on),   // [1] stars (laser) layer on/off
             self.laser_brightness,     // [2] stars relative brightness
             u8::from(self.flicker_on), // [3] flashing on/off
             self.flicker_value,        // [4] flashing speed
             u8::from(self.swim_on),    // [5] orbit on/off
             self.swim_value,           // [6] orbit speed
-            u8::from(self.laser_on),   // [7] stars layer on/off
+            u8::from(self.aurora_on),  // [7] aurora layer on/off
             self.aurora_flow,          // [8] aurora flow rate
             self.aurora_brightness,    // [9] aurora relative brightness
             self.aurora_effect_code, // [10] aurora mode (1=Gradient 2=Breathe 4=Rainbow 3=Twinkle)
@@ -900,23 +963,24 @@ mod test {
 
     #[test]
     fn aurora_and_stars_on_off_are_distinct_bytes() {
-        // Aurora on is byte[1], stars on is byte[7]. Checked independently
-        // (aurora on / stars off, then the inverse) so each byte is pinned; a
-        // both-on fixture wouldn't tell the two apart.
+        // Stars on is byte[1] (heads the stars block [2-6]), aurora on is byte[7]
+        // (heads the aurora block [8-12]). Checked independently (stars on /
+        // aurora off, then the inverse) so each byte is pinned; a both-on fixture
+        // wouldn't tell the two apart.
         let cmd = SetAuroraLaser {
-            aurora_on: true,
-            laser_on: false,
+            laser_on: true,
+            aurora_on: false,
             color_mode: AuroraColorMode::Basic,
             ..Default::default()
         };
         let payload = reassemble_a3(&enc(&cmd));
-        assert_eq!(payload[1], 1, "byte[1] is aurora on/off");
-        assert_eq!(payload[7], 0, "byte[7] is stars on/off");
+        assert_eq!(payload[1], 1, "byte[1] is stars on/off");
+        assert_eq!(payload[7], 0, "byte[7] is aurora on/off");
 
         // and the inverse
         let cmd = SetAuroraLaser {
-            aurora_on: false,
-            laser_on: true,
+            laser_on: false,
+            aurora_on: true,
             color_mode: AuroraColorMode::Basic,
             ..Default::default()
         };
@@ -1176,6 +1240,40 @@ mod test {
         let partial = SetAuroraLaser::from_common_datas(&json!({"auroraIsOn": true}));
         assert!(partial.aurora_on);
         assert_eq!(partial.aurora_brightness, 0);
+    }
+
+    #[test]
+    fn settings_toggle_state_is_optimistic() {
+        use crate::model::DeviceCapabilityKind::Toggle;
+        let blob = SetAuroraLaser::default();
+        let auto_off = SetAutoOff::default();
+        let mut settings = ProjectorSettings::default();
+
+        // Unwritten: no state, so HA leaves the entity unknown.
+        assert_eq!(
+            state_value(instance::DREAMVIEW_LASER, &blob, &auto_off, &settings),
+            None
+        );
+
+        // After a write we report exactly what we last sent.
+        assert!(settings.record(instance::DREAMVIEW_LASER, true));
+        assert_eq!(
+            state_value(instance::DREAMVIEW_LASER, &blob, &auto_off, &settings),
+            Some((Toggle, serde_json::json!({ "value": 1 })))
+        );
+        assert!(settings.record(instance::PAIRING_SOUND, false));
+        assert_eq!(
+            state_value(instance::PAIRING_SOUND, &blob, &auto_off, &settings),
+            Some((Toggle, serde_json::json!({ "value": 0 })))
+        );
+        // One toggle's write doesn't populate the others.
+        assert_eq!(
+            state_value(instance::PAIRING_STATUS, &blob, &auto_off, &settings),
+            None
+        );
+
+        // record only claims the settings toggles.
+        assert!(!settings.record("auroraOn", true));
     }
 
     #[test]

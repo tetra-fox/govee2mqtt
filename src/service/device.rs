@@ -2,7 +2,8 @@ use crate::commands::serve::{POLL_INTERVAL, availability_timeout};
 use crate::service::quirks::{BULB, Quirk, resolve_quirk};
 use chrono::{DateTime, Utc};
 use govee_api::ble::{
-    NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, SetAuroraLaser, SetAutoOff,
+    NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, ProjectorSettings, SetAuroraLaser,
+    SetAutoOff,
 };
 use govee_api::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::{
@@ -94,6 +95,18 @@ pub struct Device {
     /// frame, so a single-field change re-sends all three; held here and seeded
     /// from our own writes. None until the first write.
     pub auto_off_state: Option<SetAutoOff>,
+
+    /// Held last-written state for the H6093's standalone settings toggles. The
+    /// device doesn't report them and they aren't in common-datas, so this is the
+    /// only source for their HA state; each field is None until first written.
+    pub projector_settings: ProjectorSettings,
+
+    /// Whether the aurora/laser state has been seeded from common-datas yet.
+    /// Tracked separately from `aurora_laser_state.is_some()` because status
+    /// refinement (aa 11/34) creates a held state from device on/off before the
+    /// seed runs; without this flag that would skip the seed and leave the blob
+    /// with no brightness or colors, so a layer toggled on would be invisible.
+    pub aurora_laser_seeded: bool,
 
     pub last_polled: Option<DateTime<Utc>>,
 
@@ -302,6 +315,18 @@ impl Device {
     /// next single-field change starts from what we just sent.
     pub fn set_auto_off_state(&mut self, state: SetAutoOff) {
         self.auto_off_state.replace(state);
+    }
+
+    /// Mark the aurora/laser state as seeded from common-datas, so the one-shot
+    /// seed doesn't run again.
+    pub fn mark_aurora_laser_seeded(&mut self) {
+        self.aurora_laser_seeded = true;
+    }
+
+    /// Record a just-written settings-toggle value, so HA can show it (the device
+    /// never reports these back). Returns true if `instance` is a settings toggle.
+    pub fn record_projector_setting(&mut self, instance: &str, on: bool) -> bool {
+        self.projector_settings.record(instance, on)
     }
 
     /// Update the LAN device information
@@ -762,12 +787,13 @@ impl Device {
             return Some(cap.clone());
         }
         // Fall back to synthesized state for IoT-only controls (eg: the H6093
-        // aurora/laser and auto-off entities) whose value we hold ourselves
-        // rather than getting from the platform API.
+        // aurora/laser, auto-off, and settings-toggle entities) whose value we
+        // hold ourselves rather than getting from the platform API.
         let (kind, state) = govee_api::ble::projector_state_value(
             instance,
             &self.aurora_laser_state(),
             &self.auto_off_state(),
+            &self.projector_settings,
         )?;
         Some(DeviceCapabilityState {
             kind,

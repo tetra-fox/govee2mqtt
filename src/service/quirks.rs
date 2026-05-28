@@ -185,6 +185,7 @@ const WALL_SCONCE: &str = "mdi:wall-sconce";
 const OUTDOOR_LAMP: &str = "mdi:outdoor-lamp";
 const SPOTLIGHT: &str = "mdi:lightbulb-spot";
 const POWER_SOCKET: &str = "mdi:power-socket";
+const PROJECTOR: &str = "mdi:projector";
 
 fn load_quirks() -> HashMap<String, Quirk> {
     let mut map = HashMap::new();
@@ -283,6 +284,17 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // required for control to route over IoT (the only available transport).
         Quirk::device("H5080", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
         Quirk::device("H5083", DeviceType::Socket, POWER_SOCKET).with_iot_api_support(true),
+        // H6093 "Stars" aurora/laser projector. The platform API lists it as a
+        // light but reports no brightness/color capability, so without this it
+        // surfaces as a bare power switch. The device takes cmd:"turn" and
+        // cmd:"brightness" over IoT (status reports onOff + brightness), so mark
+        // it a brightness light driven over IoT; its aurora/laser/settings
+        // controls are synthesized separately (synthesize_h6093_capabilities). No
+        // master RGB/color-temp: the app only exposes per-layer colors, not a
+        // master color picker.
+        Quirk::device("H6093", DeviceType::Light, PROJECTOR)
+            .with_brightness()
+            .with_iot_api_support(true),
         Quirk::thermometer("H5051")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit)
             .with_platform_humidity_sensor_units(HumidityUnits::RelativePercent),

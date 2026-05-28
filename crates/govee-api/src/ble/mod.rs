@@ -27,8 +27,8 @@ pub use humidifier::{
 };
 pub use light::{SetDevicePower, SetSceneCode};
 pub use projector::{
-    AuroraColorMode, NotifyAurora, NotifyLaser, SetAurora, SetAuroraLaser, SetAutoOff,
-    SetDreamViewLaser, SetPairingSound, SetPairingStatus, SetSilentPowerUp,
+    AuroraColorMode, NotifyAurora, NotifyLaser, ProjectorSettings, SetAurora, SetAuroraLaser,
+    SetAutoOff, SetDreamViewLaser, SetPairingSound, SetPairingStatus, SetSilentPowerUp,
     apply_auto_off_field as projector_apply_auto_off_field,
     apply_blob_field as projector_apply_blob_field,
     common_datas_seed as projector_common_datas_seed,

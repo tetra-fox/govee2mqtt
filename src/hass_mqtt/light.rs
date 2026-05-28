@@ -82,8 +82,23 @@ impl EntityInstance for DeviceLight {
 
                 let is_on = device_state.light_on.unwrap_or(false);
 
+                let has_rgb = self.light.supported_color_modes.iter().any(|m| m == "rgb");
+                let has_color_temp = self
+                    .light
+                    .supported_color_modes
+                    .iter()
+                    .any(|m| m == "color_temp");
+
                 let light_state = if is_on {
-                    if device_state.kelvin == 0 {
+                    if !has_rgb && !has_color_temp {
+                        // brightness-only light: no color or temperature to report
+                        json!({
+                            "state": "ON",
+                            "color_mode": "brightness",
+                            "brightness": device_state.brightness,
+                            "effect": device_state.scene,
+                        })
+                    } else if device_state.kelvin == 0 {
                         json!({
                             "state": "ON",
                             "color_mode": "rgb",
@@ -177,6 +192,13 @@ impl DeviceLight {
                 .as_ref()
                 .map(|info| info.supports_brightness())
                 .unwrap_or(false);
+
+        // A light with brightness but no color/color-temp (eg: the H6093
+        // projector master) needs "brightness" as its color mode; HA rejects an
+        // empty supported_color_modes.
+        if supported_color_modes.is_empty() && brightness {
+            supported_color_modes.push("brightness".to_string());
+        }
 
         let name = match segment {
             Some(n) => Some(format!("Segment {:03}", n + 1)),

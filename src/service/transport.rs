@@ -382,6 +382,19 @@ pub(crate) async fn try_iot_capability(
 
     log::info!("Using IoT API to set {device} {instance} = {value:?}");
     iot.send_real(&info.entry, frames).await?;
+
+    // These settings toggles aren't echoed by the device or stored in
+    // common-datas, so the only state HA can show is what we just wrote. Record
+    // it and publish, otherwise the entity stays unknown even after control.
+    if let Some(on) = value.as_bool().or_else(|| value.as_i64().map(|v| v != 0)) {
+        let recorded = state
+            .device_mut(&device.sku, &device.id)
+            .await
+            .record_projector_setting(instance, on);
+        if recorded {
+            state.notify_of_state_change(&device.id).await.ok();
+        }
+    }
     Ok(true)
 }
 
@@ -411,11 +424,17 @@ async fn send_iot_frame<T: 'static>(
     Ok(())
 }
 
-/// Fetch the app's stored common-datas for this device, store it as the held
+/// Fetch the app's stored common-datas for this device, merge it into the held
 /// aurora/laser state, and return the seeded state. None if the SKU isn't seeded
 /// from common-datas, there's no undoc client, no stored record, or the read
 /// failed. The SKU's (bizType, bizKey) comes from the projector module, so the
 /// device-specific knowledge stays there and the SKU gate runs before any HTTP.
+///
+/// This runs even after status refinement (aa 11/34) has created a held state:
+/// refinement only carries the layer on/off bits, while the brightness, colors,
+/// effect and speeds come only from common-datas. We take those from common-datas
+/// and keep the already-refined on/off bits (the device reports those, and
+/// common-datas can lag), so the merged state has both.
 async fn try_seed_aurora_laser_state(
     state: &StateHandle,
     device: &Device,
@@ -424,12 +443,15 @@ async fn try_seed_aurora_laser_state(
     let undoc = state.get_undoc_client().await?;
     match undoc.get_common_datas(biz_type, &biz_key).await {
         Ok(Some(json)) => {
-            let seeded = govee_api::ble::SetAuroraLaser::from_common_datas(&json);
+            let mut seeded = govee_api::ble::SetAuroraLaser::from_common_datas(&json);
+            let mut dev = state.device_mut(&device.sku, &device.id).await;
+            if let Some(held) = &dev.aurora_laser_state {
+                seeded.aurora_on = held.aurora_on;
+                seeded.laser_on = held.laser_on;
+            }
+            dev.set_aurora_laser_state(seeded.clone());
+            dev.mark_aurora_laser_seeded();
             log::debug!("{device}: seeded aurora/laser state from common-datas");
-            state
-                .device_mut(&device.sku, &device.id)
-                .await
-                .set_aurora_laser_state(seeded.clone());
             Some(seeded)
         }
         Ok(None) => {
@@ -443,17 +465,18 @@ async fn try_seed_aurora_laser_state(
     }
 }
 
-/// Return the device's held aurora+laser state, seeding it from common-datas if we
-/// don't have it yet. A single-field edit re-sends the whole frame, so it must
-/// start from the device's real current state. If the read fails or there's no
-/// record, fall back to the default so control still works (it just may not
-/// preserve fields the user hasn't set through us).
+/// Return the device's held aurora+laser state, seeding it from common-datas if it
+/// hasn't been seeded yet. A single-field edit re-sends the whole frame, so it
+/// must start from the device's real current state including the brightness and
+/// colors that only common-datas carries. If the read fails or there's no record,
+/// fall back to whatever we hold so control still works (it just may not preserve
+/// fields the user hasn't set through us).
 async fn seeded_aurora_laser_state(
     state: &StateHandle,
     device: &Device,
 ) -> govee_api::ble::SetAuroraLaser {
-    if let Some(held) = &device.aurora_laser_state {
-        return held.clone();
+    if device.aurora_laser_seeded {
+        return device.aurora_laser_state();
     }
     try_seed_aurora_laser_state(state, device)
         .await
@@ -462,11 +485,12 @@ async fn seeded_aurora_laser_state(
 
 /// Seed a projector's held aurora/laser state from common-datas at poll time, so
 /// the entities whose values aren't in the platform or IoT status (relative
-/// brightness, color mode, effect, flow) show their real values at startup instead
-/// of staying default until the user changes one. No-op once the state is already
-/// held; `try_seed_aurora_laser_state` no-ops for SKUs that don't seed.
+/// brightness, color mode, effect, flow) show their real values at startup, and so
+/// a layer toggled on carries its real brightness and colors instead of being
+/// invisible. One-shot: gated on `aurora_laser_seeded`, not on whether a held
+/// state exists, since status refinement creates a held state before this runs.
 pub(crate) async fn ensure_projector_state_seeded(state: &StateHandle, device: &Device) {
-    if device.aurora_laser_state.is_some() {
+    if device.aurora_laser_seeded {
         return;
     }
     if try_seed_aurora_laser_state(state, device).await.is_some() {
