@@ -464,7 +464,7 @@ impl State {
         {
             log::info!("Using Platform API to set {device} target temperature to {target}");
             client
-                .set_target_temperature(info, instance_name, target)
+                .set_target_temperature(info, instance_name, target, None)
                 .await?;
             return Ok(());
         }

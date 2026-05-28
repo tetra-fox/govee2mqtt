@@ -1,80 +1,23 @@
-use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
-use crate::http::http_response_body;
-use crate::opt_env_var;
-use crate::temperature::{
-    TemperatureConstraints, TemperatureScale, TemperatureUnits, TemperatureValue,
+use super::wire::{
+    ControlDeviceCapability, ControlDevicePayload, ControlDeviceRequest, ControlDeviceResponse,
+    ControlDeviceResponseCapability, GetDeviceScenesPayload, GetDeviceScenesRequest,
+    GetDeviceScenesResponse, GetDeviceStateRequest, GetDeviceStateRequestPayload,
+    GetDeviceStateResponse, GetDevicesResponse, HttpDeviceInfo, HttpDeviceState,
 };
+use super::{
+    FIVE_MINUTES, GoveeApiClient, ONE_WEEK, endpoint, new_request_id,
+    parse_temperature_constraints, sort_and_dedup_scenes,
+};
+use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
+use crate::model::*;
+use crate::temperature::{TemperatureUnits, TemperatureValue};
 use crate::undoc_api::GoveeUndocumentedApi;
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
-use std::str::FromStr;
 use std::time::Duration;
 
-// The capability type model (DeviceCapability, DeviceParameters, DeviceType, ...)
-// lives in crate::model; the shared HTTP helpers in crate::http. Re-export the
-// pieces callers reach for via `platform_api::` so existing import paths keep
-// working.
-pub use crate::http::{HttpRequestFailed, json_body};
-pub use crate::model::*;
-
-// This file implements the Govee Platform API V1 as described at:
-// <https://developer.govee.com/reference/get-you-devices>
-//
-// It is NOT the same thing as the older, but confusingly versioned
-// with a higher number, Govee HTTP API v2 that is described at
-// <https://govee.readme.io/reference/getlightdeviceinfo>
-
-const SERVER: &str = "https://openapi.api.govee.com";
-pub const ONE_WEEK: Duration = Duration::from_secs(86400 * 7);
-pub const FIVE_MINUTES: Duration = Duration::from_secs(5 * 60);
-
-fn endpoint(url: &str) -> String {
-    format!("{SERVER}{url}")
-}
-
-#[derive(clap::Parser, Debug)]
-pub struct GoveeApiArguments {
-    /// The Govee API Key. If not passed here, it will be read from
-    /// the GOVEE2MQTT_API_KEY environment variable.
-    #[arg(long, global = true)]
-    pub api_key: Option<String>,
-}
-
-impl GoveeApiArguments {
-    pub fn opt_api_key(&self) -> anyhow::Result<Option<String>> {
-        match &self.api_key {
-            Some(key) => Ok(Some(key.to_string())),
-            None => opt_env_var("GOVEE2MQTT_API_KEY"),
-        }
-    }
-
-    pub fn api_key(&self) -> anyhow::Result<String> {
-        self.opt_api_key()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Please specify the api key either via the \
-                --api-key parameter or by setting $GOVEE2MQTT_API_KEY"
-            )
-        })
-    }
-
-    pub fn api_client(&self) -> anyhow::Result<GoveeApiClient> {
-        let key = self.api_key()?;
-        Ok(GoveeApiClient::new(key))
-    }
-}
-
-#[derive(Clone)]
-pub struct GoveeApiClient {
-    key: String,
-}
-
 impl GoveeApiClient {
-    pub fn new(key: String) -> Self {
-        Self { key }
-    }
-
     pub async fn get_devices(&self) -> anyhow::Result<Vec<HttpDeviceInfo>> {
         cache_get(
             CacheGetOptions {
@@ -112,7 +55,7 @@ impl GoveeApiClient {
     ) -> anyhow::Result<ControlDeviceResponseCapability> {
         let url = endpoint("/router/api/v1/device/control");
         let request = ControlDeviceRequest {
-            request_id: "uuid".to_string(),
+            request_id: new_request_id(),
             payload: ControlDevicePayload {
                 sku: device.sku.to_string(),
                 device: device.device.to_string(),
@@ -139,7 +82,7 @@ impl GoveeApiClient {
     ) -> anyhow::Result<HttpDeviceState> {
         let url = endpoint("/router/api/v1/device/state");
         let request = GetDeviceStateRequest {
-            request_id: "uuid".to_string(),
+            request_id: new_request_id(),
             payload: GetDeviceStateRequestPayload {
                 sku: device.sku.to_string(),
                 device: device.device.to_string(),
@@ -174,7 +117,7 @@ impl GoveeApiClient {
             async {
                 let url = endpoint("/router/api/v1/device/diy-scenes");
                 let request = GetDeviceScenesRequest {
-                    request_id: "uuid".to_string(),
+                    request_id: new_request_id(),
                     payload: GetDeviceScenesPayload {
                         sku: device.sku.to_string(),
                         device: device.device.to_string(),
@@ -212,7 +155,7 @@ impl GoveeApiClient {
             async {
                 let url = endpoint("/router/api/v1/device/scenes");
                 let request = GetDeviceScenesRequest {
-                    request_id: "uuid".to_string(),
+                    request_id: new_request_id(),
                     payload: GetDeviceScenesPayload {
                         sku: device.sku.to_string(),
                         device: device.device.to_string(),
@@ -416,6 +359,7 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         instance_name: &str,
         target: TemperatureValue,
+        auto_stop: Option<bool>,
     ) -> anyhow::Result<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance(instance_name)
@@ -434,10 +378,13 @@ impl GoveeApiClient {
             );
         }
 
-        let value = json!({
+        let mut value = json!({
             "temperature": celsius,
             "unit": "Celsius",
         });
+        if let Some(auto_stop) = auto_stop {
+            value["autoStop"] = json!(if auto_stop { 1 } else { 0 });
+        }
 
         self.control_device(device, cap, value).await
     }
@@ -586,267 +533,6 @@ impl GoveeApiClient {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-struct GetDeviceScenesResponse {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub code: u32,
-    #[serde(rename = "msg")]
-    pub message: String,
-    pub payload: GetDeviceScenesResponsePayload,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-struct GetDeviceScenesResponsePayload {
-    pub sku: String,
-    pub device: String,
-    pub capabilities: Vec<DeviceCapability>,
-}
-
-#[derive(Serialize, Debug)]
-struct GetDeviceScenesRequest {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub payload: GetDeviceScenesPayload,
-}
-
-#[derive(Serialize, Debug)]
-struct GetDeviceScenesPayload {
-    pub sku: String,
-    pub device: String,
-}
-
-#[derive(Serialize, Debug)]
-struct ControlDeviceRequest {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub payload: ControlDevicePayload,
-}
-
-#[derive(Serialize, Debug)]
-struct ControlDevicePayload {
-    pub sku: String,
-    pub device: String,
-    pub capability: ControlDeviceCapability,
-}
-
-#[derive(Serialize, Debug)]
-struct ControlDeviceCapability {
-    #[serde(rename = "type")]
-    pub kind: DeviceCapabilityKind,
-    pub instance: String,
-    pub value: JsonValue,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(dead_code)]
-struct ControlDeviceResponse {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub code: u32,
-    #[serde(rename = "msg")]
-    pub message: String,
-
-    pub capability: ControlDeviceResponseCapability,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(unused)]
-pub struct ControlDeviceResponseCapability {
-    #[serde(rename = "type")]
-    pub kind: DeviceCapabilityKind,
-    pub instance: String,
-    pub value: JsonValue,
-    pub state: JsonValue,
-}
-
-#[derive(Serialize, Debug)]
-struct GetDeviceStateRequest {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub payload: GetDeviceStateRequestPayload,
-}
-
-#[derive(Serialize, Debug)]
-struct GetDeviceStateRequestPayload {
-    pub sku: String,
-    pub device: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-struct GetDeviceStateResponse {
-    #[serde(rename = "requestId")]
-    pub request_id: String,
-    pub code: u32,
-    #[serde(rename = "msg")]
-    pub message: String,
-    pub payload: HttpDeviceState,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct HttpDeviceState {
-    pub sku: String,
-    pub device: String,
-    pub capabilities: Vec<DeviceCapabilityState>,
-}
-
-impl HttpDeviceState {
-    pub fn capability_by_instance(&self, instance: &str) -> Option<&DeviceCapabilityState> {
-        self.capabilities
-            .iter()
-            .find(|c| c.instance.eq_ignore_ascii_case(instance))
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(tag = "type")]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct DeviceCapabilityState {
-    #[serde(rename = "type")]
-    pub kind: DeviceCapabilityKind,
-    pub instance: String,
-    pub state: JsonValue,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-struct GetDevicesResponse {
-    pub code: u32,
-    pub message: String,
-    pub data: Vec<HttpDeviceInfo>,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-#[cfg_attr(debug_assertions, serde(deny_unknown_fields))]
-pub struct HttpDeviceInfo {
-    pub sku: String,
-    pub device: String,
-    #[serde(default, rename = "deviceName")]
-    pub device_name: String,
-    #[serde(default, rename = "type")]
-    pub device_type: DeviceType,
-    pub capabilities: Vec<DeviceCapability>,
-}
-
-impl HttpDeviceInfo {
-    pub fn capability_by_instance(&self, instance: &str) -> Option<&DeviceCapability> {
-        self.capabilities
-            .iter()
-            .find(|c| c.instance.eq_ignore_ascii_case(instance))
-    }
-
-    pub fn supports_rgb(&self) -> bool {
-        self.capability_by_instance("colorRgb").is_some()
-    }
-
-    pub fn supports_brightness(&self) -> bool {
-        self.capability_by_instance("brightness").is_some()
-    }
-
-    pub fn supports_dynamic_scenes(&self) -> bool {
-        self.capabilities
-            .iter()
-            .any(|cap| cap.kind == DeviceCapabilityKind::DynamicScene)
-    }
-
-    /// If supported, returns the number of segments
-    pub fn supports_segmented_rgb(&self) -> Option<std::ops::Range<u32>> {
-        let cap = self.capability_by_instance("segmentedColorRgb")?;
-        let field = cap.struct_field_by_name("segment")?;
-        match field.field_type {
-            DeviceParameters::Array {
-                size:
-                    Some(ArraySize {
-                        // These are the display indices. eg: 1-based
-                        min: label_min,
-                        max: label_max,
-                    }),
-                element_range:
-                    Some(ElementRange {
-                        // These are the actual indices. eg: 0-based
-                        min: range_min,
-                        // We ignore the max here, because the data
-                        // reported by Govee can be bogus:
-                        // <https://developer.govee.com/discuss/6599afb91cb48d002dbed2b8>
-                        max: _,
-                    }),
-                ..
-            } => {
-                // This range is an inclusive range, so add 1
-                let num_segments = (1 + label_max).saturating_sub(label_min);
-                // Return our exclusive range
-                Some(range_min..range_min + num_segments)
-            }
-            _ => None,
-        }
-    }
-
-    pub fn supports_segmented_brightness(&self) -> Option<(u32, u32)> {
-        let cap = self.capability_by_instance("segmentedBrightness")?;
-        let field = cap.struct_field_by_name("brightness")?;
-        match &field.field_type {
-            DeviceParameters::Integer {
-                range: IntegerRange { min, max, .. },
-                ..
-            } => Some((*min, *max)),
-            _ => None,
-        }
-    }
-
-    pub fn get_color_temperature_range(&self) -> Option<(u32, u32)> {
-        let cap = self.capability_by_instance("colorTemperatureK")?;
-
-        match cap.parameters {
-            Some(DeviceParameters::Integer {
-                range: IntegerRange { min, max, .. },
-                ..
-            }) => Some((min, max)),
-            _ => None,
-        }
-    }
-}
-
-impl GoveeApiClient {
-    async fn get_request_with_json_response<T: reqwest::IntoUrl, R: serde::de::DeserializeOwned>(
-        &self,
-        url: T,
-    ) -> anyhow::Result<R> {
-        let response = crate::http_client()
-            .request(Method::GET, url)
-            .timeout(Duration::from_secs(60))
-            .header("Govee-API-Key", &self.key)
-            .send()
-            .await?;
-
-        http_response_body(response).await
-    }
-
-    async fn request_with_json_response<
-        T: reqwest::IntoUrl,
-        B: serde::Serialize,
-        R: serde::de::DeserializeOwned,
-    >(
-        &self,
-        method: Method,
-        url: T,
-        body: &B,
-    ) -> anyhow::Result<R> {
-        let response = crate::http_client()
-            .request(method, url)
-            .timeout(Duration::from_secs(60))
-            .header("Govee-API-Key", &self.key)
-            .json(body)
-            .send()
-            .await?;
-
-        http_response_body(response).await
-    }
-}
-
 /// Build the control value for a musicMode capability. sensitivity is clamped
 /// to the documented 0-100 range; rgb is included only when a color is supplied,
 /// since the platform API rejects an explicit null rgb.
@@ -867,90 +553,9 @@ fn music_mode_value(
     value
 }
 
-pub fn sort_and_dedup_scenes(mut scenes: Vec<String>) -> Vec<String> {
-    scenes.sort_by_key(|s| s.to_ascii_lowercase());
-    scenes.dedup();
-    scenes
-}
-
-pub fn parse_temperature_constraints(
-    instance: &DeviceCapability,
-) -> anyhow::Result<TemperatureConstraints> {
-    let units = instance
-        .struct_field_by_name("unit")
-        .and_then(|field| {
-            field.default_value.as_ref().and_then(|v| {
-                v.as_str()
-                    .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
-            })
-        })
-        .unwrap_or(TemperatureUnits::Fahrenheit);
-
-    let temperature = instance
-        .struct_field_by_name("temperature")
-        .ok_or_else(|| anyhow!("no temperature field in {instance:?}"))?;
-    match &temperature.field_type {
-        DeviceParameters::Integer { unit, range } => {
-            let range_units = unit
-                .as_deref()
-                .and_then(|s| TemperatureScale::from_str(s).map(Into::into).ok())
-                .unwrap_or(units);
-
-            let min = TemperatureValue::new(range.min.into(), range_units);
-            let max = TemperatureValue::new(range.max.into(), range_units);
-
-            Ok(TemperatureConstraints {
-                min: min.as_unit(units),
-                max: max.as_unit(units),
-            })
-        }
-        _ => {
-            anyhow::bail!("Unexpected temperature value in {instance:?}");
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::http::from_json;
-
-    const SCENE_LIST: &str = include_str!("../test-data/scenes.json");
-
-    #[test]
-    fn get_device_scenes() {
-        let _: GetDeviceScenesResponse = from_json(SCENE_LIST).expect("parse device scenes");
-    }
-
-    const GET_DEVICE_STATE_EXAMPLE: &str = include_str!("../test-data/get_device_state.json");
-
-    #[test]
-    fn get_device_state() {
-        let _: GetDeviceStateResponse =
-            from_json(GET_DEVICE_STATE_EXAMPLE).expect("parse device state");
-    }
-
-    const LIST_DEVICES_EXAMPLE: &str = include_str!("../test-data/list_devices.json");
-    const LIST_DEVICES_EXAMPLE2: &str = include_str!("../test-data/list_devices_2.json");
-
-    #[test]
-    fn list_devices_issue4() {
-        let resp: GetDevicesResponse =
-            from_json(include_str!("../test-data/list_devices_issue4.json")).expect("parse");
-        assert!(!resp.data.is_empty());
-    }
-
-    #[test]
-    fn list_devices_2() {
-        let resp: GetDevicesResponse = from_json(LIST_DEVICES_EXAMPLE2).expect("parse");
-        assert!(!resp.data.is_empty());
-    }
-
-    #[test]
-    fn list_devices() {
-        let resp: GetDevicesResponse = from_json(LIST_DEVICES_EXAMPLE).expect("parse");
-        assert!(!resp.data.is_empty());
-    }
 
     #[test]
     fn music_mode_value_rgb() {
