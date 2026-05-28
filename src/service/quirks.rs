@@ -186,6 +186,7 @@ const OUTDOOR_LAMP: &str = "mdi:outdoor-lamp";
 const SPOTLIGHT: &str = "mdi:lightbulb-spot";
 const POWER_SOCKET: &str = "mdi:power-socket";
 const PROJECTOR: &str = "mdi:projector";
+const CEILING_FAN: &str = "mdi:ceiling-fan-light";
 
 fn load_quirks() -> HashMap<String, Quirk> {
     let mut map = HashMap::new();
@@ -441,14 +442,89 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::lan_api_capable_light("H601C", SPOTLIGHT),
         Quirk::lan_api_capable_light("H801A", SPOTLIGHT),
         Quirk::lan_api_capable_light("H801D", SPOTLIGHT),
-        // Deliberately skipped from the LAN guide:
-        // - H6093 already has its own projector quirk (per-layer colors, no
-        //   master RGB picker); H6094, H6095, H609D are sibling projectors
-        //   whose capability shape we have not verified, so they are left out
-        //   until we can confirm whether the H6093 shape applies.
-        // - H1310, H1370 are ceiling fans with lights, not bare lights; they
-        //   need fan device-class wiring (deferred).
-
+        // Sibling Star Light Projectors to H6093 (Ocean Wave, Nebula, Galaxy
+        // 2 Pro). The H6093 was registered with brightness-only + IoT because
+        // its platform API reports no master color picker (only per-layer
+        // aurora/laser controls). Mirror that shape for the siblings and add
+        // LAN since Govee's list includes them; if their capability shape is
+        // richer than H6093's the platform API will surface the extras
+        // alongside this quirk.
+        Quirk::device("H6094", DeviceType::Light, PROJECTOR)
+            .with_brightness()
+            .with_iot_api_support(true)
+            .with_lan_api(),
+        Quirk::device("H6095", DeviceType::Light, PROJECTOR)
+            .with_brightness()
+            .with_iot_api_support(true)
+            .with_lan_api(),
+        Quirk::device("H609D", DeviceType::Light, PROJECTOR)
+            .with_brightness()
+            .with_iot_api_support(true)
+            .with_lan_api(),
+        // Ceiling fans with integrated lights. We do not have a dedicated fan
+        // device class yet, so only the LIGHT side is reachable; the fan
+        // blades will need fan-class wiring to expose. Icon hints at the
+        // combined form factor.
+        Quirk::lan_api_capable_light("H1310", CEILING_FAN),
+        Quirk::lan_api_capable_light("H1370", CEILING_FAN),
+        // Outdoor pathway / wall / cylinder lights
+        Quirk::lan_api_capable_light("H3510", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3511", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3751", WALL_SCONCE),
+        // More strip variants from the definitive list (Skyline Kit, Strip
+        // Light 2 Pro, Neon Rope 2, additional cover/M1 variants)
+        Quirk::lan_api_capable_light("H61B6", STRIP),
+        Quirk::lan_api_capable_light("H61B8", STRIP),
+        Quirk::lan_api_capable_light("H61B9", STRIP),
+        Quirk::lan_api_capable_light("H61C3", STRIP),
+        Quirk::lan_api_capable_light("H61D3", STRIP),
+        Quirk::lan_api_capable_light("H61D5", STRIP),
+        Quirk::lan_api_capable_light("H61F2", STRIP),
+        Quirk::lan_api_capable_light("H61F5", STRIP),
+        // Christmas / decorative strings (H6811 is 480LED Net Lights —
+        // sibling of H6810; H70Bx/H70Cx/H70Dx are curtain / christmas /
+        // icicle variants)
+        Quirk::lan_api_capable_light("H6811", STRING),
+        Quirk::lan_api_capable_light("H70B6", STRING),
+        Quirk::lan_api_capable_light("H70B8", STRIP),
+        Quirk::lan_api_capable_light("H70C4", STRING),
+        Quirk::lan_api_capable_light("H70C5", STRING),
+        Quirk::lan_api_capable_light("H70C7", STRING),
+        Quirk::lan_api_capable_light("H70D1", STRING),
+        Quirk::lan_api_capable_light("H70D2", STRING),
+        // Outdoor string light variants (S14 bulb, dots, permanent outdoor
+        // 2 / 2 Pro / Prism, garden, tree, chromatic)
+        Quirk::lan_api_capable_light("H7025", STRING),
+        Quirk::lan_api_capable_light("H7026", STRING),
+        Quirk::lan_api_capable_light("H702A", STRING),
+        Quirk::lan_api_capable_light("H702B", STRING),
+        Quirk::lan_api_capable_light("H702C", STRING),
+        Quirk::lan_api_capable_light("H7037", STRING),
+        Quirk::lan_api_capable_light("H7038", STRING),
+        Quirk::lan_api_capable_light("H7039", STRING),
+        Quirk::lan_api_capable_light("H703B", STRING),
+        Quirk::lan_api_capable_light("H7046", STRING),
+        Quirk::lan_api_capable_light("H705D", STRING),
+        Quirk::lan_api_capable_light("H705E", STRING),
+        Quirk::lan_api_capable_light("H705F", STRING),
+        Quirk::lan_api_capable_light("H706A", STRING),
+        Quirk::lan_api_capable_light("H706B", STRING),
+        Quirk::lan_api_capable_light("H706C", STRING),
+        Quirk::lan_api_capable_light("H707A", STRING),
+        Quirk::lan_api_capable_light("H707B", STRING),
+        Quirk::lan_api_capable_light("H707C", STRING),
+        Quirk::lan_api_capable_light("H7086", STRING),
+        Quirk::lan_api_capable_light("H7087", STRING),
+        // Outdoor flood / pathway / lamp post / wall / spotlights
+        Quirk::lan_api_capable_light("H7056", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H7057", FLOOD),
+        Quirk::lan_api_capable_light("H7058", FLOOD),
+        Quirk::lan_api_capable_light("H7071", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H7072", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H7073", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H7076", WALL_SCONCE),
+        Quirk::lan_api_capable_light("H7093", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H7094", SPOTLIGHT),
         // Second pass through the LAN guide page picking up SKUs the first
         // pass missed (page content past the initial visible region). Same
         // source: <https://app-h5.govee.com/user-manual/wlan-guide>.
@@ -484,20 +560,22 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::lan_api_capable_light("H61D6", STRIP),
         Quirk::lan_api_capable_light("H61E0", STRIP),
         Quirk::lan_api_capable_light("H61F6", STRIP),
-        // Hexa / panel lights (H66xx range matches H6061/H6066/H6067 pattern)
-        Quirk::lan_api_capable_light("H6671", HEX),
-        Quirk::lan_api_capable_light("H6672", HEX),
+        // H6671/H6672 are "RGBWIC TV Backlight 2" per Govee's definitive
+        // LAN list, not panel lights — TV backlight icon is the right fit.
+        Quirk::lan_api_capable_light("H6671", TV_BACK),
+        Quirk::lan_api_capable_light("H6672", TV_BACK),
         // Pendant/ceiling adjacent (H60A0 sits next to H60A1/H60A4/H60A6)
         Quirk::lan_api_capable_light("H60A0", CEILING),
-        // Outdoor flood / pathway / spotlight family. H3xxx is outdoor in our
-        // existing quirks; H6350/H6351 are outdoor floods.
-        Quirk::lan_api_capable_light("H30D0", OUTDOOR_LAMP),
-        Quirk::lan_api_capable_light("H30D1", OUTDOOR_LAMP),
-        Quirk::lan_api_capable_light("H3A51", OUTDOOR_LAMP),
-        Quirk::lan_api_capable_light("H3A52", OUTDOOR_LAMP),
-        Quirk::lan_api_capable_light("H3A53", OUTDOOR_LAMP),
-        Quirk::lan_api_capable_light("H6350", FLOOD),
-        Quirk::lan_api_capable_light("H6351", FLOOD),
+        // Per Govee's definitive LAN list: H30D0/H30D1 are Outdoor Filament
+        // String Lights, H3A5x are Permanent Outdoor Lights 2 Pro (string),
+        // H6350/H6351 are Sphere Net Lights (string). All take STRING.
+        Quirk::lan_api_capable_light("H30D0", STRING),
+        Quirk::lan_api_capable_light("H30D1", STRING),
+        Quirk::lan_api_capable_light("H3A51", STRING),
+        Quirk::lan_api_capable_light("H3A52", STRING),
+        Quirk::lan_api_capable_light("H3A53", STRING),
+        Quirk::lan_api_capable_light("H6350", STRING),
+        Quirk::lan_api_capable_light("H6351", STRING),
         // String / Christmas / curtain lights (H68xx, H7xxx, H80xx in those
         // ranges; existing H68xx and H7000-series entries are STRING).
         Quirk::lan_api_capable_light("H6810", STRING),
@@ -538,16 +616,16 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::lan_api_capable_light("H8811", STRING),
         Quirk::lan_api_capable_light("H8840", STRING),
         Quirk::lan_api_capable_light("H8841", STRING),
-        // H1Axx / H1Bxx series — class unclear from SKU alone; default to
-        // CEILING since adjacent H1xxx entries are ceiling lights or floor
-        // lamps. The icon is a UI hint, not behavior, so wrong picks here
-        // don't break anything.
-        Quirk::lan_api_capable_light("H1A44", CEILING),
-        Quirk::lan_api_capable_light("H1A45", CEILING),
-        Quirk::lan_api_capable_light("H1AB1", CEILING),
-        Quirk::lan_api_capable_light("H1AB2", CEILING),
-        Quirk::lan_api_capable_light("H1AB3", CEILING),
-        Quirk::lan_api_capable_light("H1B6A", CEILING),
+        // H1Axx / H1ABx / H1B6A — Govee's definitive LAN list shows these
+        // are all strip variants (LED Strip Light 2, COB Strip Light 2,
+        // Strip Light with Tower Kit).
+        Quirk::lan_api_capable_light("H1A43", STRIP),
+        Quirk::lan_api_capable_light("H1A44", STRIP),
+        Quirk::lan_api_capable_light("H1A45", STRIP),
+        Quirk::lan_api_capable_light("H1AB1", STRIP),
+        Quirk::lan_api_capable_light("H1AB2", STRIP),
+        Quirk::lan_api_capable_light("H1AB3", STRIP),
+        Quirk::lan_api_capable_light("H1B6A", STRIP),
         Quirk::lan_api_capable_light("H6046", TV_BACK),
         Quirk::lan_api_capable_light("H6047", TV_BACK),
         Quirk::lan_api_capable_light("H6051", DESK),
