@@ -448,6 +448,106 @@ fn load_quirks() -> HashMap<String, Quirk> {
         //   until we can confirm whether the H6093 shape applies.
         // - H1310, H1370 are ceiling fans with lights, not bare lights; they
         //   need fan device-class wiring (deferred).
+
+        // Second pass through the LAN guide page picking up SKUs the first
+        // pass missed (page content past the initial visible region). Same
+        // source: <https://app-h5.govee.com/user-manual/wlan-guide>.
+        // Strip/general lights (default STRIP icon; refine if a user reports
+        // a wrong form-factor). H6052 and H615B also have BLE-transport
+        // quirks documented elsewhere; those layer independently on top of
+        // LAN registration.
+        Quirk::lan_api_capable_light("H6042", STRIP),
+        Quirk::lan_api_capable_light("H6043", STRIP),
+        Quirk::lan_api_capable_light("H6052", STRIP),
+        Quirk::lan_api_capable_light("H6063", WALL_SCONCE),
+        Quirk::lan_api_capable_light("H6110", STRIP),
+        Quirk::lan_api_capable_light("H6143", STRIP),
+        Quirk::lan_api_capable_light("H6144", STRIP),
+        Quirk::lan_api_capable_light("H615A", STRIP),
+        Quirk::lan_api_capable_light("H615B", STRIP),
+        Quirk::lan_api_capable_light("H615C", STRIP),
+        Quirk::lan_api_capable_light("H615D", STRIP),
+        Quirk::lan_api_capable_light("H616C", STRIP),
+        Quirk::lan_api_capable_light("H616D", STRIP),
+        Quirk::lan_api_capable_light("H616E", STRIP),
+        Quirk::lan_api_capable_light("H6167", STRIP),
+        Quirk::lan_api_capable_light("H6182", STRIP),
+        Quirk::lan_api_capable_light("H618G", STRIP),
+        Quirk::lan_api_capable_light("H61A9", STRIP),
+        Quirk::lan_api_capable_light("H61B1", STRIP),
+        Quirk::lan_api_capable_light("H61B3", STRIP),
+        Quirk::lan_api_capable_light("H61BA", STRIP),
+        Quirk::lan_api_capable_light("H61BC", STRIP),
+        Quirk::lan_api_capable_light("H61BE", STRIP),
+        Quirk::lan_api_capable_light("H61C2", STRIP),
+        Quirk::lan_api_capable_light("H61C5", STRIP),
+        Quirk::lan_api_capable_light("H61D6", STRIP),
+        Quirk::lan_api_capable_light("H61E0", STRIP),
+        Quirk::lan_api_capable_light("H61F6", STRIP),
+        // Hexa / panel lights (H66xx range matches H6061/H6066/H6067 pattern)
+        Quirk::lan_api_capable_light("H6671", HEX),
+        Quirk::lan_api_capable_light("H6672", HEX),
+        // Pendant/ceiling adjacent (H60A0 sits next to H60A1/H60A4/H60A6)
+        Quirk::lan_api_capable_light("H60A0", CEILING),
+        // Outdoor flood / pathway / spotlight family. H3xxx is outdoor in our
+        // existing quirks; H6350/H6351 are outdoor floods.
+        Quirk::lan_api_capable_light("H30D0", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H30D1", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3A51", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3A52", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3A53", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H6350", FLOOD),
+        Quirk::lan_api_capable_light("H6351", FLOOD),
+        // String / Christmas / curtain lights (H68xx, H7xxx, H80xx in those
+        // ranges; existing H68xx and H7000-series entries are STRING).
+        Quirk::lan_api_capable_light("H6810", STRING),
+        Quirk::lan_api_capable_light("H6840", STRING),
+        Quirk::lan_api_capable_light("H6841", STRING),
+        Quirk::lan_api_capable_light("H6842", STRING),
+        Quirk::lan_api_capable_light("H6843", STRING),
+        Quirk::lan_api_capable_light("H6850", STRING),
+        Quirk::lan_api_capable_light("H6860", STRING),
+        Quirk::lan_api_capable_light("H6861", STRING),
+        Quirk::lan_api_capable_light("H7027", STRING),
+        Quirk::lan_api_capable_light("H7030", STRING),
+        Quirk::lan_api_capable_light("H7033", STRING),
+        Quirk::lan_api_capable_light("H703A", STRING),
+        Quirk::lan_api_capable_light("H7045", STRING),
+        Quirk::lan_api_capable_light("H7063", STRING),
+        Quirk::lan_api_capable_light("H7066", STRING),
+        Quirk::lan_api_capable_light("H7070", STRING),
+        Quirk::lan_api_capable_light("H70B1", STRING),
+        Quirk::lan_api_capable_light("H70BC", STRING),
+        Quirk::lan_api_capable_light("H70C1", STRING),
+        Quirk::lan_api_capable_light("H70C2", STRING),
+        Quirk::lan_api_capable_light("H70C9", STRING),
+        Quirk::lan_api_capable_light("H70D3", STRING),
+        Quirk::lan_api_capable_light("H801B", STRING),
+        Quirk::lan_api_capable_light("H802A", STRING),
+        Quirk::lan_api_capable_light("H8025", STRING),
+        Quirk::lan_api_capable_light("H8026", STRING),
+        Quirk::lan_api_capable_light("H8057", STRING),
+        Quirk::lan_api_capable_light("H805A", STRING),
+        Quirk::lan_api_capable_light("H805B", STRING),
+        Quirk::lan_api_capable_light("H805C", STRING),
+        Quirk::lan_api_capable_light("H8066", STRING),
+        Quirk::lan_api_capable_light("H806C", STRING),
+        Quirk::lan_api_capable_light("H80C4", STRING),
+        Quirk::lan_api_capable_light("H80C5", STRING),
+        Quirk::lan_api_capable_light("H80D1", STRING),
+        Quirk::lan_api_capable_light("H8811", STRING),
+        Quirk::lan_api_capable_light("H8840", STRING),
+        Quirk::lan_api_capable_light("H8841", STRING),
+        // H1Axx / H1Bxx series — class unclear from SKU alone; default to
+        // CEILING since adjacent H1xxx entries are ceiling lights or floor
+        // lamps. The icon is a UI hint, not behavior, so wrong picks here
+        // don't break anything.
+        Quirk::lan_api_capable_light("H1A44", CEILING),
+        Quirk::lan_api_capable_light("H1A45", CEILING),
+        Quirk::lan_api_capable_light("H1AB1", CEILING),
+        Quirk::lan_api_capable_light("H1AB2", CEILING),
+        Quirk::lan_api_capable_light("H1AB3", CEILING),
+        Quirk::lan_api_capable_light("H1B6A", CEILING),
         Quirk::lan_api_capable_light("H6046", TV_BACK),
         Quirk::lan_api_capable_light("H6047", TV_BACK),
         Quirk::lan_api_capable_light("H6051", DESK),
