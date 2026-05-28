@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Assemble a source-building dev add-on, then hand off to the Home Assistant
-# devcontainer bootstrap that boots Supervisor and scans local add-ons.
+# Assemble a source-building dev app, then hand off to the Home Assistant
+# devcontainer bootstrap that boots Supervisor and scans local apps.
 #
-# The Supervisor builds a local add-on using the add-on's own directory as the
+# The Supervisor builds a local app using the app's own directory as the
 # Docker build context, and Docker can't COPY from outside that context, nor
 # follow symlinks that leave it. The merged Dockerfile compiles the Rust source
-# at the repo root, so the source has to be reachable inside the add-on dir.
+# at the repo root, so the source has to be reachable inside the app dir.
 #
 # Rather than copy the source (which goes stale the moment you edit and then the
 # HA "Rebuild" button builds old code), we bind-mount the live source paths into
@@ -22,14 +22,14 @@
 set -euo pipefail
 
 # WORKSPACE_DIRECTORY is the repo root mounted into the Supervisor's local
-# add-ons path (set in devcontainer.json).
+# apps path (set in devcontainer.json).
 REPO="${WORKSPACE_DIRECTORY:?WORKSPACE_DIRECTORY not set}"
 DEV="${REPO}/addon-dev"
 
-# Source paths the Docker build reads (builder COPY . . compiles these; the addon
+# Source paths the Docker build reads (builder COPY . . compiles these; the app
 # stage copies common/run.sh and assets). Bind-mounted live from the repo so
 # edits are reflected without re-staging. Everything else in the repo (.github,
-# docs, the other addon dirs, build output) is deliberately absent from the build
+# docs, the other app dirs, build output) is deliberately absent from the build
 # context: notably .github would otherwise make the Supervisor's recursive
 # build.<yaml|yml|json> scan pick up .github/workflows/build.yml and warn about a
 # deprecated build config.
@@ -62,7 +62,7 @@ stage() {
   done
 
   # config.yaml without the image: key, slug/name marked dev so it can't be
-  # confused with the published add-ons that show up in the same local repo. this
+  # confused with the published apps that show up in the same local repo. this
   # is generated, not mounted, because it differs from addon/config.yaml.
   sed -e '/^image:/d' \
       -e 's/^name:.*/name: Govee2MQTT Dev/' \
@@ -84,7 +84,7 @@ sudo --preserve-env=WORKSPACE_DIRECTORY bash "$0" --stage-impl
 # re-staging inside an already-running container stops here; the full
 # postStartCommand run continues into the Supervisor boot
 if [ "${1:-}" = "stage" ]; then
-  echo "addon-dev/ mounts are live; rebuild the Govee2MQTT Dev add-on to pick up edits"
+  echo "addon-dev/ mounts are live; rebuild the Govee2MQTT Dev app to pick up edits"
   exit 0
 fi
 

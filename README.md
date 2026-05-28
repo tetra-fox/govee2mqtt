@@ -33,7 +33,7 @@ Control your Govee devices via MQTT
 2. Go back to the App Store and you will see two new apps
    - **Govee2MQTT** - stable release that tracks tagged releases
    - **Govee2MQTT Edge** - tracks the `main` branch for testing purposes. This is not recommended as unstable and or half-working code may be committed to this branch, potentially breaking your device entries or automations.
-3. Install **Govee2MQTT**, set your Govee credentials and MQTT details on its Configuration tab (see [Configuration](docs/CONFIG.md)), then start the add-on.
+3. Install **Govee2MQTT**, set your Govee credentials and MQTT details on its Configuration tab (see [Configuration](docs/CONFIG.md)), then start the app.
 
 ### Docker
 

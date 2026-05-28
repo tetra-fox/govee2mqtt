@@ -14,7 +14,7 @@ is required. If you don't already have one, [you can find instructions on
 obtaining one
 here](https://developer.govee.com/reference/apply-you-govee-api-key).
 
-| CLI                | ENV                   | AddOn            | Purpose                                                  |
+| CLI                | ENV                   | App              | Purpose                                                  |
 | ------------------ | --------------------- | ---------------- | -------------------------------------------------------- |
 | `--govee-email`    | `GOVEE2MQTT_EMAIL`    | `govee_email`    | The email address you registered with your govee account |
 | `--govee-password` | `GOVEE2MQTT_PASSWORD` | `govee_password` | The password you registered for your govee account       |
@@ -42,7 +42,7 @@ In theory the LAN API is zero-configuration and auto-discovery, but this
 relies on your network supporting multicast-UDP, which is challenging
 on some networks, especially across wifi access points and routers.
 
-| CLI                  | ENV                                     | AddOn              | Purpose                                                                                                                                                                                                                                                                                                                                                                                                              |
+| CLI                  | ENV                                     | App                | Purpose                                                                                                                                                                                                                                                                                                                                                                                                              |
 | -------------------- | --------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--no-multicast`     | `GOVEE2MQTT_LAN_NO_MULTICAST=true`      | `no_multicast`     | Do not multicast discovery packets to the Govee multicast group `239.255.255.250`. It is not recommended to use this option.                                                                                                                                                                                                                                                                                         |
 | `--broadcast-all`    | `GOVEE2MQTT_LAN_BROADCAST_ALL=true`     | `broadcast_all`    | Enumerate all non-loopback network interfaces and send discovery packets to the broadcast address of each one, individually. This may be a good option if multicast-UDP doesn't work well on your network                                                                                                                                                                                                            |
@@ -59,7 +59,7 @@ In order to make your devices appear in Home Assistant, you will need to have co
 
 You will also need to configure `govee2mqtt` to use the same broker:
 
-| CLI                 | ENV                          | AddOn           | Purpose                                                                                                                                                                                                                       |
+| CLI                 | ENV                          | App             | Purpose                                                                                                                                                                                                                       |
 | ------------------- | ---------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--mqtt-host`       | `GOVEE2MQTT_MQTT_HOST`       | `mqtt_host`     | The host name or IP address of your mqtt broker. This should be the same broker that you have configured in Home Assistant.                                                                                                   |
 | `--mqtt-port`       | `GOVEE2MQTT_MQTT_PORT`       | `mqtt_port`     | The port number of the mqtt broker. The default is `1883`                                                                                                                                                                     |
@@ -71,6 +71,6 @@ You will also need to configure `govee2mqtt` to use the same broker:
 
 A device is reported unavailable in Home Assistant once `govee2mqtt` hasn't heard from it for `availability_timeout` seconds. Lower values detect an unplugged or offline device faster, at the cost of polling each device for its status more often over the (free) AWS IoT channel. The Govee cloud itself marks a device offline within about a minute.
 
-| CLI                      | ENV                              | AddOn                  | Purpose                                                                       |
+| CLI                      | ENV                              | App                    | Purpose                                                                       |
 | ------------------------ | -------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
 | `--availability-timeout` | `GOVEE2MQTT_AVAILABILITY_TIMEOUT`| `availability_timeout` | Seconds of silence before a device is reported offline. Defaults to `300`.    |
