@@ -1,8 +1,3 @@
-Portions of govee2mqtt originate from wez/govee2mqtt, which was published
-under the MIT License reproduced below. Those portions remain available under
-these terms. This fork as a whole is distributed under the GNU General Public
-License version 3 or later; see the LICENSE file.
-
 MIT License
 
 Copyright (c) 2024-Present Wez Furlong
