@@ -504,17 +504,21 @@ pub(crate) async fn ensure_projector_state_seeded(state: &StateHandle, device: &
 /// outlet index, or 15 for all outlets. Tries IoT first (REST relay for shared,
 /// direct MQTT for owned, decided in
 /// [`crate::service::iot::IotClient::set_socket_power`]); falls back to the
-/// platform API's per-outlet `socketToggleN` capability when IoT isn't
-/// available. LAN and BLE don't fit here: their power command is device-wide,
-/// not per-outlet.
+/// platform API's per-outlet `socketToggleN` capability when no IoT device info
+/// is available. LAN and BLE don't fit here: their power command is
+/// device-wide, not per-outlet.
+///
+/// Note: unlike the generic verbs we do not gate this on `iot_api_supported`.
+/// Per-outlet control is IoT-only by construction (the platform fallback below
+/// is documented as buggy for these SKUs), so a missing IoT-support quirk flag
+/// must not silently route us to the broken fallback.
 pub(crate) async fn socket_turn(
     state: &StateHandle,
     device: &Device,
     outlet: u8,
     on: bool,
 ) -> anyhow::Result<()> {
-    if device.iot_api_supported()
-        && let Some(iot) = state.get_iot_client().await
+    if let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
         log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
