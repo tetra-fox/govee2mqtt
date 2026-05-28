@@ -60,6 +60,7 @@ addon-edge-config:
     sed -i 's/^name:.*/name: Govee2MQTT Edge/' addon-edge/config.yaml
     sed -i 's/^slug:.*/slug: govee2mqtt_edge/' addon-edge/config.yaml
     sed -i 's/^version:.*/version: "edge"/' addon-edge/config.yaml
+    sed -i 's|^apparmor: true|stage: experimental\n\napparmor: true|' addon-edge/config.yaml
 
 # boot Home Assistant with the dev add-on built from local source, on
 # http://localhost:7123. the devcontainer's postStartCommand (bootstrap.sh)
