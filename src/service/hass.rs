@@ -66,7 +66,7 @@ impl HassArguments {
     pub fn opt_mqtt_host(&self) -> anyhow::Result<Option<String>> {
         match &self.mqtt_host {
             Some(h) => Ok(Some(h.to_string())),
-            None => opt_env_var("GOVEE2MQTT_MQTT_HOST"),
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_HOST")?),
         }
     }
 
@@ -89,14 +89,14 @@ impl HassArguments {
     pub fn mqtt_username(&self) -> anyhow::Result<Option<String>> {
         match self.mqtt_username.clone() {
             Some(u) => Ok(Some(u)),
-            None => opt_env_var("GOVEE2MQTT_MQTT_USER"),
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_USER")?),
         }
     }
 
     pub fn mqtt_password(&self) -> anyhow::Result<Option<String>> {
         match self.mqtt_password.clone() {
             Some(u) => Ok(Some(u)),
-            None => opt_env_var("GOVEE2MQTT_MQTT_PASSWORD"),
+            None => Ok(opt_env_var("GOVEE2MQTT_MQTT_PASSWORD")?),
         }
     }
 

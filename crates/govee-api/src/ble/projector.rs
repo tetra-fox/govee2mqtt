@@ -61,7 +61,7 @@ pub fn encode_capability(
     sku: &str,
     instance: &str,
     value: &JsonValue,
-) -> Option<anyhow::Result<Vec<String>>> {
+) -> Option<crate::error::ApiResult<Vec<String>>> {
     if sku != "H6093" {
         return None;
     }
@@ -78,7 +78,7 @@ pub fn encode_capability(
     Some(frames)
 }
 
-fn encode_toggle<T: 'static>(sku: &str, value: T) -> anyhow::Result<Vec<String>> {
+fn encode_toggle<T: 'static>(sku: &str, value: T) -> crate::error::ApiResult<Vec<String>> {
     Ok(Base64HexBytes::encode_for_sku(sku, &value)?.base64())
 }
 
@@ -469,7 +469,12 @@ pub(super) fn register(codecs: &mut Vec<PacketCodec>) {
     codecs.push(PacketCodec::new(
         &["H6093"],
         |v: &SetAuroraLaser| v.encode(),
-        |_| anyhow::bail!("SetAuroraLaser has no decode; state comes from aa 11/12/23/34"),
+        |_| {
+            Err(super::codec::CodecUnsupported(
+                "SetAuroraLaser has no decode; state comes from aa 11/12/23/34",
+            )
+            .into())
+        },
     ));
 }
 

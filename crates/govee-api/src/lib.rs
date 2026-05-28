@@ -2,7 +2,7 @@ mod env;
 pub use env::opt_env_var;
 
 mod error;
-pub use error::{BoxedSource, GoveeApiError, Result};
+pub use error::{ApiResult, BoxedSource, GoveeApiError};
 
 /// A process-wide reqwest client, built once. reqwest pools connections per
 /// origin internally, so reusing one client keeps TLS sessions and keep-alive

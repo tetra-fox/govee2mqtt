@@ -370,17 +370,17 @@ impl DeviceEntry {
         self.share == Some(1)
     }
 
-    pub fn device_topic(&self) -> anyhow::Result<&str> {
+    pub fn device_topic(&self) -> crate::error::ApiResult<&str> {
         self.device_ext
             .device_settings
             .topic
             .as_ref()
             .map(|t| t.as_str())
             .ok_or_else(|| {
-                anyhow::anyhow!(
+                crate::error::GoveeApiError::Unsupported(format!(
                     "device {id} has no topic, is it a BLE-only device?",
                     id = self.device
-                )
+                ))
             })
     }
 }

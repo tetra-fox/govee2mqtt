@@ -90,4 +90,4 @@ impl GoveeApiError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, GoveeApiError>;
+pub type ApiResult<T> = std::result::Result<T, GoveeApiError>;

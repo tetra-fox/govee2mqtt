@@ -74,7 +74,7 @@ impl SetSceneCode {
     }
 
     fn decode(_data: &[u8]) -> anyhow::Result<GoveeBlePacket> {
-        anyhow::bail!("SetSceneCode::decode is not implemented");
+        Err(super::codec::CodecUnsupported("SetSceneCode::decode is not implemented").into())
     }
 }
 

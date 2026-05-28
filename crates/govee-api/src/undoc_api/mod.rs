@@ -1,4 +1,5 @@
 use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
+use crate::error::{ApiResult, GoveeApiError};
 use crate::http::http_response_body;
 use crate::model::{DeviceCapability, DeviceCapabilityKind, DeviceParameters, EnumOption};
 use crate::opt_env_var;
@@ -8,6 +9,14 @@ use serde_json::{Value as JsonValue, json};
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
+
+fn network<E: std::fmt::Display>(context: &str) -> impl FnOnce(E) -> GoveeApiError + '_ {
+    move |err| GoveeApiError::Network(format!("{context}: {err}").into())
+}
+
+fn protocol<E: std::fmt::Display>(context: &str) -> impl FnOnce(E) -> GoveeApiError + '_ {
+    move |err| GoveeApiError::Protocol(format!("{context}: {err}"))
+}
 
 mod wire;
 pub use wire::*;
@@ -63,39 +72,41 @@ pub struct UndocApiArguments {
 }
 
 impl UndocApiArguments {
-    pub fn opt_email(&self) -> anyhow::Result<Option<String>> {
+    pub fn opt_email(&self) -> ApiResult<Option<String>> {
         match &self.govee_email {
             Some(key) => Ok(Some(key.to_string())),
             None => opt_env_var("GOVEE2MQTT_EMAIL"),
         }
     }
 
-    pub fn email(&self) -> anyhow::Result<String> {
+    pub fn email(&self) -> ApiResult<String> {
         self.opt_email()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Please specify the govee account email either via the \
-                --govee-email parameter or by setting $GOVEE2MQTT_EMAIL"
+            GoveeApiError::Auth(
+                "specify the Govee account email either via the \
+                 --govee-email parameter or by setting $GOVEE2MQTT_EMAIL"
+                    .into(),
             )
         })
     }
 
-    pub fn opt_password(&self) -> anyhow::Result<Option<String>> {
+    pub fn opt_password(&self) -> ApiResult<Option<String>> {
         match &self.govee_password {
             Some(key) => Ok(Some(key.to_string())),
             None => opt_env_var("GOVEE2MQTT_PASSWORD"),
         }
     }
 
-    pub fn password(&self) -> anyhow::Result<String> {
+    pub fn password(&self) -> ApiResult<String> {
         self.opt_password()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Please specify the govee account password either via the \
-                --govee-password parameter or by setting $GOVEE2MQTT_PASSWORD"
+            GoveeApiError::Auth(
+                "specify the Govee account password either via the \
+                 --govee-password parameter or by setting $GOVEE2MQTT_PASSWORD"
+                    .into(),
             )
         })
     }
 
-    pub fn api_client(&self) -> anyhow::Result<GoveeUndocumentedApi> {
+    pub fn api_client(&self) -> ApiResult<GoveeUndocumentedApi> {
         let email = self.email()?;
         let password = self.password()?;
         Ok(GoveeUndocumentedApi::new(email, password))
@@ -144,7 +155,7 @@ impl GoveeUndocumentedApi {
         req
     }
 
-    pub async fn get_iot_key(&self, token: &str) -> anyhow::Result<IotKey> {
+    pub async fn get_iot_key(&self, token: &str) -> ApiResult<IotKey> {
         cache_get(
             CacheGetOptions {
                 topic: "undoc-api",
@@ -162,7 +173,8 @@ impl GoveeUndocumentedApi {
                         Some(token),
                     )
                     .send()
-                    .await?;
+                    .await
+                    .map_err(network("requesting iot key"))?;
 
                 #[derive(Deserialize, Debug)]
                 #[allow(non_snake_case, dead_code)]
@@ -185,7 +197,7 @@ impl GoveeUndocumentedApi {
         crate::cache::invalidate_key("undoc-api", "account-info").ok();
     }
 
-    async fn login_account_impl(&self) -> anyhow::Result<CacheComputeResult<LoginAccountResponse>> {
+    async fn login_account_impl(&self) -> ApiResult<CacheComputeResult<LoginAccountResponse>> {
         let response = self
             .app_request(
                 Method::POST,
@@ -198,7 +210,8 @@ impl GoveeUndocumentedApi {
                 "client": &self.client_id,
             }))
             .send()
-            .await?;
+            .await
+            .map_err(network("login_account"))?;
 
         let resp: Response = http_response_body(response).await?;
 
@@ -214,7 +227,7 @@ impl GoveeUndocumentedApi {
         Ok(CacheComputeResult::WithTtl(resp.client, ttl))
     }
 
-    pub async fn login_account_cached(&self) -> anyhow::Result<LoginAccountResponse> {
+    pub async fn login_account_cached(&self) -> ApiResult<LoginAccountResponse> {
         cache_get(
             CacheGetOptions {
                 topic: "undoc-api",
@@ -242,14 +255,17 @@ impl GoveeUndocumentedApi {
         &self,
         device: &DeviceEntry,
         mut inner_msg: serde_json::Map<String, JsonValue>,
-    ) -> anyhow::Result<()> {
+    ) -> ApiResult<()> {
         let account = self.login_account_cached().await?;
         let account_topic = account.topic.to_string();
         let transaction = format!("v_{}000", ms_timestamp());
 
         inner_msg.insert("transaction".into(), json!(transaction));
         inner_msg.insert("accountTopic".into(), json!(account_topic));
-        let iot_msg = serde_json::to_string(&json!({ "msg": inner_msg }))?;
+        // The body is JSON we built locally from owned types; serialization
+        // cannot fail.
+        let iot_msg = serde_json::to_string(&json!({ "msg": inner_msg }))
+            .expect("locally-built JSON serializes");
 
         let mut body = serde_json::Map::new();
         body.insert("sku".into(), json!(device.sku));
@@ -270,16 +286,21 @@ impl GoveeUndocumentedApi {
             )
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(network("fx-device/iot-msgs"))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.invalidate_account_login();
+            return Err(GoveeApiError::Auth(
+                "fx-device/iot-msgs rejected the session token".into(),
+            ));
         }
-        anyhow::ensure!(
-            response.status().is_success(),
-            "fx-device/iot-msgs failed: {}",
-            response.status()
-        );
+        if !response.status().is_success() {
+            return Err(GoveeApiError::Api(format!(
+                "fx-device/iot-msgs failed: {}",
+                response.status()
+            )));
+        }
         Ok(())
     }
 
@@ -293,7 +314,7 @@ impl GoveeUndocumentedApi {
         &self,
         biz_type: i32,
         biz_key: &str,
-    ) -> anyhow::Result<Option<JsonValue>> {
+    ) -> ApiResult<Option<JsonValue>> {
         let account = self.login_account_cached().await?;
         let url = reqwest::Url::parse_with_params(
             "https://app2.govee.com/appsku/v1/devices/common-datas",
@@ -301,20 +322,26 @@ impl GoveeUndocumentedApi {
                 ("bizType", biz_type.to_string()),
                 ("bizKey", biz_key.to_string()),
             ],
-        )?;
+        )
+        .map_err(protocol("building common-datas url"))?;
         let response = self
             .app_request(Method::GET, url, Some(account.token.as_str()))
             .send()
-            .await?;
+            .await
+            .map_err(network("common-datas read"))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.invalidate_account_login();
+            return Err(GoveeApiError::Auth(
+                "common-datas read rejected the session token".into(),
+            ));
         }
-        anyhow::ensure!(
-            response.status().is_success(),
-            "common-datas read failed: {}",
-            response.status()
-        );
+        if !response.status().is_success() {
+            return Err(GoveeApiError::Api(format!(
+                "common-datas read failed: {}",
+                response.status()
+            )));
+        }
 
         #[derive(Deserialize)]
         struct Response {
@@ -331,10 +358,12 @@ impl GoveeUndocumentedApi {
             return Ok(None);
         };
         // The stored value is itself a JSON string.
-        Ok(Some(serde_json::from_str(&raw)?))
+        Ok(Some(
+            serde_json::from_str(&raw).map_err(protocol("parsing inner common-datas JSON"))?,
+        ))
     }
 
-    pub async fn get_device_list(&self, token: &str) -> anyhow::Result<DevicesResponse> {
+    pub async fn get_device_list(&self, token: &str) -> ApiResult<DevicesResponse> {
         // The app migrated device-list to this BFF GET; the legacy
         // POST /device/rest/devices/v1/list is gone from the app (v7.4.40).
         let response = self
@@ -344,10 +373,14 @@ impl GoveeUndocumentedApi {
                 Some(token),
             )
             .send()
-            .await?;
+            .await
+            .map_err(network("device list"))?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             self.invalidate_account_login();
+            return Err(GoveeApiError::Auth(
+                "device list rejected the session token".into(),
+            ));
         }
 
         let envelope: DeviceListEnvelope = http_response_body(response).await?;
@@ -361,7 +394,7 @@ impl GoveeUndocumentedApi {
     }
 
     /// Login to community-api.govee.com and return the bearer token
-    pub async fn login_community(&self) -> anyhow::Result<String> {
+    pub async fn login_community(&self) -> ApiResult<String> {
         cache_get(
             CacheGetOptions {
                 topic: "undoc-api",
@@ -383,7 +416,8 @@ impl GoveeUndocumentedApi {
                         "password": self.password,
                     }))
                     .send()
-                    .await?;
+                    .await
+                    .map_err(network("community login"))?;
 
                 #[derive(Deserialize, Debug)]
                 #[allow(non_snake_case, dead_code)]
@@ -415,7 +449,7 @@ impl GoveeUndocumentedApi {
         .await
     }
 
-    pub async fn get_scenes_for_device(sku: &str) -> anyhow::Result<Vec<LightEffectCategory>> {
+    pub async fn get_scenes_for_device(sku: &str) -> ApiResult<Vec<LightEffectCategory>> {
         let key = format!("scenes-{sku}");
 
         cache_get(
@@ -439,7 +473,8 @@ impl GoveeUndocumentedApi {
                     .header("AppVersion", APP_VERSION)
                     .header("User-Agent", user_agent())
                     .send()
-                    .await?;
+                    .await
+                    .map_err(network("scenes for device"))?;
 
                 let resp: LightEffectLibraryResponse = http_response_body(response).await?;
 
@@ -451,9 +486,7 @@ impl GoveeUndocumentedApi {
 
     /// This is present primarily to workaround a bug where Govee aren't returning
     /// the full list of scenes via their supported platform API
-    pub async fn synthesize_platform_api_scene_list(
-        sku: &str,
-    ) -> anyhow::Result<Vec<DeviceCapability>> {
+    pub async fn synthesize_platform_api_scene_list(sku: &str) -> ApiResult<Vec<DeviceCapability>> {
         let catalog = Self::get_scenes_for_device(sku).await?;
         let mut options = vec![];
 
@@ -601,7 +634,7 @@ impl GoveeUndocumentedApi {
     pub async fn get_saved_one_click_shortcuts(
         &self,
         community_token: &str,
-    ) -> anyhow::Result<Vec<OneClickComponent>> {
+    ) -> ApiResult<Vec<OneClickComponent>> {
         cache_get(
             CacheGetOptions {
                 topic: "undoc-api",
@@ -620,10 +653,14 @@ impl GoveeUndocumentedApi {
                     )
                     .timeout(Duration::from_secs(10))
                     .send()
-                    .await?;
+                    .await
+                    .map_err(network("one-click shortcuts"))?;
 
                 if response.status() == reqwest::StatusCode::UNAUTHORIZED {
                     self.invalidate_community_login();
+                    return Err(GoveeApiError::Auth(
+                        "one-click shortcuts rejected the community token".into(),
+                    ));
                 }
 
                 let resp: OneClickResponse = http_response_body(response).await?;
@@ -634,7 +671,7 @@ impl GoveeUndocumentedApi {
         .await
     }
 
-    pub async fn parse_one_clicks(&self) -> anyhow::Result<Vec<ParsedOneClick>> {
+    pub async fn parse_one_clicks(&self) -> ApiResult<Vec<ParsedOneClick>> {
         let token = self.login_community().await?;
         let res = self.get_saved_one_click_shortcuts(&token).await?;
         let mut result = vec![];

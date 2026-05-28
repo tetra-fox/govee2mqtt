@@ -5,16 +5,20 @@
 // with a higher number, Govee HTTP API v2 that is described at
 // <https://govee.readme.io/reference/getlightdeviceinfo>
 
+use crate::error::{ApiResult, GoveeApiError};
 use crate::http::http_response_body;
 use crate::opt_env_var;
 use crate::temperature::{
     TemperatureConstraints, TemperatureScale, TemperatureUnits, TemperatureValue,
 };
-use anyhow::anyhow;
 use reqwest::Method;
 use std::str::FromStr;
 use std::time::Duration;
 use uuid::Uuid;
+
+fn network<E: std::fmt::Display>(context: &str) -> impl FnOnce(E) -> GoveeApiError + '_ {
+    move |err| GoveeApiError::Network(format!("{context}: {err}").into())
+}
 
 mod client;
 mod wire;
@@ -50,23 +54,24 @@ pub struct GoveeApiArguments {
 }
 
 impl GoveeApiArguments {
-    pub fn opt_api_key(&self) -> anyhow::Result<Option<String>> {
+    pub fn opt_api_key(&self) -> ApiResult<Option<String>> {
         match &self.api_key {
             Some(key) => Ok(Some(key.to_string())),
             None => opt_env_var("GOVEE2MQTT_API_KEY"),
         }
     }
 
-    pub fn api_key(&self) -> anyhow::Result<String> {
+    pub fn api_key(&self) -> ApiResult<String> {
         self.opt_api_key()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Please specify the api key either via the \
-                --api-key parameter or by setting $GOVEE2MQTT_API_KEY"
+            GoveeApiError::Auth(
+                "specify the api key either via the \
+                 --api-key parameter or by setting $GOVEE2MQTT_API_KEY"
+                    .into(),
             )
         })
     }
 
-    pub fn api_client(&self) -> anyhow::Result<GoveeApiClient> {
+    pub fn api_client(&self) -> ApiResult<GoveeApiClient> {
         let key = self.api_key()?;
         Ok(GoveeApiClient::new(key))
     }
@@ -85,13 +90,14 @@ impl GoveeApiClient {
     async fn get_request_with_json_response<T: reqwest::IntoUrl, R: serde::de::DeserializeOwned>(
         &self,
         url: T,
-    ) -> anyhow::Result<R> {
+    ) -> ApiResult<R> {
         let response = crate::http_client()
             .request(Method::GET, url)
             .timeout(Duration::from_secs(60))
             .header("Govee-API-Key", &self.key)
             .send()
-            .await?;
+            .await
+            .map_err(network("platform GET"))?;
 
         http_response_body(response).await
     }
@@ -105,14 +111,15 @@ impl GoveeApiClient {
         method: Method,
         url: T,
         body: &B,
-    ) -> anyhow::Result<R> {
+    ) -> ApiResult<R> {
         let response = crate::http_client()
             .request(method, url)
             .timeout(Duration::from_secs(60))
             .header("Govee-API-Key", &self.key)
             .json(body)
             .send()
-            .await?;
+            .await
+            .map_err(network("platform request"))?;
 
         http_response_body(response).await
     }
@@ -126,7 +133,7 @@ pub fn sort_and_dedup_scenes(mut scenes: Vec<String>) -> Vec<String> {
 
 pub fn parse_temperature_constraints(
     instance: &DeviceCapability,
-) -> anyhow::Result<TemperatureConstraints> {
+) -> ApiResult<TemperatureConstraints> {
     let units = instance
         .struct_field_by_name("unit")
         .and_then(|field| {
@@ -139,7 +146,7 @@ pub fn parse_temperature_constraints(
 
     let temperature = instance
         .struct_field_by_name("temperature")
-        .ok_or_else(|| anyhow!("no temperature field in {instance:?}"))?;
+        .ok_or_else(|| GoveeApiError::Protocol(format!("no temperature field in {instance:?}")))?;
     match &temperature.field_type {
         DeviceParameters::Integer { unit, range } => {
             let range_units = unit
@@ -155,8 +162,8 @@ pub fn parse_temperature_constraints(
                 max: max.as_unit(units),
             })
         }
-        _ => {
-            anyhow::bail!("Unexpected temperature value in {instance:?}");
-        }
+        _ => Err(GoveeApiError::Protocol(format!(
+            "unexpected temperature value in {instance:?}"
+        ))),
     }
 }

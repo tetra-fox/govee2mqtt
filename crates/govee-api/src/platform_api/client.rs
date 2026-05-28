@@ -9,16 +9,24 @@ use super::{
     parse_temperature_constraints, sort_and_dedup_scenes,
 };
 use crate::cache::{CacheComputeResult, CacheGetOptions, cache_get};
+use crate::error::{ApiResult, GoveeApiError};
 use crate::model::*;
 use crate::temperature::{TemperatureUnits, TemperatureValue};
 use crate::undoc_api::GoveeUndocumentedApi;
-use anyhow::Context;
 use reqwest::Method;
 use serde_json::{Value as JsonValue, json};
 use std::time::Duration;
 
+fn unsupported(message: impl Into<String>) -> GoveeApiError {
+    GoveeApiError::Unsupported(message.into())
+}
+
+fn protocol(message: impl Into<String>) -> GoveeApiError {
+    GoveeApiError::Protocol(message.into())
+}
+
 impl GoveeApiClient {
-    pub async fn get_devices(&self) -> anyhow::Result<Vec<HttpDeviceInfo>> {
+    pub async fn get_devices(&self) -> ApiResult<Vec<HttpDeviceInfo>> {
         cache_get(
             CacheGetOptions {
                 topic: "http-api",
@@ -37,14 +45,14 @@ impl GoveeApiClient {
         .await
     }
 
-    pub async fn get_device_by_id(&self, id: &str) -> anyhow::Result<HttpDeviceInfo> {
+    pub async fn get_device_by_id(&self, id: &str) -> ApiResult<HttpDeviceInfo> {
         let devices = self.get_devices().await?;
         for d in devices {
             if d.device == id {
                 return Ok(d);
             }
         }
-        anyhow::bail!("device {id} not found");
+        Err(unsupported(format!("device {id} not found")))
     }
 
     pub async fn control_device<V: Into<JsonValue>>(
@@ -52,7 +60,7 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         capability: &DeviceCapability,
         value: V,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let url = endpoint("/router/api/v1/device/control");
         let request = ControlDeviceRequest {
             request_id: new_request_id(),
@@ -76,10 +84,7 @@ impl GoveeApiClient {
         Ok(resp.capability)
     }
 
-    pub async fn get_device_state(
-        &self,
-        device: &HttpDeviceInfo,
-    ) -> anyhow::Result<HttpDeviceState> {
+    pub async fn get_device_state(&self, device: &HttpDeviceInfo) -> ApiResult<HttpDeviceState> {
         let url = endpoint("/router/api/v1/device/state");
         let request = GetDeviceStateRequest {
             request_id: new_request_id(),
@@ -99,7 +104,7 @@ impl GoveeApiClient {
     pub async fn get_device_diy_scenes(
         &self,
         device: &HttpDeviceInfo,
-    ) -> anyhow::Result<Vec<DeviceCapability>> {
+    ) -> ApiResult<Vec<DeviceCapability>> {
         if !device.supports_dynamic_scenes() {
             return Ok(vec![]);
         }
@@ -137,7 +142,7 @@ impl GoveeApiClient {
     pub async fn get_device_scenes(
         &self,
         device: &HttpDeviceInfo,
-    ) -> anyhow::Result<Vec<DeviceCapability>> {
+    ) -> ApiResult<Vec<DeviceCapability>> {
         if !device.supports_dynamic_scenes() {
             return Ok(vec![]);
         }
@@ -175,7 +180,7 @@ impl GoveeApiClient {
     pub async fn get_scene_caps(
         &self,
         device: &HttpDeviceInfo,
-    ) -> anyhow::Result<Vec<DeviceCapability>> {
+    ) -> ApiResult<Vec<DeviceCapability>> {
         let mut result = vec![];
 
         // These three fetches are independent; run them concurrently.
@@ -189,7 +194,7 @@ impl GoveeApiClient {
         let undoc_caps = match undoc_caps {
             Ok(caps) => caps,
             Err(err) => {
-                log::warn!("synthesize_platform_api_scene_list: {err:#}");
+                log::warn!("synthesize_platform_api_scene_list: {err}");
                 vec![]
             }
         };
@@ -234,13 +239,10 @@ impl GoveeApiClient {
         Ok(result)
     }
 
-    pub async fn list_scene_names(&self, device: &HttpDeviceInfo) -> anyhow::Result<Vec<String>> {
+    pub async fn list_scene_names(&self, device: &HttpDeviceInfo) -> ApiResult<Vec<String>> {
         let mut result = vec![];
 
-        let caps = self
-            .get_scene_caps(device)
-            .await
-            .context("list_scene_names: get_scene_caps")?;
+        let caps = self.get_scene_caps(device).await?;
         for cap in caps {
             match &cap.parameters {
                 Some(DeviceParameters::Enum { options }) => {
@@ -248,7 +250,11 @@ impl GoveeApiClient {
                         result.push(opt.name.to_string());
                     }
                 }
-                _ => anyhow::bail!("list_scene_names: unexpected type {cap:#?}"),
+                _ => {
+                    return Err(protocol(format!(
+                        "list_scene_names: unexpected scene capability shape {cap:#?}"
+                    )));
+                }
             }
         }
 
@@ -278,7 +284,7 @@ impl GoveeApiClient {
         &self,
         device: &HttpDeviceInfo,
         scene: &str,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         self.set_scene_by_name_with_music(device, scene, 100, true)
             .await
     }
@@ -292,10 +298,9 @@ impl GoveeApiClient {
         scene: &str,
         sensitivity: u8,
         auto_color: bool,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         if scene.is_empty() {
-            // Can't set no scene
-            anyhow::bail!("Cannot set scene to no-scene");
+            return Err(unsupported("cannot set scene to the empty no-scene value"));
         }
 
         if let Some(music_mode) = scene.strip_prefix("Music: ")
@@ -316,10 +321,16 @@ impl GoveeApiClient {
                         }
                     }
                 }
-                _ => anyhow::bail!("set_scene_by_name: unexpected type {cap:#?}"),
+                _ => {
+                    return Err(protocol(format!(
+                        "set_scene_by_name: unexpected scene capability shape {cap:#?}"
+                    )));
+                }
             }
         }
-        anyhow::bail!("Scene '{scene}' is not available for this device");
+        Err(unsupported(format!(
+            "scene '{scene}' is not available for this device"
+        )))
     }
 
     /// Activate one of the device's music modes. The platform API musicMode
@@ -334,10 +345,10 @@ impl GoveeApiClient {
         sensitivity: u8,
         auto_color: bool,
         rgb: Option<u32>,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("musicMode")
-            .ok_or_else(|| anyhow::anyhow!("device has no musicMode"))?;
+            .ok_or_else(|| unsupported("device has no musicMode capability"))?;
 
         let mode_value = match cap.struct_field_by_name("musicMode").map(|f| &f.field_type) {
             Some(DeviceParameters::Enum { options }) => options
@@ -345,9 +356,15 @@ impl GoveeApiClient {
                 .find(|opt| opt.name.eq_ignore_ascii_case(mode))
                 .map(|opt| opt.value.clone())
                 .ok_or_else(|| {
-                    anyhow::anyhow!("music mode '{mode}' is not available for this device")
+                    unsupported(format!(
+                        "music mode '{mode}' is not available for this device"
+                    ))
                 })?,
-            _ => anyhow::bail!("device musicMode capability has no musicMode enum field"),
+            _ => {
+                return Err(protocol(
+                    "device musicMode capability has no musicMode enum field",
+                ));
+            }
         };
 
         let value = music_mode_value(mode_value, sensitivity, auto_color, rgb);
@@ -360,10 +377,10 @@ impl GoveeApiClient {
         instance_name: &str,
         target: TemperatureValue,
         auto_stop: Option<bool>,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance(instance_name)
-            .ok_or_else(|| anyhow::anyhow!("device has no {instance_name}"))?;
+            .ok_or_else(|| unsupported(format!("device has no {instance_name} capability")))?;
 
         let constraints = parse_temperature_constraints(cap)?.as_unit(TemperatureUnits::Celsius);
 
@@ -394,10 +411,10 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         work_mode: i64,
         value: i64,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("workMode")
-            .ok_or_else(|| anyhow::anyhow!("device has no workMode"))?;
+            .ok_or_else(|| unsupported("device has no workMode capability"))?;
 
         let value = json!({
             "workMode": work_mode,
@@ -412,14 +429,14 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         instance: &str,
         on: bool,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance(instance)
-            .ok_or_else(|| anyhow::anyhow!("device has no {instance}"))?;
+            .ok_or_else(|| unsupported(format!("device has no {instance} capability")))?;
 
         let value = cap
             .enum_parameter_by_name(if on { "on" } else { "off" })
-            .ok_or_else(|| anyhow::anyhow!("{instance} has no on/off!?"))?;
+            .ok_or_else(|| protocol(format!("{instance} capability has no on/off enum value")))?;
 
         self.control_device(device, cap, value).await
     }
@@ -428,7 +445,7 @@ impl GoveeApiClient {
         &self,
         device: &HttpDeviceInfo,
         on: bool,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         self.set_toggle_state(device, "powerSwitch", on).await
     }
 
@@ -436,16 +453,16 @@ impl GoveeApiClient {
         &self,
         device: &HttpDeviceInfo,
         percent: u8,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("brightness")
-            .ok_or_else(|| anyhow::anyhow!("device has no brightness"))?;
+            .ok_or_else(|| unsupported("device has no brightness capability"))?;
         let value = match &cap.parameters {
             Some(DeviceParameters::Integer {
                 range: IntegerRange { min, max, .. },
                 ..
             }) => (percent as u32).max(*min).min(*max),
-            _ => anyhow::bail!("unexpected parameter type for brightness"),
+            _ => return Err(protocol("unexpected parameter type for brightness")),
         };
         self.control_device(device, cap, value).await
     }
@@ -454,16 +471,16 @@ impl GoveeApiClient {
         &self,
         device: &HttpDeviceInfo,
         kelvin: u32,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("colorTemperatureK")
-            .ok_or_else(|| anyhow::anyhow!("device has no colorTemperatureK"))?;
+            .ok_or_else(|| unsupported("device has no colorTemperatureK capability"))?;
         let value = match &cap.parameters {
             Some(DeviceParameters::Integer {
                 range: IntegerRange { min, max, .. },
                 ..
             }) => (kelvin).max(*min).min(*max),
-            _ => anyhow::bail!("unexpected parameter type for colorTemperatureK"),
+            _ => return Err(protocol("unexpected parameter type for colorTemperatureK")),
         };
         self.control_device(device, cap, value).await
     }
@@ -474,10 +491,10 @@ impl GoveeApiClient {
         r: u8,
         g: u8,
         b: u8,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("colorRgb")
-            .ok_or_else(|| anyhow::anyhow!("device has no colorRgb"))?;
+            .ok_or_else(|| unsupported("device has no colorRgb capability"))?;
         let value = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
         self.control_device(device, cap, value).await
     }
@@ -489,10 +506,10 @@ impl GoveeApiClient {
         r: u8,
         g: u8,
         b: u8,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("segmentedColorRgb")
-            .ok_or_else(|| anyhow::anyhow!("device has no segmentedColorRgb"))?;
+            .ok_or_else(|| unsupported("device has no segmentedColorRgb capability"))?;
         let value = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
         self.control_device(
             device,
@@ -510,14 +527,14 @@ impl GoveeApiClient {
         device: &HttpDeviceInfo,
         segment: u32,
         percent: u8,
-    ) -> anyhow::Result<ControlDeviceResponseCapability> {
+    ) -> ApiResult<ControlDeviceResponseCapability> {
         let cap = device
             .capability_by_instance("segmentedBrightness")
-            .ok_or_else(|| anyhow::anyhow!("device has no segmentedBrightness"))?;
+            .ok_or_else(|| unsupported("device has no segmentedBrightness capability"))?;
 
         let (min, max) = device
             .supports_segmented_brightness()
-            .ok_or_else(|| anyhow::anyhow!("device doesnt support segmented brightness"))?;
+            .ok_or_else(|| unsupported("device does not support segmented brightness"))?;
 
         let value = (percent as u32).max(min).min(max);
 

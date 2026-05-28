@@ -56,7 +56,7 @@ impl IotClient {
         if device.is_shared() {
             // The device ignores direct MQTT publishes from a guest account;
             // relay through Govee's REST API, which carries the gas token.
-            return self.undoc.control_device(device, msg).await;
+            return Ok(self.undoc.control_device(device, msg).await?);
         }
 
         let device_topic = device.device_topic()?;

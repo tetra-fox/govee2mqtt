@@ -6,12 +6,24 @@
 //! per-SKU codec registry; the actual per-device command structs and their
 //! registrations live in the sibling family modules (humidifier, light, ...).
 
+use crate::error::{ApiResult, GoveeApiError};
 use anyhow::anyhow;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use serde::{Deserialize, Deserializer};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Marker error returned by codec closures that intentionally do not
+/// implement an operation (currently: decoders for write-only command
+/// frames). The codec boundary downcasts on this so the resulting public
+/// `GoveeApiError` is `Unsupported` rather than `Protocol`. The closure
+/// signature stays `anyhow::Result` so the rest of the codec machinery
+/// is undisturbed; this is the one error category that needs to round-trip
+/// through anyhow without losing its identity.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct CodecUnsupported(pub(crate) &'static str);
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct HexBytes(pub(crate) Vec<u8>);
@@ -38,10 +50,19 @@ impl PacketCodec {
     ) -> Self {
         Self {
             encode: Box::new(move |any| {
-                let type_id = TypeId::of::<T>();
-                let value = any.downcast_ref::<T>().ok_or_else(|| {
-                    anyhow!("cannot downcast to {type_id:?} in PacketCodec encoder")
-                })?;
+                // This downcast cannot fail. PacketCodec::new is the only
+                // constructor and welds the encoder's captured T to the
+                // type_id field via a single type parameter, so T here is
+                // the same T whose TypeId was stored at line 52.
+                // PacketManager keys its table by TypeId and resolves with
+                // TypeId::of::<T_caller>(), so a successful lookup proves
+                // T_caller == T_encoder, and TypeIds are unique per type.
+                let Some(value) = any.downcast_ref::<T>() else {
+                    unreachable!(
+                        "PacketCodec::new welds type_id to encoder T; \
+                         downcast cannot fail if the registry lookup succeeded"
+                    );
+                };
                 (encode)(value)
             }),
             decode: Box::new(decode),
@@ -75,12 +96,12 @@ impl PacketManager {
         })
     }
 
-    fn resolve_by_sku(&self, sku: &str, type_id: &TypeId) -> anyhow::Result<Arc<PacketCodec>> {
+    fn resolve_by_sku(&self, sku: &str, type_id: &TypeId) -> ApiResult<Arc<PacketCodec>> {
         let map = self.map_for_sku(sku);
 
-        map.get(type_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("sku {sku} has no codec for type {type_id:?}"))
+        map.get(type_id).cloned().ok_or_else(|| {
+            GoveeApiError::Unsupported(format!("sku {sku} has no codec for type {type_id:?}"))
+        })
     }
 
     pub fn decode_for_sku(&self, sku: &str, data: &[u8]) -> GoveeBlePacket {
@@ -95,11 +116,11 @@ impl PacketManager {
         GoveeBlePacket::Generic(HexBytes(data.to_vec()))
     }
 
-    pub fn encode_for_sku<T: 'static>(&self, sku: &str, value: &T) -> anyhow::Result<Vec<u8>> {
+    pub fn encode_for_sku<T: 'static>(&self, sku: &str, value: &T) -> ApiResult<Vec<u8>> {
         let type_id = TypeId::of::<T>();
         let codec = self.resolve_by_sku(sku, &type_id)?;
 
-        (codec.encode)(value)
+        (codec.encode)(value).map_err(classify_codec_error)
     }
 
     pub fn new() -> Self {
@@ -114,6 +135,17 @@ impl PacketManager {
             all_codecs: all_codecs.into_iter().map(Arc::new).collect(),
         }
     }
+}
+
+/// Map a codec closure's anyhow error to a public variant. The two codec
+/// closures that bail with `CodecUnsupported` (decoders for write-only
+/// frames) become `GoveeApiError::Unsupported`; everything else from the
+/// codec layer is a wire-format failure and becomes `Protocol`.
+fn classify_codec_error(err: anyhow::Error) -> GoveeApiError {
+    if let Some(unsupported) = err.downcast_ref::<CodecUnsupported>() {
+        return GoveeApiError::Unsupported(unsupported.0.to_string());
+    }
+    GoveeApiError::Protocol(format!("{err:#}"))
 }
 
 impl Default for PacketManager {
@@ -259,7 +291,7 @@ impl Base64HexBytes {
         super::MGR.decode_for_sku(sku, &self.0.0)
     }
 
-    pub fn encode_for_sku<T: 'static>(sku: &str, value: &T) -> anyhow::Result<Self> {
+    pub fn encode_for_sku<T: 'static>(sku: &str, value: &T) -> ApiResult<Self> {
         super::MGR
             .encode_for_sku(sku, value)
             .map(|bytes| Base64HexBytes(HexBytes(bytes)))
@@ -286,7 +318,7 @@ impl Base64HexBytes {
 }
 
 impl<'de> Deserialize<'de> for Base64HexBytes {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, <D as Deserializer<'de>>::Error>
     where
         D: Deserializer<'de>,
     {

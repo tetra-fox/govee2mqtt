@@ -72,12 +72,14 @@ impl TemperatureScale {
 }
 
 impl FromStr for TemperatureScale {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> anyhow::Result<TemperatureScale> {
+    type Err = crate::error::GoveeApiError;
+    fn from_str(s: &str) -> crate::error::ApiResult<TemperatureScale> {
         match s {
             "c" | "C" | "°c" | "°C" | "Celsius" | "celsius" => Ok(Self::Celsius),
             "f" | "F" | "°f" | "°F" | "Fahrenheit" | "fahrenheit" => Ok(Self::Fahrenheit),
-            _ => anyhow::bail!("Unknown temperature scale {s}"),
+            _ => Err(crate::error::GoveeApiError::Config(format!(
+                "unknown temperature scale {s}"
+            ))),
         }
     }
 }
@@ -151,8 +153,10 @@ impl TemperatureValue {
     pub fn parse_with_optional_scale(
         s: &str,
         scale: Option<TemperatureScale>,
-    ) -> anyhow::Result<Self> {
-        let (value, optional_scale) = atoi(s)?;
+    ) -> crate::error::ApiResult<Self> {
+        let (value, optional_scale) = atoi(s).map_err(|err: <f64 as FromStr>::Err| {
+            crate::error::GoveeApiError::Config(format!("parsing temperature {s}: {err}"))
+        })?;
 
         let scale: TemperatureScale = if optional_scale.is_empty() {
             scale.unwrap_or(TemperatureScale::Celsius)
@@ -224,7 +228,7 @@ mod test {
             TemperatureValue::parse_with_optional_scale("23frogs", None)
                 .unwrap_err()
                 .to_string(),
-            "Unknown temperature scale frogs"
+            "config: unknown temperature scale frogs"
         );
     }
 

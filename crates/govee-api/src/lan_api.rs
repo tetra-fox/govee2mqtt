@@ -1,8 +1,8 @@
 use crate::ble::{Base64HexBytes, SetSceneCode};
+use crate::error::{ApiResult, GoveeApiError};
 use crate::http::from_json;
 use crate::opt_env_var;
 use crate::undoc_api::GoveeUndocumentedApi;
-use anyhow::Context;
 use if_addrs::IfAddr;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -13,6 +13,10 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::time::Instant;
+
+fn lan<E: std::fmt::Display>(context: &str) -> impl FnOnce(E) -> GoveeApiError + '_ {
+    move |err| GoveeApiError::Lan(format!("{context}: {err}"))
+}
 
 // <https://app-h5.govee.com/user-manual/wlan-guide>
 
@@ -56,7 +60,7 @@ pub struct LanDiscoArguments {
     disco_timeout: u64,
 }
 
-pub fn truthy(s: &str) -> anyhow::Result<bool> {
+pub fn truthy(s: &str) -> ApiResult<bool> {
     if s.eq_ignore_ascii_case("true")
         || s.eq_ignore_ascii_case("yes")
         || s.eq_ignore_ascii_case("on")
@@ -70,12 +74,14 @@ pub fn truthy(s: &str) -> anyhow::Result<bool> {
     {
         Ok(false)
     } else {
-        anyhow::bail!("invalid value '{s}', expected true/yes/on/1 or false/no/off/0");
+        Err(GoveeApiError::Config(format!(
+            "invalid value '{s}', expected true/yes/on/1 or false/no/off/0"
+        )))
     }
 }
 
 impl LanDiscoArguments {
-    pub fn to_disco_options(&self) -> anyhow::Result<DiscoOptions> {
+    pub fn to_disco_options(&self) -> ApiResult<DiscoOptions> {
         let mut scan_names = self.scan.clone();
         let mut options = DiscoOptions {
             enable_multicast: !self.no_multicast,
@@ -114,10 +120,10 @@ impl LanDiscoArguments {
                         }
                     }
                     Err(err2) => {
-                        anyhow::bail!(
+                        return Err(GoveeApiError::Config(format!(
                             "{name} could not be parsed as either an \
-                            IpAddr ({err1:#}) or a DNS name ({err2:#}"
-                        );
+                             IpAddr ({err1}) or a DNS name ({err2})"
+                        )));
                     }
                 },
             }
@@ -126,7 +132,7 @@ impl LanDiscoArguments {
         Ok(options)
     }
 
-    pub fn disco_timeout(&self) -> anyhow::Result<u64> {
+    pub fn disco_timeout(&self) -> ApiResult<u64> {
         if let Some(v) = opt_env_var("GOVEE2MQTT_LAN_DISCO_TIMEOUT")? {
             Ok(v)
         } else {
@@ -215,28 +221,36 @@ pub struct LanDevice {
 }
 
 impl LanDevice {
-    pub async fn send_request(&self, msg: Request) -> anyhow::Result<()> {
+    pub async fn send_request(&self, msg: Request) -> ApiResult<()> {
         log::trace!("LanDevice::send_request to {:?} {msg:?}", self.ip);
-        let client = udp_socket_for_target(self.ip).await?;
-        let data = serde_json::to_string(&RequestMessage { msg })?;
-        client.send_to(data.as_bytes(), (self.ip, CMD_PORT)).await?;
+        let client = udp_socket_for_target(self.ip)
+            .await
+            .map_err(lan("UDP bind for send_request"))?;
+        // Request is an internally-defined enum; serialization cannot fail
+        // for the variants we construct here.
+        let data = serde_json::to_string(&RequestMessage { msg })
+            .expect("Request enum is always serializable");
+        client
+            .send_to(data.as_bytes(), (self.ip, CMD_PORT))
+            .await
+            .map_err(lan("UDP send_to"))?;
 
         Ok(())
     }
 
-    pub async fn send_turn(&self, on: bool) -> anyhow::Result<()> {
+    pub async fn send_turn(&self, on: bool) -> ApiResult<()> {
         self.send_request(Request::Turn {
             value: if on { 1 } else { 0 },
         })
         .await
     }
 
-    pub async fn send_brightness(&self, percent: u8) -> anyhow::Result<()> {
+    pub async fn send_brightness(&self, percent: u8) -> ApiResult<()> {
         self.send_request(Request::Brightness { value: percent })
             .await
     }
 
-    pub async fn send_color_rgb(&self, color: DeviceColor) -> anyhow::Result<()> {
+    pub async fn send_color_rgb(&self, color: DeviceColor) -> ApiResult<()> {
         self.send_request(Request::Color {
             color,
             color_temperature_kelvin: 0,
@@ -244,7 +258,7 @@ impl LanDevice {
         .await
     }
 
-    pub async fn send_real(&self, commands: Vec<String>) -> anyhow::Result<()> {
+    pub async fn send_real(&self, commands: Vec<String>) -> ApiResult<()> {
         self.send_request(Request::PtReal { command: commands })
             .await
     }
@@ -252,7 +266,7 @@ impl LanDevice {
     pub async fn send_color_temperature_kelvin(
         &self,
         color_temperature_kelvin: u32,
-    ) -> anyhow::Result<()> {
+    ) -> ApiResult<()> {
         self.send_request(Request::Color {
             color: DeviceColor { r: 0, g: 0, b: 0 },
             color_temperature_kelvin,
@@ -260,7 +274,7 @@ impl LanDevice {
         .await
     }
 
-    pub async fn set_scene_by_name(&self, scene_name: &str) -> anyhow::Result<()> {
+    pub async fn set_scene_by_name(&self, scene_name: &str) -> ApiResult<()> {
         for category in GoveeUndocumentedApi::get_scenes_for_device(&self.sku).await? {
             for scene in category.scenes {
                 for effect in scene.light_effects {
@@ -280,13 +294,16 @@ impl LanDevice {
             }
         }
 
-        anyhow::bail!("unable to set scene {scene_name} for {}", self.device);
+        Err(GoveeApiError::Unsupported(format!(
+            "scene {scene_name} is not available for {}",
+            self.device
+        )))
     }
 }
 
 pub fn boolean_int<'de, D: serde::de::Deserializer<'de>>(
     deserializer: D,
-) -> Result<bool, D::Error> {
+) -> std::result::Result<bool, D::Error> {
     Ok(match serde::de::Deserialize::deserialize(deserializer)? {
         JsonValue::Bool(b) => b,
         JsonValue::Number(num) => {
@@ -394,7 +411,7 @@ impl Broadcaster {
     }
 }
 
-async fn send_scan(options: &DiscoOptions) -> anyhow::Result<()> {
+async fn send_scan(options: &DiscoOptions) -> ApiResult<()> {
     let mut addresses = options.additional_addresses.clone();
     if options.enable_multicast {
         addresses.push(MULTICAST);
@@ -453,16 +470,19 @@ async fn send_scan(options: &DiscoOptions) -> anyhow::Result<()> {
 async fn lan_disco(
     options: DiscoOptions,
     inner: Arc<ClientInner>,
-) -> anyhow::Result<Receiver<LanDevice>> {
-    let listen = UdpSocket::bind(("0.0.0.0", LISTEN_PORT)).await.context(
-        "Cannot bind to UDP Port 4002, which is required \
-        for the Govee LAN API to function. Most likely cause is that you \
-        are running another integration (perhaps `Govee LAN Control`, or \
-        `homebridge-govee`) that is already bound to that port. \
-        Both cannot run on the same machine at the same time. \
-        Consider disabling `Govee LAN Control` or setting `lanDisable` in \
-        `homebridge-govee`.",
-    )?;
+) -> ApiResult<Receiver<LanDevice>> {
+    let listen = UdpSocket::bind(("0.0.0.0", LISTEN_PORT))
+        .await
+        .map_err(|err| {
+            GoveeApiError::Lan(format!(
+                "cannot bind to UDP port {LISTEN_PORT}, which is required for the \
+             Govee LAN API to function. Most likely cause is that another \
+             integration (perhaps `Govee LAN Control`, or `homebridge-govee`) \
+             is already bound to that port. Both cannot run on the same machine \
+             at the same time. Consider disabling `Govee LAN Control` or \
+             setting `lanDisable` in `homebridge-govee`. Underlying error: {err}"
+            ))
+        })?;
     let (tx, rx) = channel(8);
 
     async fn process_packet(
@@ -470,14 +490,13 @@ async fn lan_disco(
         data: &[u8],
         inner: &Arc<ClientInner>,
         tx: &Sender<LanDevice>,
-    ) -> anyhow::Result<()> {
+    ) -> ApiResult<()> {
         log::trace!(
             "process_packet: addr={addr:?} data={}",
             String::from_utf8_lossy(data)
         );
 
-        let mut response: ResponseWrapper = from_json(data)
-            .with_context(|| format!("Parsing: {}", String::from_utf8_lossy(data)))?;
+        let mut response: ResponseWrapper = from_json(data)?;
 
         // This is frustrating; some newer devices don't emit the ip field
         // as defined in the spec.  What we do to deal with this is default
@@ -504,7 +523,7 @@ async fn lan_disco(
         }
 
         if let Response::Scan(info) = response.msg {
-            tx.send(info).await?;
+            tx.send(info).await.map_err(lan("forwarding scan result"))?;
         }
 
         Ok(())
@@ -515,7 +534,7 @@ async fn lan_disco(
         listen: UdpSocket,
         tx: Sender<LanDevice>,
         inner: Arc<ClientInner>,
-    ) -> anyhow::Result<()> {
+    ) -> ApiResult<()> {
         send_scan(options).await?;
 
         let mut retry_interval = Duration::from_secs(2);
@@ -545,7 +564,7 @@ async fn lan_disco(
 
     tokio::spawn(async move {
         if let Err(err) = run_disco(&options, listen, tx, inner).await {
-            log::error!("Error at the disco: {err:#}");
+            log::error!("Error at the disco: {err}");
         }
     });
 
@@ -553,18 +572,18 @@ async fn lan_disco(
 }
 
 impl Client {
-    pub async fn new(options: DiscoOptions) -> anyhow::Result<(Self, Receiver<LanDevice>)> {
+    pub async fn new(options: DiscoOptions) -> ApiResult<(Self, Receiver<LanDevice>)> {
         let inner = Arc::new(ClientInner::default());
         let rx = lan_disco(options, Arc::clone(&inner)).await?;
 
         Ok((Self { inner }, rx))
     }
 
-    async fn add_listener(&self, addr: IpAddr) -> anyhow::Result<Receiver<Response>> {
+    async fn add_listener(&self, addr: IpAddr) -> Receiver<Response> {
         let (tx, rx) = channel(1);
         let mut mux = self.inner.mux.lock().await;
         mux.push(ClientListener { addr, tx });
-        Ok(rx)
+        rx
     }
 
     /// Interrogate `addr` by sending a scan request to it.
@@ -572,17 +591,21 @@ impl Client {
     /// this method will yield a LanDevice representing it.
     /// In addition, its details will be routed via the discovery
     /// receiver.
-    pub async fn scan_ip(&self, addr: IpAddr) -> anyhow::Result<LanDevice> {
-        let mut rx = self.add_listener(addr).await?;
+    pub async fn scan_ip(&self, addr: IpAddr) -> ApiResult<LanDevice> {
+        let mut rx = self.add_listener(addr).await;
 
-        let bcast = Broadcaster::new(addr).await?;
+        let bcast = Broadcaster::new(addr)
+            .await
+            .map_err(lan("broadcaster for scan_ip"))?;
+        // Request is an internally-defined enum; serialization cannot fail
+        // for the variants we construct here.
         let scan = serde_json::to_string(&RequestMessage {
             msg: Request::Scan {
                 account_topic: AccountTopic::Reserve,
             },
         })
-        .expect("to serialize scan message");
-        bcast.broadcast(scan).await?;
+        .expect("Request enum is always serializable");
+        bcast.broadcast(scan).await.map_err(lan("broadcast scan"))?;
 
         loop {
             match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
@@ -590,14 +613,20 @@ impl Client {
                     return Ok(info);
                 }
                 Ok(Some(_)) => {}
-                Ok(None) => anyhow::bail!("listener thread terminated"),
-                Err(_) => anyhow::bail!("timeout waiting for response"),
+                Ok(None) => {
+                    return Err(GoveeApiError::Lan("listener task terminated".into()));
+                }
+                Err(_) => {
+                    return Err(GoveeApiError::Lan(
+                        "timeout waiting for scan response".into(),
+                    ));
+                }
             }
         }
     }
 
-    pub async fn query_status(&self, device: &LanDevice) -> anyhow::Result<DeviceStatus> {
-        let mut rx = self.add_listener(device.ip).await?;
+    pub async fn query_status(&self, device: &LanDevice) -> ApiResult<DeviceStatus> {
+        let mut rx = self.add_listener(device.ip).await;
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() <= deadline {
             log::trace!("query status of {}", device.ip);
@@ -607,11 +636,16 @@ impl Client {
                     return Ok(status);
                 }
                 Ok(Some(_)) => {}
-                Ok(None) => anyhow::bail!("listener thread terminated"),
+                Ok(None) => {
+                    return Err(GoveeApiError::Lan("listener task terminated".into()));
+                }
                 Err(_) => {}
             }
         }
 
-        anyhow::bail!("timed out waiting for status");
+        Err(GoveeApiError::Lan(format!(
+            "timed out waiting for status from {}",
+            device.ip
+        )))
     }
 }
