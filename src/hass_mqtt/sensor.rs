@@ -23,7 +23,7 @@ pub struct SensorConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_class: Option<StateClass>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub unit_of_measurement: Option<&'static str>,
+    pub unit_of_measurement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_attributes_topic: Option<String>,
 }
@@ -188,11 +188,17 @@ impl CapabilitySensor {
         let meta = SensorMeta::for_instance(&instance.instance);
 
         // Temperature unit follows the user's configured scale, so it can't be
-        // a static table entry like the others.
+        // a static table entry like the others. For everything else, prefer
+        // the SensorMeta table (static, curated), then fall back to the unit
+        // declared on the capability itself (eg synthesized H5082 countdown
+        // remaining-seconds carries `unit: "s"` in its parameters).
         let unit_of_measurement = if instance.instance == "sensorTemperature" {
-            Some(state.get_temperature_scale().await.unit_of_measurement())
+            Some(state.get_temperature_scale().await.unit_of_measurement().to_string())
         } else {
-            meta.unit
+            meta.unit.map(str::to_string).or_else(|| match &instance.parameters {
+                Some(govee_api::model::DeviceParameters::Integer { unit, .. }) => unit.clone(),
+                _ => None,
+            })
         };
         let device_class = meta.device_class;
         let state_class = meta.state_class;
