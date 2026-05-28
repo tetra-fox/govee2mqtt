@@ -27,13 +27,13 @@ REPO="${WORKSPACE_DIRECTORY:?WORKSPACE_DIRECTORY not set}"
 DEV="${REPO}/addon-dev"
 
 # Source paths the Docker build reads (builder COPY . . compiles these; the app
-# stage copies common/run.sh and assets). Bind-mounted live from the repo so
-# edits are reflected without re-staging. Everything else in the repo (.github,
-# docs, the other app dirs, build output) is deliberately absent from the build
-# context: notably .github would otherwise make the Supervisor's recursive
+# stage copies common/run.sh). Bind-mounted live from the repo so edits are
+# reflected without re-staging. Everything else in the repo (.github, docs, the
+# other app dirs, build output) is deliberately absent from the build context:
+# notably .github would otherwise make the Supervisor's recursive
 # build.<yaml|yml|json> scan pick up .github/workflows/build.yml and warn about a
 # deprecated build config.
-SOURCES=(src crates assets common Cargo.toml Cargo.lock build.rs Dockerfile .dockerignore)
+SOURCES=(src crates common Cargo.toml Cargo.lock build.rs Dockerfile .dockerignore)
 
 # (Re)create addon-dev/ with the source bind-mounted in. Run as the --stage-impl
 # re-exec below because mount --bind needs root and the devcontainer runs us as

@@ -16,7 +16,6 @@ stage: experimental
 
 apparmor: true
 
-webui: http://[HOST]:[PORT:8056]/assets/index.html
 #ingress: true
 #ingress_port: 8056
 

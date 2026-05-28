@@ -67,7 +67,6 @@ WORKDIR /app
 
 COPY --from=builder /govee2mqtt /app/govee2mqtt
 COPY --from=builder --chown=govee:govee /seed-data /data
-COPY assets /app/assets
 
 USER govee:govee
 LABEL org.opencontainers.image.source="https://github.com/tetra-fox/govee2mqtt"
@@ -95,7 +94,6 @@ RUN apk add --no-cache dbus-libs libgcc
 
 COPY common/run.sh /run.sh
 COPY --from=builder /govee2mqtt /app/govee2mqtt
-COPY assets /app/assets/
 
 LABEL \
   org.opencontainers.image.title="Home Assistant Add-on: Govee2MQTT" \

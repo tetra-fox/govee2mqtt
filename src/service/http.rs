@@ -9,7 +9,6 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 use std::net::IpAddr;
-use tower_http::services::ServeDir;
 
 fn response_with_code<T: ToString + std::fmt::Display>(code: StatusCode, err: T) -> Response {
     if !code.is_success() {
@@ -225,10 +224,6 @@ async fn activate_one_click(
     Ok(response_with_code(StatusCode::OK, "ok"))
 }
 
-async fn redirect_to_index() -> Response {
-    axum::response::Redirect::to("/assets/index.html").into_response()
-}
-
 fn build_router(state: StateHandle) -> Router {
     Router::new()
         .route("/api/devices", get(list_devices))
@@ -247,8 +242,6 @@ fn build_router(state: StateHandle) -> Router {
         .route("/api/device/{id}/scenes", get(device_list_scenes))
         .route("/api/oneclicks", get(list_one_clicks))
         .route("/api/oneclick/activate/{scene}", get(activate_one_click))
-        .route("/", get(redirect_to_index))
-        .nest_service("/assets", ServeDir::new("assets"))
         .with_state(state)
 }
 

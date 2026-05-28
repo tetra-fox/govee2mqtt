@@ -39,7 +39,6 @@ uncased = "0.9.10"
 pem = "3"
 p12 = "0.6.3"
 axum = "0.8.9"
-tower-http = { version = "0.6.11", features = ["fs"] }
 async-trait = "0.1.89"
 rumqttc = "0.25.1"
 thiserror = "2.0.18"
