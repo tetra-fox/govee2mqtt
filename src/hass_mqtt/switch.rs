@@ -75,11 +75,12 @@ impl CapabilitySwitch {
 
 /// One outlet of a multi-outlet socket (eg: H5082), exposed as a switch.
 ///
-/// The platform API only reports a single combined `powerSwitch`, but the IoT
-/// status packet packs each outlet into one bit of the `onOff` value, so we can
-/// report the per-outlet state. Independent *control* isn't implemented yet
-/// (see `mqtt_outlet_command`); we expose the switch now so the read path can be
-/// tested and the entity is in place for the full feature.
+/// The IoT status packet packs each outlet into one bit of the `onOff` value
+/// (read via `socket_outlet_state`), and control goes back over IoT via
+/// `mqtt_outlet_command` -> `socket_turn` -> `iot.set_socket_power`. Owned
+/// devices also expose `powerSwitch` and per-outlet `socketToggleN`
+/// capabilities through the platform API; the enumerator skips those so they
+/// don't double up with the entities created here.
 /// <https://github.com/wez/govee2mqtt/issues/65>
 pub struct OutletSwitch {
     switch: SwitchConfig,
