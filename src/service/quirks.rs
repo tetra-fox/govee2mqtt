@@ -61,6 +61,13 @@ pub struct Quirk {
     /// path only; multi-outlet sockets pack their own `val` via
     /// `socket_turn_val`.
     pub iot_power_values: Option<(u8, u8)>,
+    /// Maximum discrete speed level a fan accepts. The HA fan entity
+    /// exposes a percentage that HA converts to/from this integer range
+    /// (1..=max) via its `speed_range_min`/`speed_range_max` divisor.
+    /// Common Govee fan models top out at 8, but some go higher (the
+    /// H7105 reaches 12, plus an auto mode at 13). Defaults to 8 if
+    /// `device_type == Fan` and no quirk is set.
+    pub fan_speed_max: Option<u8>,
 }
 
 impl Quirk {
@@ -85,6 +92,7 @@ impl Quirk {
             show_as_preset_buttons: None,
             socket_outlet_count: None,
             iot_power_values: None,
+            fan_speed_max: None,
         }
     }
 
@@ -179,6 +187,17 @@ impl Quirk {
     pub fn with_iot_power_values(mut self, on: u8, off: u8) -> Self {
         self.iot_power_values.replace((on, off));
         self
+    }
+
+    pub fn with_fan_speed_max(mut self, max: u8) -> Self {
+        self.fan_speed_max.replace(max);
+        self
+    }
+
+    pub fn fan(sku: &'static str) -> Self {
+        Self::device(sku, DeviceType::Fan, "mdi:fan")
+            .with_iot_api_support(true)
+            .with_fan_speed_max(8)
     }
 
     pub fn with_broken_platform(mut self) -> Self {
@@ -337,6 +356,21 @@ fn load_quirks() -> HashMap<String, Quirk> {
             .with_brightness(),
         Quirk::space_heater("H7135")
             .with_platform_temperature_sensor_units(TemperatureUnits::Fahrenheit),
+        // Govee smart fans (H7100..H7111). Speed control is currently routed
+        // through the generic platform-API path in `transport::fan_set_speed`;
+        // see that function for the heuristic and known limitations. The
+        // H7105 reaches speed 12 plus an auto mode (13) per the homebridge-govee
+        // BLE codes; override fan_speed_max once per-SKU verified.
+        // H7101 = 8 speeds, H7107 = 12, per the lasswellt govee-homeassistant
+        // protocol reference; H7105 BLE codes (homebridge) go to 12 too.
+        // Others default to 8 until verified.
+        Quirk::fan("H7100"),
+        Quirk::fan("H7101"),
+        Quirk::fan("H7102"),
+        Quirk::fan("H7105").with_fan_speed_max(12),
+        Quirk::fan("H7106"),
+        Quirk::fan("H7107").with_fan_speed_max(12),
+        Quirk::fan("H7111"),
         // <https://github.com/wez/govee2mqtt/issues/343>
         Quirk::ice_maker("H7172").with_iot_api_support(false),
         // Additional ice makers grouped with H7172 in homebridge-govee's

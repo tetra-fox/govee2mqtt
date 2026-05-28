@@ -135,6 +135,20 @@ impl Topics {
         )
     }
 
+    // ---- fan ----
+
+    pub fn fan_state(&self, device: &ServiceDevice) -> String {
+        format!("{}/fan/{}/state", self.base, topic_safe_id(device))
+    }
+
+    pub fn fan_set_speed(&self, device: &ServiceDevice) -> String {
+        format!("{}/fan/{}/set-speed", self.base, topic_safe_id(device))
+    }
+
+    pub fn fan_notify_speed(&self, device: &ServiceDevice) -> String {
+        format!("{}/fan/{}/notify-speed", self.base, topic_safe_id(device))
+    }
+
     // ---- number / work-mode ----
 
     pub fn number_command(
@@ -379,6 +393,10 @@ impl Topics {
 
     pub fn route_humidifier_set_target(&self) -> String {
         format!("{}/humidifier/:id/set-target", self.base)
+    }
+
+    pub fn route_fan_set_speed(&self) -> String {
+        format!("{}/fan/:id/set-speed", self.base)
     }
 
     pub fn route_set_temperature(&self) -> String {

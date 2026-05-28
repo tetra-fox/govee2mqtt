@@ -1,6 +1,7 @@
 use crate::hass_mqtt::base::{Device, EntityConfig, Origin};
 use crate::hass_mqtt::button::ButtonConfig;
 use crate::hass_mqtt::climate::TargetTemperatureEntity;
+use crate::hass_mqtt::fan::Fan;
 use crate::hass_mqtt::humidifier::Humidifier;
 use crate::hass_mqtt::instance::EntityList;
 use crate::hass_mqtt::light::DeviceLight;
@@ -215,16 +216,22 @@ pub async fn enumerate_entities_for_device(
         entities.add(Humidifier::new(&topics, d, state).await?);
     }
 
+    if d.device_type() == DeviceType::Fan {
+        entities.add(Fan::new(&topics, d, state).await?);
+    }
+
     if wants_scene_select && let Some(select) = SceneModeSelect::new(&topics, d, &scenes) {
         entities.add(select);
     }
 
-    // Multi-outlet sockets only expose a single combined powerSwitch via the
-    // platform API, but the IoT status reports each outlet separately. Surface
-    // each outlet as its own switch alongside that combined one. The read path
-    // works today; per-outlet control is stubbed pending the full feature.
+    // Multi-outlet sockets: surface one switch per outlet. The IoT status
+    // packet reports each outlet as one bit, and we drive control through the
+    // IoT API too (see socket_turn). The capability loop below skips the
+    // platform API's combined powerSwitch and per-outlet socketToggleN entries
+    // so we don't end up with duplicate entities.
     // <https://github.com/wez/govee2mqtt/issues/65>
-    if let Some(count) = d.socket_outlet_count() {
+    let multi_outlet_count = d.socket_outlet_count();
+    if let Some(count) = multi_outlet_count {
         for index in 0..count {
             entities.add(OutletSwitch::new(&topics, d, index));
         }
@@ -244,7 +251,14 @@ pub async fn enumerate_entities_for_device(
         for cap in &info.capabilities {
             match &cap.kind {
                 DeviceCapabilityKind::Toggle | DeviceCapabilityKind::OnOff => {
-                    entities.add(CapabilitySwitch::new(&topics, d, cap).await?);
+                    if multi_outlet_count.is_some()
+                        && (cap.instance == "powerSwitch"
+                            || is_socket_toggle_instance(&cap.instance))
+                    {
+                        // handled by the per-outlet OutletSwitch above
+                    } else {
+                        entities.add(CapabilitySwitch::new(&topics, d, cap).await?);
+                    }
                 }
                 // Color and scene capabilities are surfaced through the light
                 // entity and the Mode/Scene select, not as their own entities.
@@ -309,4 +323,14 @@ pub async fn enumerate_entities_for_device(
         }
     }
     Ok(())
+}
+
+/// True for platform-API instance names like `socketToggle1`, `socketToggle2`,
+/// which owned multi-outlet plugs (H5082, H5160) expose as one capability per
+/// outlet. We drive these outlets through the IoT API instead, so the matching
+/// CapabilitySwitch entities would just duplicate the OutletSwitch entities.
+fn is_socket_toggle_instance(instance: &str) -> bool {
+    instance
+        .strip_prefix("socketToggle")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
 }

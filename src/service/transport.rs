@@ -501,26 +501,65 @@ pub(crate) async fn ensure_projector_state_seeded(state: &StateHandle, device: &
 }
 
 /// Switch one outlet of a Wi-Fi smart plug/switch. `outlet` is the zero-based
-/// outlet index, or 15 for all outlets. Always IoT; the REST relay vs direct
-/// MQTT choice (shared vs owned) is made downstream in
-/// [`crate::service::iot::IotClient::set_socket_power`].
+/// outlet index, or 15 for all outlets. Tries IoT first (REST relay for shared,
+/// direct MQTT for owned, decided in
+/// [`crate::service::iot::IotClient::set_socket_power`]); falls back to the
+/// platform API's per-outlet `socketToggleN` capability when IoT isn't
+/// available. LAN and BLE don't fit here: their power command is device-wide,
+/// not per-outlet.
 pub(crate) async fn socket_turn(
     state: &StateHandle,
     device: &Device,
     outlet: u8,
     on: bool,
 ) -> anyhow::Result<()> {
-    let info = device
-        .undoc_device_info
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("{device} has no undoc metadata; cannot control socket"))?;
-    let iot = state
-        .get_iot_client()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device}"))?;
+    if device.iot_api_supported()
+        && let Some(iot) = state.get_iot_client().await
+        && let Some(info) = &device.undoc_device_info
+    {
+        log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
+        return iot.set_socket_power(&info.entry, outlet, on).await;
+    }
 
-    log::info!("Using IoT API to set {device} outlet {outlet} -> {on}");
-    iot.set_socket_power(&info.entry, outlet, on).await
+    if let Some(client) = state.get_platform_client().await
+        && let Some(http_dev) = &device.http_device_info
+    {
+        // The platform API exposes each outlet as its own toggle capability,
+        // 1-indexed in the instance name (socketToggle1 = outlet 0). The
+        // outlet=15 broadcast is IoT-only; no per-capability equivalent on the
+        // platform API.
+        let instance = format!("socketToggle{}", outlet + 1);
+        if http_dev.capability_by_instance(&instance).is_some() {
+            log::info!("Using Platform API to set {device} {instance} -> {on}");
+            client.set_toggle_state(http_dev, &instance, on).await?;
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("Unable to control outlet {outlet} for {device}");
+}
+
+/// Set a fan's speed via the platform-API workMode capability. `work_mode`
+/// is the value of the "FanSpeed" mode (parsed by the caller from the
+/// device's workMode enum); `speed` is the integer speed level. Per the
+/// lasswellt govee-homeassistant protocol reference, Govee fans expose
+/// speed as `workMode={FanSpeed value}, modeValue={speed}` on a single
+/// workMode capability. We do not currently have a BLE codec for fan
+/// frames; if/when one is added it can layer in front of this fallback
+/// like SetHumidifierMode does for humidifiers.
+pub(crate) async fn fan_set_speed(
+    state: &StateHandle,
+    device: &Device,
+    work_mode: i64,
+    speed: i64,
+) -> anyhow::Result<()> {
+    if let Some(client) = state.get_platform_client().await
+        && let Some(info) = &device.http_device_info
+    {
+        client.set_work_mode(info, work_mode, speed).await?;
+        return Ok(());
+    }
+    anyhow::bail!("Unable to control fan speed for {device}: no platform-API client");
 }
 
 /// Set a humidifier work mode and parameter. Tries the BLE-encoded

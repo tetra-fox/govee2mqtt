@@ -410,6 +410,18 @@ impl State {
         crate::service::transport::humidifier_set_parameter(self, device, work_mode, value).await
     }
 
+    /// Set the speed of a fan via its workMode capability. `work_mode` is the
+    /// "FanSpeed" mode number (per ParsedWorkMode); `speed` is the integer
+    /// speed level in `[1, fan_speed_max]`.
+    pub async fn fan_set_speed(
+        self: &Arc<Self>,
+        device: &Device,
+        work_mode: i64,
+        speed: i64,
+    ) -> anyhow::Result<()> {
+        crate::service::transport::fan_set_speed(self, device, work_mode, speed).await
+    }
+
     /// Switch a single outlet of a multi-outlet socket (eg: H5082).
     /// <https://github.com/wez/govee2mqtt/issues/65>
     pub async fn device_set_socket_outlet(

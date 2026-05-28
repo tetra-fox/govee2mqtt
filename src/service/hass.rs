@@ -1,5 +1,6 @@
 use crate::hass_mqtt::climate::mqtt_set_temperature;
 use crate::hass_mqtt::enumerator::{enumerate_all_entites, enumerate_entities_for_device};
+use crate::hass_mqtt::fan::mqtt_fan_set_speed;
 use crate::hass_mqtt::humidifier::{mqtt_device_set_work_mode, mqtt_humidifier_set_target};
 use crate::hass_mqtt::instance::EntityList;
 use crate::hass_mqtt::number::{
@@ -692,6 +693,9 @@ async fn build_router_and_register(
                 topics.route_humidifier_set_target(),
                 mqtt_humidifier_set_target,
             )
+            .await?;
+        router
+            .route(topics.route_fan_set_speed(), mqtt_fan_set_speed)
             .await?;
         router
             .route(topics.route_set_temperature(), mqtt_set_temperature)
