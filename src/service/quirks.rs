@@ -373,6 +373,81 @@ fn load_quirks() -> HashMap<String, Quirk> {
         Quirk::lan_api_capable_light("H619C", STRIP),
         Quirk::lan_api_capable_light("H619Z", STRIP),
         Quirk::lan_api_capable_light("H7060", FLOOD),
+        // Additional LAN-API capable lights from the official Govee LAN guide
+        // at <https://app-h5.govee.com/user-manual/wlan-guide>. Grouped by
+        // class. Icons picked from the closest existing match; refine per-SKU
+        // if a user reports a wrong icon.
+        // Floor lamps
+        Quirk::lan_api_capable_light("H1630", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H16B0", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H16C0", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H607C", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H60B0", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H60B1", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H60B2", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H60B3", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H8076", FLOOR_LAMP),
+        Quirk::lan_api_capable_light("H807C", FLOOR_LAMP),
+        // Table lamps (H6022 already covered above with a tighter color-temp range)
+        Quirk::lan_api_capable_light("H6020", DESK),
+        Quirk::lan_api_capable_light("H8022", DESK),
+        // Gaming / pixel displays and gaming light bars
+        Quirk::lan_api_capable_light("H6048", TV_BACK),
+        Quirk::lan_api_capable_light("H8048", TV_BACK),
+        Quirk::lan_api_capable_light("H6630", STRIP),
+        Quirk::lan_api_capable_light("H6631", STRIP),
+        Quirk::lan_api_capable_light("H8630", STRIP),
+        // Ceiling lights (H60A1 covered above with custom temp range)
+        Quirk::lan_api_capable_light("H1232", CEILING),
+        Quirk::lan_api_capable_light("H1252", CEILING),
+        Quirk::lan_api_capable_light("H1270", CEILING),
+        Quirk::lan_api_capable_light("H60A4", CEILING),
+        Quirk::lan_api_capable_light("H60A6", CEILING),
+        Quirk::lan_api_capable_light("H80A1", CEILING),
+        Quirk::lan_api_capable_light("H80A4", CEILING),
+        Quirk::lan_api_capable_light("H12D0", CEILING),
+        // Pendant light (hangs from ceiling, closest icon)
+        Quirk::lan_api_capable_light("H60C1", CEILING),
+        // Wall sconces and panel lights
+        Quirk::lan_api_capable_light("H6038", WALL_SCONCE),
+        Quirk::lan_api_capable_light("H6039", WALL_SCONCE),
+        Quirk::lan_api_capable_light("H6088", WALL_SCONCE),
+        Quirk::lan_api_capable_light("H6069", HEX),
+        Quirk::lan_api_capable_light("H606A", HEX),
+        Quirk::lan_api_capable_light("H8069", HEX),
+        // Smart bulbs (RGBWW)
+        Quirk::lan_api_capable_light("H1401", BULB),
+        Quirk::lan_api_capable_light("H14A1", BULB),
+        Quirk::lan_api_capable_light("H14C2", BULB),
+        Quirk::lan_api_capable_light("H6004", BULB),
+        Quirk::lan_api_capable_light("H6006", BULB),
+        Quirk::lan_api_capable_light("H6008", BULB),
+        Quirk::lan_api_capable_light("H6009", BULB),
+        Quirk::lan_api_capable_light("H600A", BULB),
+        Quirk::lan_api_capable_light("H6010", BULB),
+        Quirk::lan_api_capable_light("H8015", BULB),
+        // String / Christmas lights
+        Quirk::lan_api_capable_light("H6800", STRING),
+        Quirk::lan_api_capable_light("H6870", STRING),
+        Quirk::lan_api_capable_light("H6871", STRING),
+        Quirk::lan_api_capable_light("H608A", STRING),
+        // Outdoor spotlights and pathway lights
+        Quirk::lan_api_capable_light("H3200", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H3500", OUTDOOR_LAMP),
+        Quirk::lan_api_capable_light("H3501", OUTDOOR_LAMP),
+        // Recessed downlights (no dedicated downlight icon; spotlight is closest)
+        Quirk::lan_api_capable_light("H601A", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H601B", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H601C", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H801A", SPOTLIGHT),
+        Quirk::lan_api_capable_light("H801D", SPOTLIGHT),
+        // Deliberately skipped from the LAN guide:
+        // - H6093 already has its own projector quirk (per-layer colors, no
+        //   master RGB picker); H6094, H6095, H609D are sibling projectors
+        //   whose capability shape we have not verified, so they are left out
+        //   until we can confirm whether the H6093 shape applies.
+        // - H1310, H1370 are ceiling fans with lights, not bare lights; they
+        //   need fan device-class wiring (deferred).
         Quirk::lan_api_capable_light("H6046", TV_BACK),
         Quirk::lan_api_capable_light("H6047", TV_BACK),
         Quirk::lan_api_capable_light("H6051", DESK),
