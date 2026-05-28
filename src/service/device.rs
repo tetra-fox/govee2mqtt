@@ -580,12 +580,17 @@ impl Device {
     /// the Status diagnostic sensor text and the per-device MQTT availability
     /// topic, so the two always agree.
     ///
-    /// The platform API answers from the cloud whether or not the device itself
-    /// is reachable, and its response carries an explicit `online` flag for the
-    /// device (DeviceState::online). When the freshest state has that flag, it
-    /// is authoritative: a device the cloud reports offline must read offline
-    /// even though we just fetched its (stale) state successfully. Otherwise we
-    /// would only ever fetch cached settings and never notice the device left.
+    /// The platform API's response carries an explicit `online` flag, sourced
+    /// from the Govee cloud's per-device registry. We use it as the
+    /// truly-left-the-network signal: if IoT and LAN both go silent past the
+    /// availability window, an HTTP poll that returns cached state could
+    /// otherwise keep us reporting Available indefinitely. But the cloud's
+    /// online flag lags by around a minute, so a transient blip on a still-live
+    /// device would flip availability to Missing on its own. To avoid that
+    /// flicker, an `online: false` from the cloud is overridden when we
+    /// received an IoT or LAN message inside the availability window: a fresh
+    /// message arriving from the device is stronger proof of life than a stale
+    /// cloud registry.
     ///
     /// LAN and IoT replies carry no online flag, but a reply only arrives when
     /// the device answered (LAN) or is connected to AWS IoT (IoT), so the
@@ -600,6 +605,9 @@ impl Device {
     pub fn availability_status(&self) -> Reachability {
         if let Some(state) = self.device_state() {
             if let Some(online) = state.online {
+                if !online && self.has_recent_local_signal() {
+                    return Reachability::Available;
+                }
                 return if online {
                     Reachability::Available
                 } else {
@@ -621,6 +629,16 @@ impl Device {
             Some(false) => Reachability::Missing,
             None => Reachability::Unknown,
         }
+    }
+
+    /// True if an IoT or LAN message arrived from this device inside the
+    /// availability window. Used to override a stale `online: false` from the
+    /// cloud registry: a fresh local message is direct evidence the device is
+    /// up, regardless of what the cloud thinks.
+    fn has_recent_local_signal(&self) -> bool {
+        let cutoff = Utc::now() - availability_timeout();
+        let fresh = |ts: Option<DateTime<Utc>>| ts.is_some_and(|t| t > cutoff);
+        fresh(self.last_iot_device_status_update) || fresh(self.last_lan_device_status_update)
     }
 
     /// Records the active scene name
@@ -924,8 +942,9 @@ mod test {
     }
 
     /// A platform-API state with an explicit online capability set to `value`,
-    /// as the cloud returns it. The cloud answers whether or not the device is
-    /// reachable, so this flag, not how recently we fetched, is authoritative.
+    /// as the cloud returns it. The cloud is the truly-left-the-network signal
+    /// when no other transport is reporting; a fresh IoT or LAN message
+    /// overrides it when the cloud's registry is lagging.
     fn http_state_with_online(sku: &str, id: &str, value: bool) -> HttpDeviceState {
         serde_json::from_value(serde_json::json!({
             "sku": sku,
@@ -940,11 +959,11 @@ mod test {
     }
 
     #[test]
-    fn platform_online_flag_is_authoritative_over_freshness() {
-        // The cloud says offline. Even though we fetched the state just now, the
-        // device must read Missing: the platform API answers from the cloud for
-        // a device that itself is unreachable (eg: its wifi dropped while our
-        // bridge kept cloud connectivity).
+    fn platform_online_false_reads_missing_without_other_signals() {
+        // The cloud says offline and we have no IoT/LAN signal to contradict it.
+        // The HTTP fetch returning successfully doesn't prove the device is up,
+        // because the platform API answers from the cloud's cache, so trust the
+        // online flag and read Missing.
         let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:11:22");
         device.set_http_device_state(http_state_with_online("H6109", &device.id, false));
         assert_eq!(device.availability_status(), Reachability::Missing);
@@ -953,6 +972,25 @@ mod test {
         let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:11:22");
         device.set_http_device_state(http_state_with_online("H6109", &device.id, true));
         assert_eq!(device.availability_status(), Reachability::Available);
+    }
+
+    #[test]
+    fn recent_iot_signal_overrides_cloud_offline_flag() {
+        // The cloud registry lags by about a minute. If it says offline but
+        // we received an IoT message inside the availability window, the
+        // device is provably up and we override to Available. This kills the
+        // ~15-minute flicker that the HTTP poll would otherwise cause when
+        // the cloud catches a transient blip on a still-live device.
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:77:88");
+        device.set_http_device_state(http_state_with_online("H6109", &device.id, false));
+        device.set_iot_device_status(govee_api::lan_api::DeviceStatus::default());
+        assert_eq!(device.availability_status(), Reachability::Available);
+
+        // Once the IoT signal ages past the window with no refresh, the
+        // override stops applying and the cloud's verdict wins again.
+        device.last_iot_device_status_update =
+            Some(Utc::now() - (availability_timeout() + chrono::Duration::seconds(10)));
+        assert_eq!(device.availability_status(), Reachability::Missing);
     }
 
     #[test]
