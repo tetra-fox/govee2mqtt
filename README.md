@@ -53,6 +53,8 @@ The AWS IoT support was made possible by the work of @bwp91 in [homebridge-govee
 
 BLE work referenced [Bluetooth-Devices/govee-ble](https://github.com/Bluetooth-Devices/govee-ble) for Govee BLE conventions.
 
+<https://raw.githubusercontent.com/lasswellt/govee-homeassistant/refs/heads/master/docs/govee-protocol-reference.md>
+
 ## License
 
 This fork is licensed under the GNU General Public License version 3 or later; see [LICENSE](LICENSE). Portions originate from wez/govee2mqtt under the MIT License, preserved in [LICENSE.MIT](LICENSE.MIT).
