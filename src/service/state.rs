@@ -4,8 +4,10 @@ use crate::service::control::controller_for;
 use crate::service::coordinator::Coordinator;
 use crate::service::device::{Device, DeviceItem};
 use crate::service::hass::{HassClient, topic_safe_id};
+use crate::service::info::ServiceInfo;
 use crate::service::iot::IotClient;
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use govee_api::lan_api::Client as LanClient;
 use govee_api::platform_api::{
     DeviceCapability, DeviceType, GoveeApiClient, sort_and_dedup_scenes,
@@ -13,8 +15,8 @@ use govee_api::platform_api::{
 use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use serde_json::{Value as JsonValue, json};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast};
 
@@ -29,7 +31,95 @@ pub enum StateEvent {
     Snapshot { devices: Vec<DeviceItem> },
     /// One device's state changed. Subscribers patch their local view by id.
     DeviceUpdated { device: DeviceItem },
+    /// A control command finished (success or failure). UI shows these in
+    /// the per-device command history without needing to poll.
+    CommandLogged {
+        device_id: String,
+        entry: CommandLog,
+    },
+    /// A wire frame went out (or arrived, when inbound paths get instrumented).
+    /// Used by the frames inspector. Outbound-only at present; inbound covers
+    /// the BLE notification stream and IoT subscriber and will be added in a
+    /// follow-up pass.
+    Frame {
+        device_id: String,
+        direction: FrameDirection,
+        transport: FrameTransport,
+        ts: DateTime<Utc>,
+        /// Hex string for BLE (e.g. "33 01 ff ..."), JSON string for IoT.
+        payload: String,
+    },
 }
+
+#[derive(Serialize, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameDirection {
+    Out,
+    In,
+}
+
+#[derive(Serialize, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameTransport {
+    Ble,
+    Iot,
+}
+
+/// Transports the cascade can pick to service a control command. Returned
+/// from each verb so the wrapper can record which transport actually carried
+/// the command for the debug surface; serialized as snake_case strings on
+/// the wire.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    /// Govee LAN API over the device's own ip.
+    Lan,
+    /// Direct BLE, when the host has an adapter and the device exposes one.
+    Ble,
+    /// Owned-device AWS IoT MQTT.
+    Iot,
+    /// Govee platform REST API.
+    Platform,
+    /// Humidifier nightlight packet routed through IoT, used by the
+    /// HumidifierController in place of the generic light verbs.
+    IotNightlight,
+    /// Multi-outlet socket `turn` packet routed through IoT, used by the
+    /// SocketController. Distinct from `Iot` because the wire packing
+    /// differs and the dispatch path is socket-specific.
+    IotSocket,
+}
+
+/// One control command's outcome as recorded for the debug surface. Captures
+/// the verb, when it ran, how long it took, and which transport handled it
+/// (or the error if all transports refused). Stored in a per-device ring on
+/// State and pushed live over the ws.
+///
+/// `verb` + `args` are structured rather than a pre-formatted string so
+/// consumers decide how to render. The daemon doesn't pick a display format.
+#[derive(Serialize, Clone, Debug)]
+pub struct CommandLog {
+    /// Name of the cascade verb, e.g. "power_on" or "set_brightness".
+    pub verb: String,
+    /// Positional args as JSON values. Numbers stay numeric, booleans stay
+    /// boolean, strings stay strings. Empty when the verb takes no args.
+    pub args: Vec<JsonValue>,
+    pub started: DateTime<Utc>,
+    pub finished: DateTime<Utc>,
+    pub outcome: CommandOutcome,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CommandOutcome {
+    /// The cascade found a transport that accepted the command.
+    Ok { transport: Transport },
+    /// All transports refused; the final error message from the daemon.
+    Err { message: String },
+}
+
+/// Per-device command-history ring. The cap matches what the UI shows; bumping
+/// it costs proportional memory per active device, so keep it modest.
+pub const COMMAND_HISTORY_CAP: usize = 30;
 
 pub struct State {
     devices_by_id: Mutex<HashMap<String, Device>>,
@@ -69,6 +159,14 @@ pub struct State {
     /// a receiver that falls further behind gets a Lagged error and is
     /// expected to resync from a fresh Snapshot.
     events: broadcast::Sender<StateEvent>,
+    /// Per-device ring of the last COMMAND_HISTORY_CAP control commands run
+    /// through `device_*` wrappers. Populated by the wrappers, exposed via the
+    /// debug endpoint and the ws CommandLogged event. Keyed by device id.
+    command_history: Mutex<HashMap<String, VecDeque<CommandLog>>>,
+    /// Snapshot of the daemon's configuration captured once at serve startup;
+    /// surfaced by the info endpoint. None until set_service_info runs, which
+    /// only happens in the serve subcommand.
+    service_info: Mutex<Option<ServiceInfo>>,
 }
 
 impl Default for State {
@@ -90,6 +188,8 @@ impl Default for State {
             registration_lock: Default::default(),
             iot_ready: Default::default(),
             events,
+            command_history: Default::default(),
+            service_info: Default::default(),
         }
     }
 }
@@ -110,6 +210,35 @@ impl State {
     /// and the receiver should re-snapshot rather than reconnect.
     pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
         self.events.subscribe()
+    }
+
+    /// Cloneable sender so subsystems that don't hold a StateHandle (the IoT
+    /// client, in particular) can emit events without circular Arcs.
+    pub fn event_sender(&self) -> broadcast::Sender<StateEvent> {
+        self.events.clone()
+    }
+
+    /// Emit a frame event. No-op when no ws clients are connected; the
+    /// payload is built by the caller regardless because frame instrumentation
+    /// runs on the wire-send path and we want it consistent whether or not
+    /// the inspector is open.
+    pub fn notify_frame(
+        &self,
+        device_id: &str,
+        direction: FrameDirection,
+        transport: FrameTransport,
+        payload: String,
+    ) {
+        if self.events.receiver_count() == 0 {
+            return;
+        }
+        let _ = self.events.send(StateEvent::Frame {
+            device_id: device_id.to_string(),
+            direction,
+            transport,
+            ts: Utc::now(),
+            payload,
+        });
     }
 
     pub async fn set_temperature_scale(&self, scale: TemperatureScale) {
@@ -148,8 +277,55 @@ impl State {
         *self.published_components.lock().await = components;
     }
 
+    /// Read-only snapshot of the currently-published HA components, for the
+    /// /api/debug/hass endpoint. Clones so the caller doesn't hold the lock.
+    pub async fn get_published_components(&self) -> PublishedComponents {
+        self.published_components.lock().await.clone()
+    }
+
+    /// Push one command-history entry onto a device's ring and broadcast it
+    /// to ws subscribers. The ring evicts the oldest entry once full.
+    pub async fn record_command_log(self: &Arc<Self>, device_id: &str, entry: CommandLog) {
+        {
+            let mut histories = self.command_history.lock().await;
+            let ring = histories.entry(device_id.to_string()).or_default();
+            if ring.len() >= COMMAND_HISTORY_CAP {
+                ring.pop_front();
+            }
+            ring.push_back(entry.clone());
+        }
+        if self.events.receiver_count() > 0 {
+            let _ = self.events.send(StateEvent::CommandLogged {
+                device_id: device_id.to_string(),
+                entry,
+            });
+        }
+    }
+
+    pub async fn set_service_info(&self, info: ServiceInfo) {
+        *self.service_info.lock().await = Some(info);
+    }
+
+    pub async fn get_service_info(&self) -> Option<ServiceInfo> {
+        self.service_info.lock().await.clone()
+    }
+
+    /// Read-only copy of a device's command history (newest last).
+    pub async fn get_command_history(&self, device_id: &str) -> Vec<CommandLog> {
+        self.command_history
+            .lock()
+            .await
+            .get(device_id)
+            .map(|ring| ring.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub async fn set_base_topic(&self, base_topic: String) {
         *self.base_topic.lock().await = base_topic;
+    }
+
+    pub async fn get_base_topic(&self) -> String {
+        self.base_topic.lock().await.clone()
     }
 
     /// The topic/unique-id builder, seeded from the configured base topic.
@@ -386,7 +562,17 @@ impl State {
         capability: &DeviceCapability,
         value: V,
     ) -> anyhow::Result<()> {
-        crate::service::transport::device_control(self, device, capability, value).await
+        let value: JsonValue = value.into();
+        self.run_command(
+            &device.id,
+            "device_control",
+            vec![json!(capability.instance), value.clone()],
+            async {
+                crate::service::transport::device_control(self, device, capability, value.clone())
+                    .await
+            },
+        )
+        .await
     }
 
     /// Try to control `instance` as an IoT ptReal frame; returns false if it
@@ -405,9 +591,12 @@ impl State {
         device: &Device,
         on: bool,
     ) -> anyhow::Result<()> {
-        controller_for(device)
-            .light_power_on(self, device, on)
-            .await
+        self.run_command(&device.id, "light_power_on", vec![json!(on)], async {
+            controller_for(device)
+                .light_power_on(self, device, on)
+                .await
+        })
+        .await
     }
 
     pub async fn device_power_on(
@@ -415,7 +604,10 @@ impl State {
         device: &Device,
         on: bool,
     ) -> anyhow::Result<()> {
-        controller_for(device).power_on(self, device, on).await
+        self.run_command(&device.id, "power_on", vec![json!(on)], async {
+            controller_for(device).power_on(self, device, on).await
+        })
+        .await
     }
 
     pub async fn device_set_brightness(
@@ -423,9 +615,12 @@ impl State {
         device: &Device,
         percent: u8,
     ) -> anyhow::Result<()> {
-        controller_for(device)
-            .set_brightness(self, device, percent)
-            .await
+        self.run_command(&device.id, "set_brightness", vec![json!(percent)], async {
+            controller_for(device)
+                .set_brightness(self, device, percent)
+                .await
+        })
+        .await
     }
 
     pub async fn device_set_color_temperature(
@@ -433,9 +628,17 @@ impl State {
         device: &Device,
         kelvin: u32,
     ) -> anyhow::Result<()> {
-        controller_for(device)
-            .set_color_temperature(self, device, kelvin)
-            .await
+        self.run_command(
+            &device.id,
+            "set_color_temperature",
+            vec![json!(kelvin)],
+            async {
+                controller_for(device)
+                    .set_color_temperature(self, device, kelvin)
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn device_set_color_rgb(
@@ -445,9 +648,60 @@ impl State {
         g: u8,
         b: u8,
     ) -> anyhow::Result<()> {
-        controller_for(device)
-            .set_color_rgb(self, device, r, g, b)
-            .await
+        self.run_command(
+            &device.id,
+            "set_color_rgb",
+            vec![json!(r), json!(g), json!(b)],
+            async {
+                controller_for(device)
+                    .set_color_rgb(self, device, r, g, b)
+                    .await
+            },
+        )
+        .await
+    }
+
+    /// THE chokepoint for every device verb that mutates state. The inner
+    /// future runs the actual cascade and returns which transport carried the
+    /// command; this wrapper records when it started, when it finished, the
+    /// outcome, and pushes a CommandLog onto the device's history ring (which
+    /// also fans out a `command_logged` ws event). Adding a new public
+    /// `device_*` verb without routing it through here silently breaks the
+    /// debug surface, which is exactly why every existing verb is a one-call
+    /// wrapper around `run_command`.
+    ///
+    /// `verb` is the cascade verb name; `args` are the call arguments as JSON
+    /// values. Consumers (UI, CLI) format these for display, the daemon
+    /// doesn't pick a render shape.
+    async fn run_command(
+        self: &Arc<Self>,
+        device_id: &str,
+        verb: &str,
+        args: Vec<JsonValue>,
+        inner: impl Future<Output = anyhow::Result<Transport>>,
+    ) -> anyhow::Result<()> {
+        let started = Utc::now();
+        let result = inner.await;
+        let outcome = match &result {
+            Ok(transport) => CommandOutcome::Ok {
+                transport: *transport,
+            },
+            Err(e) => CommandOutcome::Err {
+                message: format!("{e:#}"),
+            },
+        };
+        self.record_command_log(
+            device_id,
+            CommandLog {
+                verb: verb.to_string(),
+                args,
+                started,
+                finished: Utc::now(),
+                outcome,
+            },
+        )
+        .await;
+        result.map(|_| ())
     }
 
     pub async fn humidifier_set_parameter(
@@ -456,7 +710,16 @@ impl State {
         work_mode: i64,
         value: i64,
     ) -> anyhow::Result<()> {
-        crate::service::transport::humidifier_set_parameter(self, device, work_mode, value).await
+        self.run_command(
+            &device.id,
+            "humidifier_set_parameter",
+            vec![json!(work_mode), json!(value)],
+            async {
+                crate::service::transport::humidifier_set_parameter(self, device, work_mode, value)
+                    .await
+            },
+        )
+        .await
     }
 
     /// Set the speed of a fan via its workMode capability. `work_mode` is the
@@ -468,7 +731,15 @@ impl State {
         work_mode: i64,
         speed: i64,
     ) -> anyhow::Result<()> {
-        crate::service::transport::fan_set_speed(self, device, work_mode, speed).await
+        self.run_command(
+            &device.id,
+            "fan_set_speed",
+            vec![json!(work_mode), json!(speed)],
+            async {
+                crate::service::transport::fan_set_speed(self, device, work_mode, speed).await
+            },
+        )
+        .await
     }
 
     /// Switch a single outlet of a multi-outlet socket (eg: H5082).
@@ -479,7 +750,13 @@ impl State {
         index: u8,
         on: bool,
     ) -> anyhow::Result<()> {
-        crate::service::transport::socket_turn(self, device, index, on).await
+        self.run_command(
+            &device.id,
+            "set_socket_outlet",
+            vec![json!(index), json!(on)],
+            async { crate::service::transport::socket_turn(self, device, index, on).await },
+        )
+        .await
     }
 
     pub async fn poll_after_control(self: &Arc<Self>, id: String) {
@@ -520,17 +797,29 @@ impl State {
         instance_name: &str,
         target: TemperatureValue,
     ) -> anyhow::Result<()> {
-        if let Some(client) = self.get_platform_client().await
-            && let Some(info) = &device.http_device_info
-        {
-            log::debug!("Using Platform API to set {device} target temperature to {target}");
-            client
-                .set_target_temperature(info, instance_name, target, None)
-                .await?;
-            return Ok(());
-        }
-
-        anyhow::bail!("Unable to set temperature for {device}");
+        // TemperatureValue's Display is "21.5C" / "70.0F" so it carries the
+        // scale glyph; encoded as a string in args since the temperature
+        // type isn't directly serializable to a numeric JSON value here.
+        self.run_command(
+            &device.id,
+            "set_target_temperature",
+            vec![json!(instance_name), json!(target.to_string())],
+            async {
+                if let Some(client) = self.get_platform_client().await
+                    && let Some(info) = &device.http_device_info
+                {
+                    log::debug!(
+                        "Using Platform API to set {device} target temperature to {target}"
+                    );
+                    client
+                        .set_target_temperature(info, instance_name, target, None)
+                        .await?;
+                    return Ok(Transport::Platform);
+                }
+                anyhow::bail!("Unable to set temperature for {device}");
+            },
+        )
+        .await
     }
 
     pub async fn device_set_scene(
@@ -538,7 +827,10 @@ impl State {
         device: &Device,
         scene: &str,
     ) -> anyhow::Result<()> {
-        crate::service::transport::device_set_scene(self, device, scene).await
+        self.run_command(&device.id, "set_scene", vec![json!(scene)], async {
+            crate::service::transport::device_set_scene(self, device, scene).await
+        })
+        .await
     }
 
     // Take care not to call this while you hold a mutable device

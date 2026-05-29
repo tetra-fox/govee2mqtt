@@ -64,3 +64,33 @@ jobs:
         with:
           cache-prefix: version
       - run: nix develop --command just version-check
+
+  ui-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-prefix: ui-lint
+      - run: nix develop --command just ui-install
+      - run: nix develop --command just ui-lint
+
+  ui-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-prefix: ui-check
+      - run: nix develop --command just ui-install
+      - run: nix develop --command just ui-check
+
+  ui-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-nix
+        with:
+          cache-prefix: ui-build
+      - run: nix develop --command just ui-install
+      - run: nix develop --command just ui-build

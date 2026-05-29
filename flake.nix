@@ -45,6 +45,11 @@
             pkgs.cmake
             pkgs.perl
             pkgs.pkg-config
+
+            # ui/ build chain: vite + svelte 5 + tailwind 4 + bits-ui.
+            # corepack enables the pinned pnpm shipped with node.
+            pkgs.nodejs_24
+            pkgs.pnpm
           ];
 
           # btleplug's Linux backend builds against system libdbus (BlueZ lives on

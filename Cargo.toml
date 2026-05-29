@@ -44,6 +44,8 @@ rumqttc = "0.25.1"
 thiserror = "2.0.18"
 btleplug = "0.12"
 futures-util = "0.3"
+rust-embed = { version = "8.7", features = ["debug-embed"] }
+mime_guess = "2.0"
 
 [dev-dependencies]
 anyhow = "1"

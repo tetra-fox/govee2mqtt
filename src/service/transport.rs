@@ -15,7 +15,7 @@
 //! delegate in here.
 
 use crate::service::device::Device;
-use crate::service::state::StateHandle;
+use crate::service::state::{StateHandle, Transport};
 use govee_api::ble::{
     Base64HexBytes, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
 };
@@ -28,16 +28,16 @@ pub(crate) async fn power_on_generic(
     state: &StateHandle,
     device: &Device,
     on: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(lan_dev) = &device.lan_device {
         log::debug!("Using LAN API to set {device} power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     if power_via_ble(state, device, on).await {
-        return Ok(());
+        return Ok(Transport::Ble);
     }
 
     if device.iot_api_supported()
@@ -46,7 +46,7 @@ pub(crate) async fn power_on_generic(
     {
         log::debug!("Using IoT API to set {device} power state");
         iot.set_power_state(&info.entry, on).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -54,7 +54,7 @@ pub(crate) async fn power_on_generic(
     {
         log::debug!("Using Platform API to set {device} power state");
         client.set_power_state(info, on).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
 
     anyhow::bail!("Unable to control power state for {device}");
@@ -81,6 +81,12 @@ async fn power_via_ble(state: &StateHandle, device: &Device, on: bool) -> bool {
         }
     };
     log::debug!("Using BLE to set {device} power state");
+    state.notify_frame(
+        &device.id,
+        crate::service::state::FrameDirection::Out,
+        crate::service::state::FrameTransport::Ble,
+        hex_pretty(frame.bytes()),
+    );
     // The connection is kept warm and auto-released after an idle period (see
     // BleClient::send_frames), so bursts reuse one session instead of
     // re-handshaking per command.
@@ -93,11 +99,38 @@ async fn power_via_ble(state: &StateHandle, device: &Device, on: bool) -> bool {
     }
 }
 
+/// Apply a socket turn command to the held outlet bits. `outlet == 15` is the
+/// "all outlets" form used by the SocketController for whole-device power, so
+/// it sets or clears the low `count` bits together; any other index targets
+/// just that bit. Returns the new bitfield.
+fn apply_outlet_command(prior: u8, count: u8, outlet: u8, on: bool) -> u8 {
+    if outlet == 15 {
+        let mask = (1u8 << count).saturating_sub(1);
+        if on { prior | mask } else { prior & !mask }
+    } else {
+        let bit = 1u8 << outlet;
+        if on { prior | bit } else { prior & !bit }
+    }
+}
+
+/// Render a BLE frame as space-separated lowercase hex for the inspector.
+/// One-line, no prefixes; the ui breaks lines on its own.
+fn hex_pretty(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 pub(crate) async fn light_power_on_generic(
     state: &StateHandle,
     device: &Device,
     on: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     let instance_name = device
         .get_light_power_toggle_instance_name()
         .ok_or_else(|| {
@@ -111,7 +144,7 @@ pub(crate) async fn light_power_on_generic(
         log::debug!("Using LAN API to set {device} light power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     if device.iot_api_supported()
@@ -120,7 +153,7 @@ pub(crate) async fn light_power_on_generic(
     {
         log::debug!("Using IoT API to set {device} light power state");
         iot.set_power_state(&info.entry, on).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -128,7 +161,7 @@ pub(crate) async fn light_power_on_generic(
     {
         log::debug!("Using Platform API to set {device} light {instance_name} state");
         client.set_toggle_state(info, instance_name, on).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
 
     anyhow::bail!("Unable to control light power state for {device}");
@@ -138,12 +171,12 @@ pub(crate) async fn set_brightness_generic(
     state: &StateHandle,
     device: &Device,
     percent: u8,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(lan_dev) = &device.lan_device {
         log::debug!("Using LAN API to set {device} brightness");
         lan_dev.send_brightness(percent).await?;
         poll_lan_api(state, lan_dev, |status| status.brightness == percent).await?;
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     if device.iot_api_supported()
@@ -152,7 +185,7 @@ pub(crate) async fn set_brightness_generic(
     {
         log::debug!("Using IoT API to set {device} brightness");
         iot.set_brightness(&info.entry, percent).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -160,7 +193,7 @@ pub(crate) async fn set_brightness_generic(
     {
         log::debug!("Using Platform API to set {device} brightness");
         client.set_brightness(info, percent).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
     anyhow::bail!("Unable to control brightness for {device}");
 }
@@ -169,7 +202,7 @@ pub(crate) async fn set_color_temperature_generic(
     state: &StateHandle,
     device: &Device,
     kelvin: u32,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(lan_dev) = &device.lan_device {
         log::debug!("Using LAN API to set {device} color temperature");
         lan_dev.send_color_temperature_kelvin(kelvin).await?;
@@ -181,7 +214,7 @@ pub(crate) async fn set_color_temperature_generic(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(None);
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     if device.iot_api_supported()
@@ -190,7 +223,7 @@ pub(crate) async fn set_color_temperature_generic(
     {
         log::debug!("Using IoT API to set {device} color temperature");
         iot.set_color_temperature(&info.entry, kelvin).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -202,7 +235,7 @@ pub(crate) async fn set_color_temperature_generic(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(None);
-        return Ok(());
+        return Ok(Transport::Platform);
     }
     anyhow::bail!("Unable to control color temperature for {device}");
 }
@@ -213,7 +246,7 @@ pub(crate) async fn set_color_rgb_generic(
     r: u8,
     g: u8,
     b: u8,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(lan_dev) = &device.lan_device {
         let color = govee_api::lan_api::DeviceColor { r, g, b };
         log::debug!("Using LAN API to set {device} color");
@@ -223,7 +256,7 @@ pub(crate) async fn set_color_rgb_generic(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(None);
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     if device.iot_api_supported()
@@ -232,7 +265,7 @@ pub(crate) async fn set_color_rgb_generic(
     {
         log::debug!("Using IoT API to set {device} color");
         iot.set_color_rgb(&info.entry, r, g, b).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -244,7 +277,7 @@ pub(crate) async fn set_color_rgb_generic(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(None);
-        return Ok(());
+        return Ok(Transport::Platform);
     }
     anyhow::bail!("Unable to control color for {device}");
 }
@@ -256,7 +289,7 @@ pub(crate) async fn device_set_scene(
     state: &StateHandle,
     device: &Device,
     scene: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     // TODO: some plumbing to maintain offline scene controls for preferred-LAN control
     let avoid_platform_api = device.avoid_platform_api();
 
@@ -277,7 +310,7 @@ pub(crate) async fn device_set_scene(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(Some(scene));
-        return Ok(());
+        return Ok(Transport::Platform);
     }
 
     if let Some(lan_dev) = &device.lan_device {
@@ -288,7 +321,7 @@ pub(crate) async fn device_set_scene(
             .device_mut(&device.sku, &device.id)
             .await
             .set_active_scene(Some(scene));
-        return Ok(());
+        return Ok(Transport::Lan);
     }
 
     anyhow::bail!("Unable to set scene for {device}");
@@ -302,14 +335,14 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     device: &Device,
     capability: &DeviceCapability,
     value: V,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     let value: JsonValue = value.into();
 
     // IoT-only capabilities (eg: the H6093 projector's controls) aren't known to
     // the platform API. If this SKU+instance has a ptReal frame encoder, send
     // that; otherwise fall through to the platform API.
     if try_iot_capability(state, device, &capability.instance, &value).await? {
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -317,7 +350,7 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     {
         log::debug!("Using Platform API to send {value:?} control to {device}");
         client.control_device(info, capability, value).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
 
     anyhow::bail!("Unable to use Platform API to control {device}");
@@ -530,12 +563,27 @@ pub(crate) async fn socket_turn(
     device: &Device,
     outlet: u8,
     on: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
         log::debug!("Using IoT API to set {device} outlet {outlet} -> {on}");
-        return iot.set_socket_power(&info.entry, outlet, on).await;
+        iot.set_socket_power(&info.entry, outlet, on).await?;
+        // optimistically reflect the command in the held outlet bits so the
+        // ui paints the new state before the device's status reply arrives.
+        // the subscriber overwrites this when the response (or any later
+        // status broadcast) lands. only meaningful for multi-outlet sockets;
+        // single-outlet path leaves the bits alone since they aren't read.
+        if let Some(count) = device.socket_outlet_count() {
+            let prior = device.socket_outlet_bits.unwrap_or(0);
+            let next = apply_outlet_command(prior, count, outlet, on);
+            state
+                .device_mut(&device.sku, &device.id)
+                .await
+                .set_socket_outlet_bits(next);
+            state.notify_of_state_change(&device.id).await.ok();
+        }
+        return Ok(Transport::IotSocket);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -549,7 +597,7 @@ pub(crate) async fn socket_turn(
         if http_dev.capability_by_instance(&instance).is_some() {
             log::debug!("Using Platform API to set {device} {instance} -> {on}");
             client.set_toggle_state(http_dev, &instance, on).await?;
-            return Ok(());
+            return Ok(Transport::Platform);
         }
     }
 
@@ -569,12 +617,12 @@ pub(crate) async fn fan_set_speed(
     device: &Device,
     work_mode: i64,
     speed: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         client.set_work_mode(info, work_mode, speed).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
     anyhow::bail!("Unable to control fan speed for {device}: no platform-API client");
 }
@@ -587,7 +635,7 @@ pub(crate) async fn humidifier_set_parameter(
     device: &Device,
     work_mode: i64,
     value: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Transport> {
     if let Ok(command) = Base64HexBytes::encode_for_sku(
         &device.sku,
         &SetHumidifierMode {
@@ -598,14 +646,14 @@ pub(crate) async fn humidifier_set_parameter(
         && let Some(info) = &device.undoc_device_info
     {
         iot.send_real(&info.entry, command.base64()).await?;
-        return Ok(());
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         client.set_work_mode(info, work_mode, value).await?;
-        return Ok(());
+        return Ok(Transport::Platform);
     }
     anyhow::bail!("Unable to control humidifier parameter work_mode={work_mode} for {device}");
 }

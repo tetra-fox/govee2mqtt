@@ -18,8 +18,25 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
+# install ui deps. always frozen lockfile so ci can't drift; locally same flag
+# guards against accidental drift, with pnpm install fixing it
+ui-install:
+    cd ui && pnpm install --frozen-lockfile
+
+# prettier --check + eslint, mirrors the sveltekit default template
+ui-lint:
+    cd ui && pnpm lint
+
+# svelte-check (typecheck + svelte diagnostics)
+ui-check:
+    cd ui && pnpm check
+
+# full build (vite build, gated on svelte-check via the build script)
+ui-build:
+    cd ui && pnpm build
+
 # pre-merge sweep, mirrors .github/workflows/ci.yml. ordered cheapest-fail-first
-ci: fmt-check check clippy test version-check
+ci: fmt-check check clippy test ui-lint ui-check ui-build version-check
 
 # the root package version in Cargo.toml is the single source of truth for the
 # version. read it for the recipes below

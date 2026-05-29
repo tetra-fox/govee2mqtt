@@ -1,5 +1,5 @@
 use crate::UndocApiArguments;
-use crate::service::state::StateHandle;
+use crate::service::state::{FrameDirection, FrameTransport, StateEvent, StateHandle};
 use anyhow::Context;
 use govee_api::undoc_api::{
     DeviceEntry, GoveeUndocumentedApi, LoginAccountResponse, ParsedOneClick, ms_timestamp,
@@ -7,6 +7,7 @@ use govee_api::undoc_api::{
 use rumqttc::{AsyncClient, MqttOptions, QoS, TlsConfiguration, Transport};
 use serde_json::{Map, Value as JsonValue, json};
 use std::time::Duration;
+use tokio::sync::broadcast;
 
 mod subscriber;
 use subscriber::run_iot_subscriber;
@@ -25,6 +26,11 @@ pub struct IotClient {
     /// Used to relay messages for shared devices via the REST API; see
     /// [`IotClient::send_msg`].
     undoc: GoveeUndocumentedApi,
+    /// Sender for the daemon's state-event broadcast. Used to emit Frame
+    /// events from send_msg so the ui's frame inspector can tail what went
+    /// out. Held here rather than on a StateHandle to avoid a State→IotClient
+    /// →State Arc cycle.
+    events: broadcast::Sender<StateEvent>,
 }
 
 impl IotClient {
@@ -56,6 +62,7 @@ impl IotClient {
         if device.is_shared() {
             // The device ignores direct MQTT publishes from a guest account;
             // relay through Govee's REST API, which carries the gas token.
+            self.emit_frame(&device.device, &msg);
             return Ok(self.undoc.control_device(device, msg).await?);
         }
 
@@ -65,6 +72,7 @@ impl IotClient {
             json!(format!("v_{}000", ms_timestamp())),
         );
         msg.insert("accountTopic".into(), json!(self.account_topic));
+        self.emit_frame(&device.device, &msg);
         self.client
             .publish(
                 device_topic,
@@ -75,6 +83,23 @@ impl IotClient {
             .await
             .with_context(|| format!("IotClient::send_msg {cmd} for {}", device.device))?;
         Ok(())
+    }
+
+    /// Broadcast an outbound IoT msg to the ws Frame stream. Serialization
+    /// matches what the inspector renders: the `msg` object as-sent, no
+    /// pretty-printing (the UI handles formatting).
+    fn emit_frame(&self, device_id: &str, msg: &Map<String, JsonValue>) {
+        if self.events.receiver_count() == 0 {
+            return;
+        }
+        let payload = serde_json::to_string(msg).unwrap_or_default();
+        let _ = self.events.send(StateEvent::Frame {
+            device_id: device_id.to_string(),
+            direction: FrameDirection::Out,
+            transport: FrameTransport::Iot,
+            ts: chrono::Utc::now(),
+            payload,
+        });
     }
 
     pub async fn request_status_update(&self, device: &DeviceEntry) -> anyhow::Result<()> {
@@ -244,6 +269,7 @@ pub async fn start_iot_client(
             client: client.clone(),
             account_topic: acct.topic.to_string(),
             undoc: undoc_api,
+            events: state.event_sender(),
         })
         .await;
 

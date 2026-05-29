@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>govee2mqtt</title>
+    <script>
+      // apply the persisted theme before paint so dark/light doesn't flash.
+      // mirrors theme.svelte.ts; keep in sync.
+      (() => {
+        const stored = localStorage.getItem("theme");
+        const mode = stored === "dark" || stored === "light" ? stored : "system";
+        const dark =
+          mode === "dark" ||
+          (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+      })();
+    </script>
+  </head>
+  <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -3,21 +3,21 @@ target
 .env
 core.*
 docker-target
+
 node_modules
-package.json
-package-lock.json
-# research/ is private RE scratch (decompiles, captures, notes), except the
-# reusable mitmproxy capture addon, which ships as tooling. to re-include a file
-# under an ignored tree, every parent dir must be re-included too, so this walks
-# the path down instead of ignoring the dir wholesale.
+# anchored to repo root so `ui/package.json` etc are NOT ignored. the root
+# package.json/package-lock.json exists for `npx @devcontainers/cli`, driven
+# by `just container`, and is the only one we don't want tracked.
+/package.json
+/package-lock.json
+/pnpm-lock.yaml
+
 /research/*
 !/research/mitm/
 /research/mitm/*
 !/research/mitm/capture.py
 .direnv/
 
-# the devcontainer bootstrap stages a source-building dev add-on here
 /addon-dev/
 
-# stdout from a local `cargo run` -- iot trace at the repo root
 /iot-trace.log

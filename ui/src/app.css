@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+/*
+ * self-hosted fonts via @fontsource. both inter and jetbrains mono ship as
+ * variable woff2s across the wght axis, so each is one file per subset
+ * instead of one per weight.
+ */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* class-based dark mode. theme.svelte.ts toggles .dark on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: oklch(0.97 0 0);
+}
+
+:where(.dark) body {
+  background-color: oklch(0.11 0 0);
+}
+
+/*
+ * fade global colors when the theme toggles. without this the swap from
+ * dark zinc-950 to light zinc-50 is jarring; 220ms is fast enough to feel
+ * snappy but long enough to read as intentional. scoped to background and
+ * border colors so hover transitions on individual elements aren't affected
+ * (they already have their own transition-colors utilities).
+ */
+html,
+body {
+  transition:
+    background-color 220ms ease,
+    color 220ms ease;
+}
+
+/*
+ * surface system. three utilities, each for a specific kind of element. when
+ * adding a new component, pick exactly one of these for its background
+ * instead of restating border/bg/shadow tailwind classes -- otherwise the
+ * design drifts on every new component.
+ *
+ *   .panel         section-level containers. info-tab sections, controls
+ *                  section in a device detail page, frames page outer card.
+ *                  largest blur + halo, .75rem radius.
+ *
+ *   .card-surface  card-shaped items inside panels or standalone rows. each
+ *                  device tile, a frame-card row, a hass-view collapsible
+ *                  entry, the runtime info card. medium blur, .625rem radius.
+ *
+ *   .chip          small interactive things: buttons, dropdown triggers,
+ *                  badges, the toggle-switch track, pagination buttons.
+ *                  smallest blur, .375rem radius.
+ *
+ * the visual recipe is shared: translucent fill + backdrop-blur to frost
+ * what's behind, then a 4-layer box-shadow (inset top highlight + inset
+ * bottom edge + diffuse halo + tight close shadow). this gives an edge
+ * without a hard stroked border and a glass-slab depth feel.
+ */
+@utility panel {
+  border-radius: var(--radius-xl, 0.75rem);
+  background-color: oklch(0.99 0 0);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.5),
+    0 1px 0 0 oklch(0 0 0 / 0.06),
+    0 14px 32px -10px oklch(0 0 0 / 0.2);
+}
+
+:where(.dark) .panel {
+  background-color: oklch(0.15 0.005 240);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.06),
+    0 1px 0 0 oklch(0 0 0 / 0.5),
+    0 14px 32px -8px oklch(0 0 0 / 0.7);
+}
+
+/*
+ * card-shaped surface: a step tighter visually than .panel so cards inside
+ * panels still feel layered. same construction, different radius + slightly
+ * tighter ring + shadow values.
+ */
+@utility card-surface {
+  border-radius: var(--radius-lg, 0.625rem);
+  background-color: oklch(1 0 0);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.5),
+    0 1px 0 0 oklch(0 0 0 / 0.06),
+    0 12px 28px -10px oklch(0 0 0 / 0.18);
+  transition: box-shadow 160ms ease;
+}
+
+:where(.dark) .card-surface {
+  background-color: oklch(0.18 0.005 240);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.08),
+    0 1px 0 0 oklch(0 0 0 / 0.5),
+    0 12px 28px -8px oklch(0 0 0 / 0.7);
+}
+
+/*
+ * chip-shaped surface for filter pills, badges, dropdown triggers etc. same
+ * shadow recipe, downsized. no backdrop-blur because chips are small and
+ * the frost adds nothing while costing paint.
+ */
+/*
+ * toggle track: pill-shape variant of the chip recipe. inset bevel matches
+ * the rest of the surface system so on/off toggles read as part of the same
+ * visual language; only the fill color shifts between states.
+ */
+@utility toggle-track {
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.3),
+    inset 0 -1px 0 0 oklch(0 0 0 / 0.08),
+    0 1px 2px -1px oklch(0 0 0 / 0.1);
+}
+
+@utility toggle-track-off {
+  background-color: oklch(0.85 0 0);
+}
+
+:where(.dark) .toggle-track-off {
+  background-color: oklch(0.3 0.005 240);
+}
+
+@utility toggle-track-on {
+  background-color: oklch(0.7 0.16 160);
+}
+
+:where(.dark) .toggle-track-on {
+  background-color: oklch(0.68 0.17 160);
+}
+
+@utility chip {
+  border-radius: var(--radius-md, 0.375rem);
+  background-color: oklch(1 0 0);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.4),
+    0 1px 0 0 oklch(0 0 0 / 0.06),
+    0 2px 4px -1px oklch(0 0 0 / 0.08);
+}
+
+:where(.dark) .chip {
+  background-color: oklch(0.22 0.005 240);
+  box-shadow:
+    inset 0 1px 0 0 oklch(1 0 0 / 0.08),
+    0 1px 0 0 oklch(0 0 0 / 0.5),
+    0 2px 4px -1px oklch(0 0 0 / 0.45);
+}
+
+/*
+ * accent overlay: layer on top of a .card-surface (or .panel) to mark a
+ * card as "special". the only known caller right now is the daemon meta
+ * entry on the hass tab, but the utility is generic -- pick any saturated
+ * fill and the bevel comes from the underlying surface utility.
+ */
+@utility daemon-accent {
+  background-color: oklch(0.97 0.04 290);
+}
+
+:where(.dark) .daemon-accent {
+  background-color: oklch(0.22 0.04 290);
+}

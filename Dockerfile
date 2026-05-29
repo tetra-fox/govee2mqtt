@@ -6,6 +6,18 @@
 ARG BUILD_ARCH=amd64
 
 ####################################################################################################
+## ui-builder: produces ui/dist/, baked into the daemon by rust-embed in the rust stage
+####################################################################################################
+FROM node:24-alpine AS ui-builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
+WORKDIR /ui
+# install deps first so an unchanged lockfile keeps the cache warm
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY ui/ ./
+RUN pnpm build
+
+####################################################################################################
 ## Builder: compiles the daemon once (musl, dynamically linked), shared by both targets below
 ####################################################################################################
 FROM rust:1-alpine AS builder
@@ -39,6 +51,10 @@ RUN case "${BUILD_ARCH}" in \
 
 WORKDIR /src
 COPY . .
+# bring the built ui in so rust-embed has files to bake into the binary; the
+# rust source is copied with the rest above but ui/dist is dockerignored to
+# keep host build artifacts from leaking into the image.
+COPY --from=ui-builder /ui/dist ./ui/dist
 # musl targets default to a fully static binary, but btleplug links the system
 # dbus C library and Alpine ships no static libdbus. disable crt-static so dbus
 # (plus musl libc and libgcc) links dynamically; the runtime stages install the

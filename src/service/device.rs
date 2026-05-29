@@ -182,10 +182,73 @@ pub struct DeviceItem {
     pub room: Option<String>,
     pub ip: Option<IpAddr>,
     pub state: Option<DeviceState>,
+    /// Static control surface for this SKU, derived from the matched quirk.
+    /// Carried in the snapshot so the UI can decide which controls to render
+    /// without a separate fetch per device.
+    pub capabilities: DeviceCapabilities,
+    /// Per-outlet state for multi-outlet sockets. Indexed by outlet number;
+    /// `outlets[i]` is true when outlet `i` is on. None when the device isn't
+    /// a multi-outlet socket or no IoT status with the bits has been received
+    /// yet. Decoded from `socket_outlet_bits`, not synthesized per source.
+    ///
+    /// Index `i` is wire bit `i`, which is the Govee app's `sub_i` (see
+    /// `socket_outlet_name`). The user-facing outlet number the Govee app
+    /// shows is whatever the user named `sub_i.name`, and is independent of
+    /// `i`: a device whose Govee app says "Outlet 1" may store that name in
+    /// `sub_0` or in `sub_1`, and the physical-side mapping (left/right) is
+    /// per-SKU. HA's entity labels mirror the `sub_N` names so the Govee app
+    /// and HA agree; consumers that label by raw index (e.g. the Web UI's
+    /// `#0`, `#1`) won't match the Govee app's numbering unless `sub_N.name`
+    /// happens to be `"Outlet N+1"`.
+    pub outlets: Option<Vec<bool>>,
+}
+
+/// What controls make sense for this device. Used by the UI to decide which
+/// sliders, pickers, and toggles to render. All fields are derived from the
+/// matched quirk; a device with no quirk reports a power-only baseline.
+#[derive(Serialize, Clone, Debug)]
+pub struct DeviceCapabilities {
+    /// Every device exposes power. Constant true, kept as a field so the
+    /// shape is regular if a future device type omits power.
+    pub power: bool,
+    pub brightness: bool,
+    pub rgb: bool,
+    /// `[min, max]` kelvin range when the device supports color temperature.
+    pub color_temp_kelvin: Option<[u32; 2]>,
+    /// Number of independently switched outlets for multi-outlet sockets
+    /// (eg H5082). None for everything else.
+    pub socket_outlets: Option<u8>,
+}
+
+impl DeviceCapabilities {
+    pub fn from_device(d: &Device) -> Self {
+        let quirk = d.resolve_quirk();
+        Self {
+            power: true,
+            brightness: quirk
+                .as_ref()
+                .and_then(|q| q.supports_brightness)
+                .unwrap_or(false),
+            rgb: quirk.as_ref().and_then(|q| q.supports_rgb).unwrap_or(false),
+            color_temp_kelvin: quirk
+                .as_ref()
+                .and_then(|q| q.color_temp_range)
+                .map(|(min, max)| [min, max]),
+            socket_outlets: d.socket_outlet_count(),
+        }
+    }
 }
 
 impl DeviceItem {
     pub fn snapshot(d: &Device) -> Self {
+        // for multi-outlet sockets, expand the bitfield into a per-outlet vec.
+        // None means we don't know yet (no IoT status received), as distinct
+        // from a known-all-off state which would be Some(vec![false; count]).
+        let outlets = d.socket_outlet_count().and_then(|count| {
+            (0..count)
+                .map(|i| d.socket_outlet_state(i))
+                .collect::<Option<Vec<bool>>>()
+        });
         Self {
             sku: d.sku.clone(),
             id: d.id.clone(),
@@ -193,6 +256,8 @@ impl DeviceItem {
             room: d.room_name().map(|r| r.to_string()),
             ip: d.ip_addr(),
             state: d.device_state(),
+            capabilities: DeviceCapabilities::from_device(d),
+            outlets,
         }
     }
 }

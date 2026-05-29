@@ -4,6 +4,7 @@ pub mod coordinator;
 pub mod device;
 pub mod hass;
 pub mod http;
+pub mod info;
 pub mod iot;
 pub mod platform_iot;
 pub mod quirks;

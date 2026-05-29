@@ -2,6 +2,7 @@ use crate::UndocApiArguments;
 use crate::service::device::Device;
 use crate::service::hass::spawn_hass_integration;
 use crate::service::http::run_http_server;
+use crate::service::info::{GoveeInfo, HassInfo, MqttInfo, ServiceInfo};
 use crate::service::iot::start_iot_client;
 use crate::service::platform_iot::start_platform_iot;
 use crate::service::state::StateHandle;
@@ -505,6 +506,39 @@ impl ServeCommand {
 
         // start advertising on local mqtt
         spawn_hass_integration(state.clone(), &args.hass_args).await?;
+
+        // Capture configuration for the /api/debug/info endpoint. Build after
+        // spawn_hass_integration so the discovery prefix, base topic, and
+        // temperature scale stashed on state reflect resolved values rather
+        // than the defaults. Secrets are wrapped in `Secret` so the UI knows
+        // to mask them until the user opts in to revealing.
+        state
+            .set_service_info(ServiceInfo {
+                version: govee_version().to_string(),
+                http_port: self.http_port,
+                availability_timeout_secs: timeout_secs,
+                ble_enabled: self.enable_ble,
+                govee: GoveeInfo {
+                    platform_endpoint: "https://openapi.api.govee.com".to_string(),
+                    undoc_endpoint: "https://app2.govee.com".to_string(),
+                    api_key: args.api_args.opt_api_key().ok().flatten(),
+                    email: args.undoc_args.opt_email().ok().flatten(),
+                    password: args.undoc_args.opt_password().ok().flatten(),
+                    amazon_root_ca: args.undoc_args.amazon_root_ca.display().to_string(),
+                },
+                mqtt: MqttInfo {
+                    host: args.hass_args.opt_mqtt_host().ok().flatten(),
+                    port: args.hass_args.mqtt_port().unwrap_or(1883),
+                    username: args.hass_args.mqtt_username().ok().flatten(),
+                    password: args.hass_args.mqtt_password().ok().flatten(),
+                    base_topic: state.get_base_topic().await,
+                },
+                hass: HassInfo {
+                    discovery_prefix: state.get_hass_disco_prefix().await,
+                    temperature_scale: state.get_temperature_scale().await.to_string(),
+                },
+            })
+            .await;
 
         run_http_server(state.clone(), self.http_port)
             .await

@@ -3,7 +3,7 @@
 //! handling accumulates (the `op.command` BLE decode match), kept apart from the
 //! connection setup and the outbound control commands in the parent module.
 
-use crate::service::state::StateHandle;
+use crate::service::state::{FrameDirection, FrameTransport, StateHandle};
 use anyhow::Context;
 use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
 use govee_api::http::from_json;
@@ -104,6 +104,12 @@ pub(super) async fn run_iot_subscriber(
                     Ok(packet) => {
                         log::trace!("{packet:?}");
                         if let Some((sku, device_id)) = packet.sku_and_device() {
+                            state.notify_frame(
+                                device_id,
+                                FrameDirection::In,
+                                FrameTransport::Iot,
+                                payload.to_string(),
+                            );
                             {
                                 let mut device = state.device_mut(sku, device_id).await;
                                 let mut state = match device.iot_device_status.clone() {
