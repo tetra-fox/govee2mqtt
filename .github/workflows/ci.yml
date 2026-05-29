@@ -22,12 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-prefix: fmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
       - run: nix develop --command just fmt-check
 
   clippy:
@@ -35,8 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-prefix: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -48,8 +40,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-prefix: test
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -61,8 +51,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
-        with:
-          cache-prefix: version
       - run: nix develop --command just version-check
 
   ui-lint:
@@ -70,8 +58,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
+      - uses: actions/cache@v4
         with:
-          cache-prefix: ui-lint
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
       - run: nix develop --command just ui-install
       - run: nix develop --command just ui-lint
 
@@ -80,8 +71,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
+      - uses: actions/cache@v4
         with:
-          cache-prefix: ui-check
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
       - run: nix develop --command just ui-install
       - run: nix develop --command just ui-check
 
@@ -90,7 +84,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-nix
+      - uses: actions/cache@v4
         with:
-          cache-prefix: ui-build
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
       - run: nix develop --command just ui-install
       - run: nix develop --command just ui-build

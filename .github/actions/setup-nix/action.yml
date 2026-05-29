@@ -1,11 +1,6 @@
 name: Setup Nix
 description: install nix with flakes enabled and restore the nix store from GHA cache
 
-inputs:
-  cache-prefix:
-    description: per-job cache key prefix, so jobs don't clobber each other's caches
-    required: true
-
 runs:
   using: composite
   steps:
@@ -17,12 +12,16 @@ runs:
           experimental-features = nix-command flakes
           access-tokens = github.com=${{ github.token }}
 
+    # one shared cache across every CI job that uses this action. the full
+    # fenix stable + nightly rust toolchain plus the node/pnpm/dbus closures
+    # land around 3GB; 1G would GC the toolchain on every run and force a
+    # rebuild from source.
     - uses: nix-community/cache-nix-action@v7
       with:
-        primary-key: nix-${{ runner.os }}-${{ inputs.cache-prefix }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-${{ inputs.cache-prefix }}-
-        gc-max-store-size-linux: 1G
+        primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+        restore-prefixes-first-match: nix-${{ runner.os }}-
+        gc-max-store-size-linux: 4G
         purge: true
-        purge-prefixes: nix-${{ runner.os }}-${{ inputs.cache-prefix }}-
+        purge-prefixes: nix-${{ runner.os }}-
         purge-created: 0
         purge-primary-key: never
