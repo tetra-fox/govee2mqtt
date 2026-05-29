@@ -9,6 +9,8 @@ on:
     paths:
       - "**/*.rs"
       - "**/Cargo.*"
+      - "ui/**"
+      - "common/run.sh"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/build.yml"
@@ -17,6 +19,8 @@ on:
     paths:
       - "**/*.rs"
       - "**/Cargo.*"
+      - "ui/**"
+      - "common/run.sh"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/build.yml"
