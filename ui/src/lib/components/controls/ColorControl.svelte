@@ -25,10 +25,14 @@
     pending = true;
     try {
       await setColor(id, local);
-      dirty = false;
     } catch (e) {
       console.error("color commit failed", e);
     } finally {
+      // clear dirty unconditionally: on success the daemon will echo the new
+      // color back via state.updated and $effect.pre re-seeds local; on
+      // failure we want the next prop sync to win so the picker stops
+      // claiming a color the device isn't actually at.
+      dirty = false;
       pending = false;
     }
   }

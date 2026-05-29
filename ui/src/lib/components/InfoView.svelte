@@ -39,9 +39,10 @@
         <button
           type="button"
           onclick={refresh}
-          class="chip cursor-pointer px-2 py-0.5 text-xs transition-colors select-none hover:bg-white/85 dark:hover:bg-zinc-800/60"
+          disabled={loading}
+          class="chip cursor-pointer px-2 py-0.5 text-xs transition-colors select-none hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800/60"
         >
-          refresh
+          {loading ? "loading..." : "refresh"}
         </button>
       </div>
 

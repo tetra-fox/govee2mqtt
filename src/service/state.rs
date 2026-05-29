@@ -1,3 +1,4 @@
+use crate::hass_mqtt::base::{Availability, Device as HassDevice};
 use crate::hass_mqtt::topic::Topics;
 use crate::service::ble::BleClient;
 use crate::service::control::controller_for;
@@ -16,7 +17,7 @@ use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast};
 
@@ -121,6 +122,24 @@ pub enum CommandOutcome {
 /// it costs proportional memory per active device, so keep it modest.
 pub const COMMAND_HISTORY_CAP: usize = 30;
 
+/// Global ring of recent wire frames. Sized to match the UI's FRAME_TAIL_CAP so
+/// the two views align on backfill. Each entry is one frame from `notify_frame`,
+/// regardless of device — frames carry their own device_id. Average payload is
+/// well under 1 KB (BLE frames are 60 chars of hex, IoT envelopes are a few
+/// hundred bytes), so 200 entries is roughly 100-200 KB resident.
+pub const FRAME_HISTORY_CAP: usize = 200;
+
+/// One entry of the frame ring. Same wire shape as the `Frame` ws event minus
+/// the `type` discriminant; the UI deserializes them into its `Frame` type.
+#[derive(Serialize, Clone, Debug)]
+pub struct RecentFrame {
+    pub device_id: String,
+    pub direction: FrameDirection,
+    pub transport: FrameTransport,
+    pub ts: DateTime<Utc>,
+    pub payload: String,
+}
+
 pub struct State {
     devices_by_id: Mutex<HashMap<String, Device>>,
     semaphore_by_id: Mutex<HashMap<String, Arc<Semaphore>>>,
@@ -136,13 +155,21 @@ pub struct State {
     base_topic: Mutex<String>,
     temperature_scale: Mutex<TemperatureScale>,
     /// The device-discovery components published during the most recent
-    /// registration, keyed by device config topic, then by component unique id,
-    /// with the value being the component's platform. Held so the next
-    /// registration can: clear a device topic we no longer produce (empty
-    /// retained payload removes the whole device), and tombstone a single
-    /// component that a still-present device no longer produces (republished as
-    /// `{"p": platform}`, home assistant's signal to drop just that component).
+    /// registration, keyed by device config topic. Each value holds the
+    /// device/origin/availability blocks plus a per-component map of
+    /// {platform, config_json}. Held so the next registration can: clear a
+    /// device topic we no longer produce (empty retained payload removes the
+    /// whole device), and tombstone a single component that a still-present
+    /// device no longer produces (republished as `{"p": platform}`, home
+    /// assistant's signal to drop just that component). The same map is
+    /// surfaced by the debug endpoint, which is why it keeps the full
+    /// per-component config json rather than just the platform string.
     published_components: Mutex<PublishedComponents>,
+    /// Wall-clock time of the last completed register_with_hass pass and
+    /// whether that pass had a complete enumeration. Surfaced by the debug
+    /// endpoint so a debugger can tell whether the published configs reflect
+    /// the current device set or an older partial pass.
+    last_registration: Mutex<Option<RegistrationStatus>>,
     /// Serializes registration so two overlapping registrations (eg: an HA
     /// birth message arriving during a reconnect re-register) can't both diff
     /// against a half-rebuilt topic set.
@@ -163,6 +190,10 @@ pub struct State {
     /// through `device_*` wrappers. Populated by the wrappers, exposed via the
     /// debug endpoint and the ws CommandLogged event. Keyed by device id.
     command_history: Mutex<HashMap<String, VecDeque<CommandLog>>>,
+    /// Global ring of the last FRAME_HISTORY_CAP frames seen on any device.
+    /// Populated by `notify_frame` alongside the ws fan-out so a ui that opens
+    /// after some traffic can backfill the inspector without losing context.
+    frame_history: Mutex<VecDeque<RecentFrame>>,
     /// Snapshot of the daemon's configuration captured once at serve startup;
     /// surfaced by the info endpoint. None until set_service_info runs, which
     /// only happens in the serve subcommand.
@@ -185,10 +216,12 @@ impl Default for State {
             base_topic: Default::default(),
             temperature_scale: Default::default(),
             published_components: Default::default(),
+            last_registration: Default::default(),
             registration_lock: Default::default(),
             iot_ready: Default::default(),
             events,
             command_history: Default::default(),
+            frame_history: Default::default(),
             service_info: Default::default(),
         }
     }
@@ -196,9 +229,43 @@ impl Default for State {
 
 pub type StateHandle = Arc<State>;
 
-/// Device config topic -> (component unique id -> platform), the discovery
-/// components published in one registration pass.
-pub type PublishedComponents = HashMap<String, HashMap<String, String>>;
+/// One device's discovery payload, retained between registration passes so the
+/// next pass can diff against it and so the debug endpoint can show what HA
+/// actually saw. Mirrors [`crate::hass_mqtt::base::DeviceDiscovery`] with two
+/// shape changes: components are broken back out keyed by unique id (so the
+/// UI can show each on its own), and `origin` is omitted because it's
+/// identical across every device by construction (hoisted to the bundle level
+/// in the debug response).
+#[derive(Serialize, Clone, Debug)]
+pub struct PublishedDevice {
+    pub device: HassDevice,
+    pub availability: Vec<Availability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability_mode: Option<&'static str>,
+    pub components: BTreeMap<String, PublishedComponent>,
+}
+
+/// One entity's contribution to a device-discovery payload, as we published it.
+/// `config` is the per-component JSON with the hoisted device/origin/availability
+/// blocks already stripped (mirrors what the device-discovery payload carries).
+#[derive(Serialize, Clone, Debug)]
+pub struct PublishedComponent {
+    pub platform: String,
+    pub config: JsonValue,
+}
+
+/// Device config topic -> the discovery payload we published for that device
+/// in the most recent registration pass.
+pub type PublishedComponents = HashMap<String, PublishedDevice>;
+
+/// Wall-clock timestamp of the most recent COMPLETE register_with_hass pass,
+/// surfaced by the debug endpoint. Partial passes don't update this — the
+/// retained configs they left in place came from the previous complete pass,
+/// and that pass's timestamp is what describes their freshness.
+#[derive(Serialize, Clone, Copy, Debug)]
+pub struct RegistrationStatus {
+    pub at: DateTime<Utc>,
+}
 
 impl State {
     pub fn new() -> Self {
@@ -218,10 +285,10 @@ impl State {
         self.events.clone()
     }
 
-    /// Emit a frame event. No-op when no ws clients are connected; the
-    /// payload is built by the caller regardless because frame instrumentation
-    /// runs on the wire-send path and we want it consistent whether or not
-    /// the inspector is open.
+    /// Record a frame and broadcast it to ws subscribers. Always pushes into
+    /// the global ring (so a refreshing/late-connecting ui can backfill via
+    /// `/api/recent`); only broadcasts when there's a live subscriber to send
+    /// to. The ring entry and the broadcast carry identical wire data.
     pub fn notify_frame(
         &self,
         device_id: &str,
@@ -229,16 +296,50 @@ impl State {
         transport: FrameTransport,
         payload: String,
     ) {
+        let ts = Utc::now();
+        let entry = RecentFrame {
+            device_id: device_id.to_string(),
+            direction,
+            transport,
+            ts,
+            payload,
+        };
+        // Drop into the ring synchronously so a refresh that happens within
+        // milliseconds of a frame still sees it. try_lock keeps the wire-send
+        // path lock-free in the unlikely case of contention; missing one
+        // ring entry is preferable to blocking instrumentation.
+        if let Ok(mut ring) = self.frame_history.try_lock() {
+            if ring.len() >= FRAME_HISTORY_CAP {
+                ring.pop_front();
+            }
+            ring.push_back(entry.clone());
+        }
         if self.events.receiver_count() == 0 {
             return;
         }
         let _ = self.events.send(StateEvent::Frame {
-            device_id: device_id.to_string(),
-            direction,
-            transport,
-            ts: Utc::now(),
-            payload,
+            device_id: entry.device_id,
+            direction: entry.direction,
+            transport: entry.transport,
+            ts: entry.ts,
+            payload: entry.payload,
         });
+    }
+
+    /// Read-only copy of the recent-frames ring (oldest first).
+    pub async fn get_recent_frames(&self) -> Vec<RecentFrame> {
+        self.frame_history.lock().await.iter().cloned().collect()
+    }
+
+    /// All known per-device command histories. Returned as a map so the ui
+    /// can hydrate every device at once instead of round-tripping per id.
+    pub async fn get_all_command_histories(&self) -> HashMap<String, Vec<CommandLog>> {
+        self.command_history
+            .lock()
+            .await
+            .iter()
+            .map(|(id, ring)| (id.clone(), ring.iter().cloned().collect()))
+            .collect()
     }
 
     pub async fn set_temperature_scale(&self, scale: TemperatureScale) {
@@ -281,6 +382,16 @@ impl State {
     /// /api/debug/hass endpoint. Clones so the caller doesn't hold the lock.
     pub async fn get_published_components(&self) -> PublishedComponents {
         self.published_components.lock().await.clone()
+    }
+
+    /// Stamp the most recent registration pass: the wall-clock time and
+    /// whether the enumeration was complete (vs. partial-and-left-alone).
+    pub async fn set_last_registration(&self, status: RegistrationStatus) {
+        *self.last_registration.lock().await = Some(status);
+    }
+
+    pub async fn get_last_registration(&self) -> Option<RegistrationStatus> {
+        *self.last_registration.lock().await
     }
 
     /// Push one command-history entry onto a device's ring and broadcast it

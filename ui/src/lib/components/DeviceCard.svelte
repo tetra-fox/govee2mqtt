@@ -4,6 +4,7 @@
   import SourceBadge from "./SourceBadge.svelte";
   import LastSeen from "./LastSeen.svelte";
   import Switch from "./Switch.svelte";
+  import { Users } from "@lucide/svelte";
 
   let { device, onOpen }: { device: DeviceItem; onOpen?: (id: string) => void } = $props();
 
@@ -47,7 +48,15 @@
   role="button"
   tabindex="0"
   onclick={openDetail}
-  onkeydown={(e) => (e.key === "Enter" || e.key === " ") && openDetail()}
+  onkeydown={(e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      // Space's default action on a focused element is to scroll the page;
+      // we're using the card as a button, so suppress the scroll and open
+      // the detail panel instead.
+      e.preventDefault();
+      openDetail();
+    }
+  }}
   class="card-surface group cursor-pointer p-3 transition-shadow hover:shadow-md"
 >
   <div class="flex items-start justify-between gap-2">
@@ -60,6 +69,15 @@
         {#if device.ip}
           <span>·</span>
           <span class="font-mono">{device.ip}</span>
+        {/if}
+        {#if device.shared}
+          <span
+            class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100"
+            title="shared device: control routes through the govee REST relay, not direct mqtt"
+          >
+            <Users class="size-3" />
+            shared
+          </span>
         {/if}
       </div>
     </div>

@@ -1,33 +1,24 @@
 <script lang="ts">
-  // Hex+ASCII grid for byte payloads. Accepts either a space-separated lower
-  // hex string (the format the daemon ships for BLE frames via hex_pretty) or
-  // raw bytes via the `bytes` prop. Renders 16 bytes per row with offset and
-  // ASCII gutter. Compact monospace; no controls beyond the visual grid.
+  // Hex+ASCII grid for the BLE transport. Takes the space-separated lower
+  // hex string the daemon ships via hex_pretty. 16 bytes per row with offset
+  // and ASCII gutter.
 
   let {
-    bytes,
     hex,
     bytesPerRow = 16,
   }: {
-    bytes?: Uint8Array;
-    hex?: string;
+    hex: string;
     bytesPerRow?: number;
   } = $props();
 
-  // pull bytes from whichever prop the caller used. callers pass one or the
-  // other; if both, `bytes` wins because it's already decoded.
   const data = $derived.by(() => {
-    if (bytes) return bytes;
-    if (hex) {
-      const tokens = hex.trim().split(/\s+/).filter(Boolean);
-      const out = new Uint8Array(tokens.length);
-      for (let i = 0; i < tokens.length; i++) {
-        const v = parseInt(tokens[i], 16);
-        out[i] = Number.isNaN(v) ? 0 : v;
-      }
-      return out;
+    const tokens = hex.trim().split(/\s+/).filter(Boolean);
+    const out = new Uint8Array(tokens.length);
+    for (let i = 0; i < tokens.length; i++) {
+      const v = parseInt(tokens[i], 16);
+      out[i] = Number.isNaN(v) ? 0 : v;
     }
-    return new Uint8Array();
+    return out;
   });
 
   // group bytes into rows for the grid. each row carries its offset, the

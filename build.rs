@@ -15,6 +15,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GOVEE2MQTT_RELEASE_TAG");
     println!("cargo:rerun-if-env-changed=GOVEE2MQTT_BUILD_SHA");
 
+    // rust-embed needs ui/dist to exist at compile time even if it's empty, so
+    // `cargo clippy` / `cargo test` work without first running `pnpm build`.
+    // Release builds populate it before this runs (Dockerfile pnpm build step).
+    std::fs::create_dir_all("ui/dist").expect("create ui/dist");
+
     let version = std::env::var("GOVEE2MQTT_RELEASE_TAG")
         .ok()
         .filter(|t| !t.trim().is_empty())

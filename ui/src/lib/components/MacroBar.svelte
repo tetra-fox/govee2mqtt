@@ -42,12 +42,12 @@
       >no one-click macros configured in the govee app</span
     >
   {:else}
-    {#each items as item (item.name)}
+    {#each items as item, i (i)}
       <button
         type="button"
         onclick={() => fire(item.name)}
         disabled={firing === item.name}
-        class="chip inline-flex shrink-0 cursor-pointer items-center gap-1.5 !rounded-full px-3 py-1 text-xs font-medium transition-colors select-none hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800/60"
+        class="chip inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full! px-3 py-1 text-xs font-medium transition-colors select-none hover:bg-white/85 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-zinc-800/60"
       >
         <Sparkles class="size-3.5 text-amber-500 dark:text-amber-400" />
         {item.name}

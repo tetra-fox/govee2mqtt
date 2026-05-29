@@ -10,7 +10,7 @@ use crate::hass_mqtt::router::{Message, MqttRouter, Params, Payload, State};
 use crate::hass_mqtt::select::{mqtt_set_capability_mode, mqtt_set_mode_scene};
 use crate::hass_mqtt::switch::mqtt_music_auto_color_command;
 use crate::service::device::Device as ServiceDevice;
-use crate::service::state::StateHandle;
+use crate::service::state::{RegistrationStatus, StateHandle};
 use anyhow::Context;
 use govee_api::http::from_json;
 use govee_api::lan_api::DeviceColor;
@@ -213,6 +213,20 @@ impl HassClient {
             .notify_state(state, self)
             .await
             .context("notify_state")?;
+
+        // Stamp the pass for the debug endpoint, but only when the enumeration
+        // was complete: a partial pass left the previous retained configs in
+        // place, so the debug "last registration" timestamp should still refer
+        // to the previous complete pass that produced them. Overwriting on a
+        // partial would lose track of when the current published_components
+        // actually went out.
+        if enumeration.complete {
+            state
+                .set_last_registration(RegistrationStatus {
+                    at: chrono::Utc::now(),
+                })
+                .await;
+        }
 
         log::trace!("register_with_hass: done");
 

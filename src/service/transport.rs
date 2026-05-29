@@ -338,6 +338,18 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
 ) -> anyhow::Result<Transport> {
     let value: JsonValue = value.into();
 
+    // Standard capability instances have a full LAN -> IoT -> Platform cascade
+    // already wired up in the generic verbs; route through them so a capability
+    // write from HA's number/mode entities or the Web UI's entities panel ends
+    // up on the same transport as the convenience routes (`/brightness/{n}`
+    // etc.). Without this, every standard capability write lands on the
+    // platform API by default and races whatever transport the convenience
+    // route just chose, producing visible state flap.
+    if let Some(t) = dispatch_standard_instance(state, device, &capability.instance, &value).await?
+    {
+        return Ok(t);
+    }
+
     // IoT-only capabilities (eg: the H6093 projector's controls) aren't known to
     // the platform API. If this SKU+instance has a ptReal frame encoder, send
     // that; otherwise fall through to the platform API.
@@ -354,6 +366,57 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     }
 
     anyhow::bail!("Unable to use Platform API to control {device}");
+}
+
+/// Map a standard capability instance to the matching generic verb so every
+/// transport entry point shares the same cascade. Returns `Some(transport)` if
+/// we recognized and dispatched, `None` if the instance falls through to the
+/// ptReal / platform fallback.
+async fn dispatch_standard_instance(
+    state: &StateHandle,
+    device: &Device,
+    instance: &str,
+    value: &JsonValue,
+) -> anyhow::Result<Option<Transport>> {
+    match instance {
+        "powerSwitch" => {
+            let on = value
+                .as_bool()
+                .or_else(|| value.as_i64().map(|v| v != 0))
+                .or_else(|| value.as_u64().map(|v| v != 0))
+                .ok_or_else(|| anyhow::anyhow!("powerSwitch value {value:?} is not bool/int"))?;
+            Ok(Some(power_on_generic(state, device, on).await?))
+        }
+        "brightness" => {
+            let pct: u8 = value
+                .as_i64()
+                .or_else(|| value.as_u64().map(|v| v as i64))
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| anyhow::anyhow!("brightness value {value:?} is not 0..=255"))?;
+            Ok(Some(set_brightness_generic(state, device, pct).await?))
+        }
+        "colorRgb" => {
+            let packed = value
+                .as_i64()
+                .or_else(|| value.as_u64().map(|v| v as i64))
+                .ok_or_else(|| anyhow::anyhow!("colorRgb value {value:?} is not an integer"))?;
+            let r = ((packed >> 16) & 0xff) as u8;
+            let g = ((packed >> 8) & 0xff) as u8;
+            let b = (packed & 0xff) as u8;
+            Ok(Some(set_color_rgb_generic(state, device, r, g, b).await?))
+        }
+        "colorTemperatureK" => {
+            let kelvin: u32 = value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|v| u64::try_from(v).ok()))
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| anyhow::anyhow!("colorTemperatureK value {value:?} is not a u32"))?;
+            Ok(Some(
+                set_color_temperature_generic(state, device, kelvin).await?,
+            ))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Try to send a control for `instance` as an IoT ptReal frame. Returns

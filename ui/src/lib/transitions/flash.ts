@@ -12,7 +12,10 @@ type FlashOptions = {
 
 /// svelte transition: fades the element's background from a tinted overlay
 /// to transparent, leaving any underlying bg intact. used on new rows in
-/// the frames and command-history tables to make incoming entries pop.
+/// the frames and command-history tables to make incoming entries pop. for
+/// opaque surfaces (eg <article class="card-surface">) the in:flash must
+/// be attached to the surface element itself, not a wrapper, or the
+/// surface's own background-color paints over the flash.
 export function flash(
   _node: Element,
   { enabled = true, duration = 700, rgb = [251, 191, 36] }: FlashOptions = {},

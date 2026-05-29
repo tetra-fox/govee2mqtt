@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import { store } from "../ws.svelte";
   import { forcePoll, getDeviceDebug } from "../api";
   import { relativeFrom } from "../format";
@@ -13,7 +14,7 @@
   import ColorControl from "./controls/ColorControl.svelte";
   import SceneControl from "./controls/SceneControl.svelte";
   import SocketOutletControl from "./controls/SocketOutletControl.svelte";
-  import { ArrowLeft } from "@lucide/svelte";
+  import { ArrowLeft, Users } from "@lucide/svelte";
   import Pagination from "./Pagination.svelte";
   import FrameCard from "./FrameCard.svelte";
   import EntitiesPanel from "./EntitiesPanel.svelte";
@@ -29,11 +30,11 @@
   const device = $derived(store.devices.find((d) => d.id === deviceId) ?? null);
   const history = $derived(store.histories[deviceId] ?? []);
   // newest first for the visible list. derived so it reacts to history mutation.
-  const reversed = $derived([...history].reverse());
+  const reversed = $derived(history.toReversed());
   // frames for this device only, newest first. taps the same global frames
   // tail the inspector uses; per-device filtering is just a derived view, so
   // entries roll off once the global FRAME_TAIL_CAP fills.
-  const deviceFrames = $derived(store.frames.filter((f) => f.device_id === deviceId).reverse());
+  const deviceFrames = $derived(store.frames.filter((f) => f.device_id === deviceId).toReversed());
 
   // independent pagination per table; each panel is short enough that a
   // smaller default page size keeps the side-by-side layout balanced.
@@ -79,33 +80,62 @@
   let historyFlashThreshold = $state(Number.MAX_SAFE_INTEGER);
   let framesFlashThreshold = $state(Number.MAX_SAFE_INTEGER);
 
-  onMount(async () => {
+  // remember per-id whether a frame card has already flashed this panel
+  // open, so pagination away + back doesn't re-strobe rows the user saw.
+  const flashedFrameIds = new SvelteSet<number>();
+  function shouldFlashFrame(id: number): boolean {
+    return id > framesFlashThreshold && !flashedFrameIds.has(id);
+  }
+  $effect(() => {
+    // mark every currently-rendered frame as flashed so a later re-mount via
+    // pagination is a no-op. runs after FrameCard already received its
+    // flashOnMount prop for this tick, so it doesn't suppress the in-flight
+    // transition.
+    for (const f of pagedFrames) {
+      if (f._id > framesFlashThreshold) flashedFrameIds.add(f._id);
+    }
+  });
+
+  // alive flag for the in-flight fetch chain. flipped on unmount so a slow
+  // getDeviceDebug response can't write to the store / mutate local state
+  // after the user has navigated away.
+  let alive = true;
+  onMount(() => {
     // seed the frames threshold from whatever's already buffered for this
     // device before the panel opened. anything new from now on will flash.
     framesFlashThreshold = deviceFrames.reduce((m, f) => Math.max(m, f._id), 0);
 
-    try {
-      const bundle = await getDeviceDebug(deviceId);
-      store.setHistory(deviceId, bundle.history);
-      // seed the history threshold from the freshly loaded ring so the
-      // existing entries don't strobe. wait one microtask so the derived
-      // `history` value reflects the new keyed entries.
-      queueMicrotask(() => {
-        historyFlashThreshold = history.reduce((m, e) => Math.max(m, e._id), 0);
-      });
-      // multi-outlet sockets only know per-outlet state after the device
-      // sends a status with onOff. trigger a poll on detail open when the
-      // bits aren't populated yet so the panel paints real state instead
-      // of "?" indefinitely.
-      const dev = store.devices.find((d) => d.id === deviceId);
-      if (dev?.capabilities.socket_outlets && dev.outlets === null) {
-        forcePoll(deviceId).catch((e) => console.error("force-poll failed", e));
+    (async () => {
+      try {
+        const bundle = await getDeviceDebug(deviceId);
+        if (!alive) return;
+        store.setHistory(deviceId, bundle.history);
+        // seed the history threshold from the freshly loaded ring so the
+        // existing entries don't strobe. wait one microtask so the derived
+        // `history` value reflects the new keyed entries.
+        queueMicrotask(() => {
+          if (!alive) return;
+          historyFlashThreshold = history.reduce((m, e) => Math.max(m, e._id), 0);
+        });
+        // multi-outlet sockets only know per-outlet state after the device
+        // sends a status with onOff. trigger a poll on detail open when the
+        // bits aren't populated yet so the panel paints real state instead
+        // of "?" indefinitely.
+        const dev = store.devices.find((d) => d.id === deviceId);
+        if (dev?.capabilities.socket_outlets && dev.outlets === null) {
+          forcePoll(deviceId).catch((e) => console.error("force-poll failed", e));
+        }
+      } catch (e) {
+        if (!alive) return;
+        error = (e as Error).message;
+      } finally {
+        if (alive) loading = false;
       }
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      loading = false;
-    }
+    })();
+
+    return () => {
+      alive = false;
+    };
   });
 </script>
 
@@ -124,6 +154,15 @@
       <CopyableText value={device.sku}>
         <span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">{device.sku}</span>
       </CopyableText>
+      {#if device.shared}
+        <span
+          class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100 select-none"
+          title="shared device: control routes through the govee REST relay, not direct mqtt; the platform API doesn't return state for it so polls are undoc-only"
+        >
+          <Users class="size-3" />
+          shared
+        </span>
+      {/if}
     {/if}
   </div>
 
@@ -329,9 +368,7 @@
         {:else}
           <div class="flex flex-col gap-2">
             {#each pagedFrames as frame (frame._id)}
-              <div in:flash={{ enabled: frame._id > framesFlashThreshold }}>
-                <FrameCard {frame} showDevice={false} />
-              </div>
+              <FrameCard {frame} showDevice={false} flashOnMount={shouldFlashFrame(frame._id)} />
             {/each}
           </div>
           {#if deviceFrames.length > framesPerPage}

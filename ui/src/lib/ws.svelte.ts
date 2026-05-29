@@ -1,3 +1,4 @@
+import { getRecent } from "./api";
 import type { CommandLog, DeviceItem, Frame, StateEvent } from "./types";
 
 // stable client-side ids so {#each} keys don't tear down rows on every update.
@@ -15,8 +16,9 @@ export type ConnStatus = "connecting" | "open" | "lost";
 // number of entries the daemon keeps so the live and refetched views match.
 const COMMAND_HISTORY_CAP = 30;
 
-// rolling buffer of recent frame events for the inspector. capped client-side
-// since the daemon doesn't keep a frame history; refresh = clear and wait.
+// rolling buffer of recent frame events for the inspector. matches the
+// daemon's FRAME_HISTORY_CAP so a refresh-hydrated buffer is the same size as
+// what gets retained going forward.
 const FRAME_TAIL_CAP = 200;
 
 class DeviceStore {
@@ -36,6 +38,13 @@ class DeviceStore {
   #socket: WebSocket | null = null;
   #retryMs = 1000;
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  // set by disconnect() and cleared by connect(). every WebSocket event
+  // listener checks this before mutating state, because socket.close() fires
+  // its close event asynchronously: without the guard, an in-flight close
+  // event from a previous socket runs after we've already replaced
+  // this.#socket with a new one and would null the live reference + flip
+  // status back to "lost" + schedule a stray retry.
+  #stopped = false;
   // monotonic counter for client-side ids assigned to frames and command
   // logs. one shared sequence is fine since the ids are only used as
   // {#each} keys, not exposed anywhere.
@@ -43,19 +52,60 @@ class DeviceStore {
 
   connect() {
     if (this.#socket) return;
+
+    this.#stopped = false;
+    this.status = "connecting";
+
+    // Hydrate frames + per-device histories from the daemon's retained rings
+    // before the ws opens so a refresh during a quiet moment still shows the
+    // last batch of traffic. Failure to fetch is non-fatal: the live stream
+    // will fill in from this point on regardless.
+    void this.#hydrateAndOpen();
+  }
+
+  async #hydrateAndOpen() {
+    try {
+      const bundle = await getRecent();
+      if (this.#stopped) return;
+      // assign stable client ids and trim to the cap. the daemon ships the
+      // ring oldest-first so we keep that ordering.
+      const keyedFrames: KeyedFrame[] = bundle.frames.map((f) => ({
+        ...f,
+        _id: this.#nextId++,
+      }));
+      if (keyedFrames.length > FRAME_TAIL_CAP) {
+        keyedFrames.splice(0, keyedFrames.length - FRAME_TAIL_CAP);
+      }
+      this.frames = keyedFrames;
+      const hydratedHistories: Record<string, KeyedCommandLog[]> = {};
+      for (const [deviceId, entries] of Object.entries(bundle.histories)) {
+        hydratedHistories[deviceId] = entries.map((entry) => ({
+          ...entry,
+          _id: this.#nextId++,
+        }));
+      }
+      this.histories = hydratedHistories;
+    } catch (e) {
+      console.error("hydrate /api/recent failed", e);
+    }
+    if (this.#stopped) return;
+    this.#openSocket();
+  }
+
+  #openSocket() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/ws`;
-
-    this.status = "connecting";
     const ws = new WebSocket(url);
     this.#socket = ws;
 
     ws.addEventListener("open", () => {
+      if (this.#socket !== ws) return;
       this.status = "open";
       this.#retryMs = 1000;
     });
 
     ws.addEventListener("message", (ev) => {
+      if (this.#socket !== ws) return;
       try {
         const msg = JSON.parse(ev.data as string) as StateEvent;
         this.#apply(msg);
@@ -67,6 +117,9 @@ class DeviceStore {
     });
 
     ws.addEventListener("close", () => {
+      // ignore the close event from a stale socket (one we already replaced
+      // or one that fired after disconnect() asked us to stop).
+      if (this.#stopped || this.#socket !== ws) return;
       this.#socket = null;
       this.status = "lost";
       this.#scheduleRetry();
@@ -78,6 +131,10 @@ class DeviceStore {
   }
 
   disconnect() {
+    this.#stopped = true;
+    // backoff doesn't survive a deliberate stop: a future reconnect should
+    // start from a fresh 1s, not from wherever we'd retreated to.
+    this.#retryMs = 1000;
     if (this.#retryTimer) {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = null;

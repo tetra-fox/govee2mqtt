@@ -201,6 +201,11 @@ pub struct DeviceItem {
     /// `#0`, `#1`) won't match the Govee app's numbering unless `sub_N.name`
     /// happens to be `"Outlet N+1"`.
     pub outlets: Option<Vec<bool>>,
+    /// True when the device is shared into the account rather than owned.
+    /// Surfaces in the UI so users can tell at a glance that control will go
+    /// via the REST relay (and that platform-API state polls aren't available
+    /// for it).
+    pub shared: bool,
 }
 
 /// What controls make sense for this device. Used by the UI to decide which
@@ -258,6 +263,7 @@ impl DeviceItem {
             state: d.device_state(),
             capabilities: DeviceCapabilities::from_device(d),
             outlets,
+            shared: d.is_shared(),
         }
     }
 }
@@ -651,23 +657,60 @@ impl Device {
         })
     }
 
-    /// Returns the most recently received state information
+    /// Pick the best state from whichever sources we have.
+    ///
+    /// Within a freshness window we prefer the real-time sources (LAN > IoT)
+    /// over the platform HTTP poll. The platform API lags a real-world state
+    /// change by 30-60s (Govee cloud sync), so a platform poll that arrives a
+    /// few seconds after a fresh IoT push usually carries pre-change state.
+    /// Last-write-wins on raw timestamp would let that stale poll roll the UI
+    /// back, which is exactly the visible flap we're trying to avoid.
+    ///
+    /// Outside the freshness window the polling sources are the only thing we
+    /// have, so fall back to the most-recent across all sources rather than
+    /// returning None.
     pub fn device_state(&self) -> Option<DeviceState> {
-        let mut candidates = vec![];
+        const FRESHNESS_SECS: i64 = 60;
 
-        if let Some(state) = self.compute_lan_device_state() {
-            candidates.push(state);
+        let lan = self.compute_lan_device_state();
+        let iot = self.compute_iot_device_state();
+        let http = self.compute_http_device_state();
+
+        let now = Utc::now();
+        let is_fresh = |s: &DeviceState| (now - s.updated).num_seconds() < FRESHNESS_SECS;
+
+        if let Some(s) = &lan
+            && is_fresh(s)
+        {
+            return lan;
         }
-        if let Some(state) = self.compute_http_device_state() {
-            candidates.push(state);
+        if let Some(s) = &iot
+            && is_fresh(s)
+        {
+            return iot;
         }
-        if let Some(state) = self.compute_iot_device_state() {
-            candidates.push(state);
+        if let Some(s) = &http
+            && is_fresh(s)
+        {
+            return http;
         }
 
-        candidates.sort_by_key(|state| state.updated);
+        [lan, http, iot]
+            .into_iter()
+            .flatten()
+            .max_by_key(|s| s.updated)
+    }
 
-        candidates.pop()
+    /// Whether this device is shared into the account rather than owned by it.
+    /// Shared devices come from the undoc device list (the platform API only
+    /// returns owned devices), can't be polled, and have to be controlled via
+    /// the REST relay carrying the `gas` token rather than direct AWS IoT
+    /// publishes. Defaults to false when we have no undoc record for the device.
+    pub fn is_shared(&self) -> bool {
+        self.undoc_device_info
+            .as_ref()
+            .map(|info| info.entry.is_shared())
+            .unwrap_or(false)
     }
 
     /// The online flag the undoc device list reports for this device. This is
@@ -705,9 +748,9 @@ impl Device {
     /// the device answered (LAN) or is connected to AWS IoT (IoT), so the
     /// arrival itself is the reachability signal. For those we fall back to how
     /// recently we last heard anything: past the availability timeout means the
-    /// device stopped answering and is treated as gone. The IoT poll cadence is
-    /// tied to half that timeout (see iot_resend_interval), so a live device is
-    /// re-probed before the window elapses.
+    /// device stopped answering and is treated as gone. The poll cadence is
+    /// tied to half that timeout (see state_refresh_interval), so a live device
+    /// is re-probed before the window elapses.
     ///
     /// With no polled state at all (eg: shared devices the platform API doesn't
     /// return and we can't poll), use the undoc device list's online flag.
@@ -1130,5 +1173,64 @@ mod test {
     fn no_state_falls_back_to_undoc_online_flag() {
         let device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:55:66");
         assert_eq!(device.availability_status(), Reachability::Unknown);
+    }
+
+    /// Build an HttpDeviceState with a single powerSwitch capability so the
+    /// `on` field flows through compute_http_device_state.
+    fn http_state_with_power(sku: &str, id: &str, on: bool) -> HttpDeviceState {
+        serde_json::from_value(serde_json::json!({
+            "sku": sku,
+            "device": id,
+            "capabilities": [{
+                "type": "devices.capabilities.on_off",
+                "instance": "powerSwitch",
+                "state": {"value": if on { 1 } else { 0 }}
+            }]
+        }))
+        .expect("valid HttpDeviceState")
+    }
+
+    #[test]
+    fn fresh_iot_beats_slightly_later_platform_poll() {
+        // Recreates the visible-flap scenario: user toggles a light on, IoT
+        // pushes the new state fast, then the Govee cloud's lagging poll
+        // returns a few seconds later carrying pre-change state. Last-write-
+        // wins would let the stale poll roll the UI back. The freshness
+        // window must prefer the IoT push instead.
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:9A:9B");
+
+        // IoT pushed "on" 5 seconds ago.
+        device.set_iot_device_status(govee_api::lan_api::DeviceStatus {
+            on: true,
+            ..Default::default()
+        });
+        device.last_iot_device_status_update = Some(Utc::now() - chrono::Duration::seconds(5));
+
+        // Platform poll landed just now reporting the pre-change "off".
+        device.set_http_device_state(http_state_with_power("H6109", &device.id, false));
+
+        let state = device.device_state().expect("a state");
+        assert_eq!(state.source, "AWS IoT API");
+        assert!(state.on);
+    }
+
+    #[test]
+    fn stale_iot_falls_back_to_recent_platform_poll() {
+        // The complement: when IoT hasn't sent anything in minutes, a fresh
+        // platform poll is the trustworthy source. Falling back to last-
+        // write-wins here keeps a long-dead IoT source from pinning stale data.
+        let mut device = Device::new("H6109", "AA:BB:CC:DD:EE:FF:9C:9D");
+
+        device.set_iot_device_status(govee_api::lan_api::DeviceStatus {
+            on: true,
+            ..Default::default()
+        });
+        device.last_iot_device_status_update = Some(Utc::now() - chrono::Duration::seconds(600));
+
+        device.set_http_device_state(http_state_with_power("H6109", &device.id, false));
+
+        let state = device.device_state().expect("a state");
+        assert_eq!(state.source, "PLATFORM API");
+        assert!(!state.on);
     }
 }

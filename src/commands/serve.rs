@@ -9,6 +9,7 @@ use crate::service::state::StateHandle;
 use crate::version_info::govee_version;
 use anyhow::Context;
 use chrono::Utc;
+use futures_util::stream::{self, StreamExt};
 use govee_api::lan_api::Client as LanClient;
 use govee_api::platform_api::GoveeApiClient;
 use govee_api::undoc_api::GoveeUndocumentedApi;
@@ -16,6 +17,13 @@ use once_cell::sync::{Lazy, OnceCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
+
+/// Maximum devices to poll concurrently in each periodic_state_poll pass.
+/// Mirrors what the Govee app does on launch (fan out per-device status
+/// reads in parallel). Cap exists so a large account doesn't burst the
+/// platform API past its 60 req/min limit or hold dozens of HTTP sockets;
+/// 8 leaves room for sustained polling across all paths.
+const POLL_CONCURRENCY: usize = 8;
 
 pub static POLL_INTERVAL: Lazy<chrono::Duration> = Lazy::new(|| chrono::Duration::seconds(900));
 
@@ -41,13 +49,15 @@ pub fn availability_timeout() -> chrono::Duration {
         ))
 }
 
-/// How soon we re-send an IoT status request for a device we have no fresh
-/// state for. IoT replies are async and can be lost, and poll_iot_api marks the
-/// device polled on send, so without a shorter lockout than POLL_INTERVAL a
-/// single missed reply would leave the device stale for the full interval.
-/// Tied to half the availability timeout so a live device is probed at least
-/// twice per window and a lost reply doesn't flip it offline.
-pub fn iot_resend_interval() -> chrono::Duration {
+/// How often we re-probe a device for state, when nothing newer is arriving
+/// on its own. Half the availability window so a live device is probed at
+/// least twice before its state ages past availability_timeout and HA flips
+/// the entity to Unavailable. Applies to platform polls as well as IoT
+/// status requests: without the same cadence on the platform side, a
+/// socket-type device that gets no unsolicited IoT pushes would sit
+/// unavailable in HA between the 5-min staleness mark and the next 15-min
+/// poll cycle.
+pub fn state_refresh_interval() -> chrono::Duration {
     availability_timeout() / 2
 }
 
@@ -107,23 +117,19 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     let poll_interval = device.preferred_poll_interval();
     let needs_platform = device.needs_platform_poll();
 
-    // last_polled is when we last sent a request, not when a reply arrived. An
-    // IoT reply is async and may be lost, and poll_iot_api marks the device
-    // polled on send, so gating the re-send on the full poll_interval would
-    // leave a device that missed a single reply stale for the whole interval.
-    // For IoT-polled devices gate re-sending on the shorter resend interval so
-    // we probe each device at least twice per availability window and it goes
-    // offline promptly once it stops answering. Platform polls fetch state
-    // synchronously over the rate-limited HTTP API, so they keep the full
-    // interval.
-    let resend_interval = if needs_platform {
-        poll_interval
-    } else {
-        poll_interval.min(iot_resend_interval())
-    };
+    // Cap the gap between re-probes at half the availability window, so a
+    // device that gets no unsolicited push still has its state refreshed
+    // before per-device availability ages out to "offline" in hass. The
+    // preferred poll interval is the upper bound, in case it's shorter than
+    // the refresh window. last_polled is when we last sent a request, not
+    // when a reply arrived: IoT replies are async and may be lost, and
+    // poll_iot_api marks the device polled on send, so gating on the full
+    // poll_interval here would leave a device that missed a single reply
+    // stale for the whole interval.
+    let refresh_interval = poll_interval.min(state_refresh_interval());
     let can_update = match &device.last_polled {
         None => true,
-        Some(last) => now - last > resend_interval,
+        Some(last) => now - last > refresh_interval,
     };
 
     if !can_update {
@@ -133,7 +139,7 @@ async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Res
     let device_state = device.device_state();
     let needs_update = match &device_state {
         None => true,
-        Some(state) => now - state.updated > poll_interval,
+        Some(state) => now - state.updated > refresh_interval,
     };
 
     if !needs_update {
@@ -181,7 +187,13 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
     }
     let mut first_pass = true;
     loop {
-        for d in state.devices().await {
+        // Fan out the per-device polls concurrently, bounded by
+        // POLL_CONCURRENCY. The Govee app fires status reads in parallel on
+        // launch and we do the same here so a full pass completes in the
+        // time of the slowest device, not the sum.
+        let devices = state.devices().await;
+        let to_poll: Vec<Device> = devices
+            .into_iter()
             // On the first pass, don't spend cloud request quota polling a
             // device that LAN discovery is expected to answer for: leave it to
             // the disco task, which publishes state as devices respond over the
@@ -189,16 +201,23 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
             // answers, a later cloud poll once lan_device is still unset) gives
             // us state, which is the honest status. A device with no LAN path
             // is polled now over the cloud.
-            if first_pass
-                && d.lan_device.is_none()
-                && d.resolve_quirk().is_some_and(|q| q.lan_api_capable)
-            {
-                continue;
-            }
-            if let Err(err) = poll_single_device(&state, &d).await {
-                log::error!("while polling {d}: {err:#}");
-            }
-        }
+            .filter(|d| {
+                !(first_pass
+                    && d.lan_device.is_none()
+                    && d.resolve_quirk().is_some_and(|q| q.lan_api_capable))
+            })
+            .collect();
+
+        stream::iter(to_poll)
+            .for_each_concurrent(POLL_CONCURRENCY, |d| {
+                let state = state.clone();
+                async move {
+                    if let Err(err) = poll_single_device(&state, &d).await {
+                        log::error!("while polling {d}: {err:#}");
+                    }
+                }
+            })
+            .await;
 
         // Republish per-device availability after the poll cycle. A successful
         // poll already publishes it via the state-change path, but a device
@@ -207,14 +226,23 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
         // stale. Publishing the current status for every device here flips
         // those to offline.
         if let Some(hass) = state.get_hass_client().await {
-            for d in state.devices().await {
-                if !d.is_controllable() {
-                    continue;
-                }
-                if let Err(err) = hass.publish_device_availability(&d, &state).await {
-                    log::error!("while publishing availability for {d}: {err:#}");
-                }
-            }
+            let devices: Vec<Device> = state
+                .devices()
+                .await
+                .into_iter()
+                .filter(|d| d.is_controllable())
+                .collect();
+            stream::iter(devices)
+                .for_each_concurrent(POLL_CONCURRENCY, |d| {
+                    let hass = hass.clone();
+                    let state = state.clone();
+                    async move {
+                        if let Err(err) = hass.publish_device_availability(&d, &state).await {
+                            log::error!("while publishing availability for {d}: {err:#}");
+                        }
+                    }
+                })
+                .await;
         }
 
         first_pass = false;

@@ -35,6 +35,10 @@ export type DeviceItem = {
   /// per-outlet on/off for multi-outlet sockets, or null when the daemon
   /// hasn't received an IoT status with the bits yet.
   outlets: boolean[] | null;
+  /// true when the device is shared into this account rather than owned.
+  /// shared devices are controlled via the REST relay (carrying the gas
+  /// token) and don't get platform-API state polls.
+  shared: boolean;
 };
 
 export type StateEvent =
@@ -103,12 +107,64 @@ export type DiscoveryItem = {
   effective_transports: Transport[];
   last_seen: LastSeen;
   last_polled: string | null;
+  shared: boolean;
 };
 
-// /api/debug/hass: HashMap<config_topic, HashMap<component_uid, platform>>.
-// outer key is the MQTT discovery config topic, inner key is the component's
-// unique id, value is the platform name (light/switch/sensor/etc).
-export type HassRegistration = Record<string, Record<string, string>>;
+// mirrors src/hass_mqtt/base.rs Availability + Device. several of the device
+// fields use `#[serde(skip_serializing_if)]` on the rust side and are therefore
+// absent from the wire (not present as null) when empty/None; the TS shape
+// declares them optional to match what serde produces, not what the type
+// theoretically allows.
+export type HassAvailability = { topic: string };
+export type HassDevice = {
+  name: string;
+  manufacturer: string;
+  model: string;
+  sw_version?: string;
+  hw_version?: string;
+  suggested_area?: string;
+  via_device?: string;
+  identifiers: string[];
+  connections?: [string, string][];
+};
+
+// mirrors src/service/state.rs PublishedComponent / PublishedDevice. one
+// entry per HA device-discovery config topic, with the device-level
+// metadata plus a per-component map of {platform, full config json}.
+export type HassPublishedComponent = {
+  platform: string;
+  config: unknown;
+};
+export type HassPublishedDevice = {
+  device: HassDevice;
+  availability: HassAvailability[];
+  availability_mode?: "all";
+  components: Record<string, HassPublishedComponent>;
+};
+
+export type HassPublishedEntry = HassPublishedDevice & { topic: string };
+
+export type HassServiceTopics = {
+  availability: string;
+  oneclick: string;
+  purge_caches: string;
+};
+
+export type HassRoute = { pattern: string; purpose: string };
+
+export type HassRegistrationStatus = { at: string };
+
+// /api/debug/hass: the rich debug bundle for the HA integration tab.
+// mirrors src/service/http.rs HassDebug.
+export type HassDebug = {
+  connected: boolean;
+  discovery_prefix: string;
+  base_topic: string;
+  last_registration: HassRegistrationStatus | null;
+  service_topics: HassServiceTopics;
+  routes: HassRoute[];
+  devices: HassPublishedEntry[];
+};
 
 // mirrors src/service/state.rs Transport. snake_case on the wire matches the
 // rust #[serde(rename_all = "snake_case")] derive.
@@ -129,6 +185,14 @@ export type CommandLog = {
   outcome: CommandOutcome;
 };
 
+// /api/recent bundle: the daemon's retained frame ring and every device's
+// command history. Fetched on ws connect so a refresh restores the inspector
+// and per-device panels without losing what fired before the new socket opens.
+export type RecentBundle = {
+  frames: Frame[];
+  histories: Record<string, CommandLog[]>;
+};
+
 // /api/device/{id}/debug bundle.
 export type DeviceDebug = {
   device: DeviceItem;
@@ -138,6 +202,12 @@ export type DeviceDebug = {
 // mirrors src/service/http.rs DeviceEntity. capability kinds map to the
 // platform-API model; the ui renders generic controls per kind. current_value
 // is whatever shape the kind reports (number, string, bool, object, array).
+//
+// the rust DeviceCapabilityKind enum has an Other(String) catch-all variant
+// for kinds the daemon hasn't enumerated yet; serde emits it as the bare
+// inner string. the `(string & {})` tail keeps the named members visible to
+// autocomplete while letting unknown kinds (eg `devices.capabilities.gradient_setting`
+// from a future SKU) type-check without falling outside the union.
 export type DeviceEntityKind =
   | "devices.capabilities.on_off"
   | "devices.capabilities.toggle"
@@ -152,7 +222,8 @@ export type DeviceEntityKind =
   | "devices.capabilities.temperature_setting"
   | "devices.capabilities.online"
   | "devices.capabilities.property"
-  | "devices.capabilities.event";
+  | "devices.capabilities.event"
+  | (string & {});
 
 export type DeviceEntityParameters =
   | { dataType: "ENUM"; options: { name: string; value: unknown }[] }

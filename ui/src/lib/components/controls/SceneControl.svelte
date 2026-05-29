@@ -44,7 +44,7 @@
     >
   {:else}
     <div class="flex flex-wrap gap-1.5">
-      {#each scenes as name (name)}
+      {#each scenes as name, i (i)}
         {@const active = current === name}
         <button
           type="button"
@@ -52,7 +52,7 @@
           disabled={pending === name}
           class="cursor-pointer px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 {active
             ? 'rounded-full bg-emerald-500 text-white'
-            : 'chip !rounded-full text-zinc-700 hover:bg-white/85 dark:text-zinc-200 dark:hover:bg-zinc-800/60'}"
+            : 'chip rounded-full! text-zinc-700 hover:bg-white/85 dark:text-zinc-200 dark:hover:bg-zinc-800/60'}"
         >
           {name}
         </button>

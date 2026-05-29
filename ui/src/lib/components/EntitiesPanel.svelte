@@ -21,49 +21,88 @@
   // SvelteSet is its own reactive primitive; no $state() wrapper needed.
   let pending = new SvelteSet<string>();
 
+  // monotonic request token so an out-of-order load() response (eg a fast
+  // refetch lands before a slower one started earlier) doesn't clobber the
+  // newer state with the older payload. only the response whose token still
+  // matches the latest token is applied.
+  let loadToken = 0;
   async function load() {
+    const token = ++loadToken;
     try {
-      entities = await getDeviceEntities(deviceId);
+      const fresh = await getDeviceEntities(deviceId);
+      if (token !== loadToken) return;
+      entities = fresh;
       error = null;
     } catch (e) {
+      if (token !== loadToken) return;
       error = (e as Error).message;
     } finally {
-      loading = false;
+      if (token === loadToken) loading = false;
     }
   }
 
-  // re-fetch on any device_updated for this device. cheaper than wiring a
-  // separate ws message for capability changes; the tick is bumped by every
-  // store mutation including device_updated, so it works as a "something
-  // changed" signal.
-  let lastTick = $state(0);
+  // re-fetch when THIS device's state.updated stamp changes. previously the
+  // trigger was store.tick (bumped on every snapshot / device_updated /
+  // command_logged / frame for any device), which made this panel refetch
+  // /entities on essentially every ws event. scoping to the specific
+  // device's state stamp cuts that to one refetch per actual update.
+  const watched = $derived(store.devices.find((d) => d.id === deviceId));
+  let lastUpdated = $state<string | null>(null);
   $effect(() => {
-    if (store.tick !== lastTick && lastTick !== 0) {
-      // debounce: only refetch if a device with our id was the one updated.
-      const fresh = store.devices.find((d) => d.id === deviceId);
-      if (fresh) {
-        load();
-      }
+    const u = watched?.state?.updated ?? null;
+    if (u !== null && lastUpdated !== null && u !== lastUpdated) {
+      load();
     }
-    lastTick = store.tick;
+    lastUpdated = u;
   });
 
   onMount(load);
 
   async function setValue(instance: string, value: unknown) {
     pending.add(instance);
+    // optimistic update goes in FIRST so the control reflects the user's
+    // intent immediately. capture prior value so the catch can roll back
+    // if the daemon rejects. without the upfront update, a native input
+    // (eg <input type="range">) keeps the user's drag position even after
+    // a failure because current_value never changed and the value= attr
+    // didn't re-diff.
+    const prior = entities.find((e) => e.instance === instance)?.current_value;
+    entities = entities.map((e) => (e.instance === instance ? { ...e, current_value: value } : e));
     try {
       await setCapability(deviceId, instance, value);
-      // optimistic local update: replace the current_value so the control
-      // doesn't snap back to the prior state while the daemon reconciles.
-      entities = entities.map((e) =>
-        e.instance === instance ? { ...e, current_value: value } : e,
-      );
     } catch (e) {
       console.error("capability set failed", e);
+      entities = entities.map((x) =>
+        x.instance === instance ? { ...x, current_value: prior } : x,
+      );
     } finally {
       pending.delete(instance);
     }
+  }
+
+  /// Resolve the value to send for an on_off / toggle capability's logical
+  /// "on" or "off". Some SKUs (eg H5080, H5083) use 17/16 instead of 1/0;
+  /// the platform_api side encodes these into parameters.options, so prefer
+  /// those when present and fall back to 1/0 only when the capability has
+  /// no enum metadata.
+  function onOffValue(e: DeviceEntity, on: boolean): unknown {
+    if (e.parameters?.dataType === "ENUM") {
+      const opt = e.parameters.options.find((o) => o.name === (on ? "on" : "off"));
+      if (opt) return opt.value;
+    }
+    return on ? 1 : 0;
+  }
+
+  /// Compare current_value against the capability's "on" option (or the
+  /// generic truthy heuristic when there are no enum options). Avoids the
+  /// asBool fallback returning true for both 17 (on) and 18 (off) on SKUs
+  /// that use non-1/0 enum values.
+  function isOnState(e: DeviceEntity): boolean {
+    if (e.parameters?.dataType === "ENUM") {
+      const onOpt = e.parameters.options.find((o) => o.name === "on");
+      if (onOpt) return e.current_value === onOpt.value;
+    }
+    return asBool(e.current_value);
   }
 
   // group entities so the most-actionable kinds float to the top and the
@@ -85,7 +124,7 @@
       "devices.capabilities.online": 5,
       "devices.capabilities.event": 6,
     };
-    return [...entities].sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+    return entities.toSorted((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
   });
 
   function asBool(v: unknown): boolean {
@@ -167,8 +206,8 @@
           <div class="flex shrink-0 items-center gap-2">
             {#if e.kind === "devices.capabilities.on_off" || e.kind === "devices.capabilities.toggle"}
               <Switch
-                checked={asBool(e.current_value)}
-                onCheckedChange={(next) => setValue(e.instance, next ? 1 : 0)}
+                checked={isOnState(e)}
+                onCheckedChange={(next) => setValue(e.instance, onOffValue(e, next))}
                 disabled={busy}
                 ariaLabel={e.name}
               />

@@ -5,6 +5,7 @@
   import type { DiscoveryItem } from "../types";
   import TransportBadge from "./TransportBadge.svelte";
   import CopyableText from "./CopyableText.svelte";
+  import { Users } from "@lucide/svelte";
 
   let items = $state<DiscoveryItem[]>([]);
   let loading = $state(true);
@@ -78,11 +79,22 @@
                 </CopyableText>
               </div>
             </div>
-            <span
-              class="select-none rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-            >
-              {item.device_type.replace("devices.types.", "")}
-            </span>
+            <div class="flex shrink-0 items-center gap-1.5">
+              {#if item.shared}
+                <span
+                  class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100 select-none"
+                  title="shared device: control routes through the govee REST relay, not direct mqtt; explains the empty http_info / http_state / iot_status dots"
+                >
+                  <Users class="size-3" />
+                  shared
+                </span>
+              {/if}
+              <span
+                class="select-none rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+              >
+                {item.device_type.replace("devices.types.", "")}
+              </span>
+            </div>
           </div>
 
           <div class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">

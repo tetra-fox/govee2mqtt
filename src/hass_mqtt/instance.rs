@@ -1,7 +1,9 @@
 use crate::hass_mqtt::base::{DeviceDiscovery, EntityConfig};
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::HassClient;
-use crate::service::state::{PublishedComponents, StateHandle};
+use crate::service::state::{
+    PublishedComponent, PublishedComponents, PublishedDevice, StateHandle,
+};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::Serialize;
@@ -120,15 +122,17 @@ impl EntityList {
 
             // Record what we're actually producing for this device, before
             // tombstones are mixed in, so the next pass diffs against the live
-            // set rather than the removed ones.
-            published.insert(topic.clone(), group.live_components());
+            // set rather than the removed ones. Same snapshot also feeds the
+            // /api/debug/hass endpoint, so it carries each component's full
+            // config json, not just the platform string.
+            published.insert(topic.clone(), group.snapshot());
 
             // Tombstone any component this device carried last time but no
             // longer produces.
             if let Some(prev) = previous.get(&topic) {
-                for (unique_id, platform) in prev {
+                for (unique_id, comp) in &prev.components {
                     if !group.payload.components.contains_key(unique_id) {
-                        group.tombstone(unique_id.clone(), platform.clone());
+                        group.tombstone(unique_id.clone(), comp.platform.clone());
                     }
                 }
             }
@@ -211,13 +215,39 @@ impl DeviceGroup {
         self.payload.components.insert(base.unique_id, config);
     }
 
-    /// The live (non-tombstone) components keyed by unique id, with their
-    /// platform. Call before adding tombstones.
-    fn live_components(&self) -> HashMap<String, String> {
-        self.platforms
+    /// The current state of this device's publish, captured before any
+    /// tombstones are mixed in. Used both to seed the next pass's diff and to
+    /// feed the debug endpoint; per-component config carries what we actually
+    /// publish to home assistant (hoisted fields already stripped).
+    fn snapshot(&self) -> PublishedDevice {
+        let components = self
+            .platforms
             .iter()
-            .map(|(id, platform)| (id.clone(), platform.to_string()))
-            .collect()
+            .map(|(uid, platform)| {
+                // add() writes both `platforms` and `payload.components` in
+                // lockstep for the same unique_id, so a uid present in the
+                // platforms map must be present in payload.components too.
+                let config = self
+                    .payload
+                    .components
+                    .get(uid)
+                    .expect("snapshot: platforms and payload.components are written in lockstep by add()")
+                    .clone();
+                (
+                    uid.clone(),
+                    PublishedComponent {
+                        platform: platform.to_string(),
+                        config,
+                    },
+                )
+            })
+            .collect();
+        PublishedDevice {
+            device: self.payload.device.clone(),
+            availability: self.payload.availability.clone(),
+            availability_mode: self.payload.availability_mode,
+            components,
+        }
     }
 
     /// Add a removal marker for a component that is no longer produced. Home
@@ -301,16 +331,24 @@ mod tests {
     }
 
     #[test]
-    fn live_components_reports_platforms_before_tombstones() {
+    fn snapshot_reports_platforms_before_tombstones() {
         let mut group = DeviceGroup::from_first(&switch_component("a", "dev1"));
         group.add(switch_component("a", "dev1"));
 
-        let live = group.live_components();
-        assert_eq!(live.get("a").map(String::as_str), Some("switch"));
+        let snap = group.snapshot();
+        assert_eq!(
+            snap.components.get("a").map(|c| c.platform.as_str()),
+            Some("switch")
+        );
+        // the snapshot carries the per-component config we publish, with the
+        // hoisted device/origin/availability blocks stripped (matches what hass
+        // sees inside the device-discovery payload).
+        assert_eq!(snap.components["a"].config["command_topic"], "g/a/cmd");
+        assert!(snap.components["a"].config.get("device").is_none());
 
         group.tombstone("gone".to_string(), "sensor".to_string());
-        // live_components captured before the tombstone doesn't include it
-        assert!(!live.contains_key("gone"));
+        // snapshot captured before the tombstone doesn't include it
+        assert!(!snap.components.contains_key("gone"));
     }
 
     #[test]

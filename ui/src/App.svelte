@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { SvelteMap } from "svelte/reactivity";
   import { fly } from "svelte/transition";
   import { store } from "./lib/ws.svelte";
   import { route, type ViewKey } from "./lib/route.svelte";
@@ -55,11 +54,15 @@
     prevHasDetail = hasDetail;
   });
 
-  // rekey on both view and the open/closed state of the detail panel so the
-  // page transition also runs when entering/exiting a device's detail page.
-  // navigating between two devices isn't a tab-level change, so id isn't
-  // in the key.
-  const screenKey = $derived(`${route.view}:${route.deviceId ? "detail" : "list"}`);
+  // rekey on view, on the open/closed state of the detail panel, AND on the
+  // device id when in detail view. without the id in the key, navigating
+  // between two device detail pages reuses the same DeviceDetail instance —
+  // onMount stays no-op for the new id, so getDeviceDebug never fires for
+  // the second device and its history/flash-thresholds inherit from the
+  // first.
+  const screenKey = $derived(
+    `${route.view}:${route.deviceId ? `detail:${route.deviceId}` : "list"}`,
+  );
 
   onMount(() => {
     route.start();
@@ -73,14 +76,8 @@
   // group by room, with a synthetic "no room" bucket. sort rooms alphabetically
   // for stability across reorders, devices alphabetically within each room.
   const grouped = $derived.by(() => {
-    const map = new SvelteMap<string, typeof store.devices>();
-    for (const d of store.devices) {
-      const key = d.room ?? "";
-      const list = map.get(key);
-      if (list) list.push(d);
-      else map.set(key, [d]);
-    }
-    const rooms = [...map.keys()].sort((a, b) => {
+    const byRoom = Object.groupBy(store.devices, (d) => d.room ?? "");
+    const rooms = Object.keys(byRoom).toSorted((a, b) => {
       // empty room ("no room") goes last
       if (a === "" && b !== "") return 1;
       if (b === "" && a !== "") return -1;
@@ -88,10 +85,7 @@
     });
     return rooms.map((room) => ({
       room,
-      devices: map
-        .get(room)!
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name)),
+      devices: (byRoom[room] ?? []).toSorted((a, b) => a.name.localeCompare(b.name)),
     }));
   });
 </script>

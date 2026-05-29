@@ -35,7 +35,7 @@
       role="tab"
       aria-selected={active}
       onclick={() => onChange(it.value)}
-      class="relative z-10 inline-flex min-w-[5rem] flex-1 cursor-pointer items-center justify-center gap-1.5 rounded px-3 py-1 transition-colors select-none {active
+      class="relative z-10 inline-flex min-w-20 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded px-3 py-1 transition-colors select-none {active
         ? 'font-medium'
         : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'}"
     >

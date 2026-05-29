@@ -36,14 +36,14 @@
   <Select.Portal>
     <Select.Content
       sideOffset={4}
-      class="panel z-50 max-h-[min(20rem,var(--bits-select-content-available-height))] min-w-[var(--bits-select-anchor-width)] overflow-hidden outline-none"
+      class="panel z-50 max-h-[min(20rem,var(--bits-select-content-available-height))] min-w-(--bits-select-anchor-width) overflow-hidden outline-none"
     >
       <Select.Viewport class="p-0.5">
         {#each items as item (item.value)}
           <Select.Item
             value={item.value}
             label={item.label}
-            class="relative flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1 font-mono text-xs outline-none data-[highlighted]:bg-zinc-100 dark:data-[highlighted]:bg-zinc-800"
+            class="relative flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1 font-mono text-xs outline-none data-highlighted:bg-zinc-100 dark:data-highlighted:bg-zinc-800"
           >
             {#snippet children({ selected })}
               <span class="flex w-3 shrink-0 justify-center">

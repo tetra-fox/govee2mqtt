@@ -3,8 +3,9 @@ import type {
   DeviceDebug,
   DeviceEntity,
   DiscoveryItem,
-  HassRegistration,
+  HassDebug,
   OneClick,
+  RecentBundle,
 } from "./types";
 
 // the rest endpoints all GET. error responses come back as
@@ -16,6 +17,13 @@ async function call(path: string): Promise<unknown> {
   if (!r.ok) {
     const msg = body && typeof body === "object" && "msg" in body ? String(body.msg) : r.statusText;
     throw new Error(`${path}: ${msg}`);
+  }
+  // Distinguish "endpoint succeeded with null body" (an empty 200 or a body
+  // that didn't parse as JSON) from "endpoint returned null". The callers all
+  // expect a concrete shape; returning null here would cast through and leave
+  // the view rendering nothing with no diagnostic.
+  if (body === null) {
+    throw new Error(`${path}: empty or non-JSON response`);
   }
   return body;
 }
@@ -81,9 +89,8 @@ export async function listDiscovery(): Promise<DiscoveryItem[]> {
   return Array.isArray(body) ? (body as DiscoveryItem[]) : [];
 }
 
-export async function listHassRegistration(): Promise<HassRegistration> {
-  const body = await call("/api/debug/hass");
-  return body && typeof body === "object" ? (body as HassRegistration) : {};
+export async function getHassDebug(): Promise<HassDebug> {
+  return (await call("/api/debug/hass")) as HassDebug;
 }
 
 export async function getDeviceDebug(id: string): Promise<DeviceDebug> {
@@ -96,6 +103,10 @@ export function forcePoll(id: string) {
 
 export async function getDebugInfo(): Promise<DebugInfo> {
   return (await call("/api/debug/info")) as DebugInfo;
+}
+
+export async function getRecent(): Promise<RecentBundle> {
+  return (await call("/api/recent")) as RecentBundle;
 }
 
 export async function getDeviceEntities(id: string): Promise<DeviceEntity[]> {

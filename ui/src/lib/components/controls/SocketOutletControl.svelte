@@ -1,19 +1,24 @@
 <script lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
   import { outletPower } from "../../api";
   import Switch from "../Switch.svelte";
 
   let { id, count, outlets }: { id: string; count: number; outlets: boolean[] | null } = $props();
 
-  let pendingIndex = $state<number | null>(null);
+  // per-outlet pending state. a single number-or-null wasn't enough: toggling
+  // outlet 0 then immediately outlet 1 would have outlet 0's finally clear
+  // pendingIndex back to null while outlet 1's command was still in flight,
+  // leaving outlet 1's switch enabled and inviting a second duplicate toggle.
+  const pending = new SvelteSet<number>();
 
   async function setOutlet(index: number, next: boolean) {
-    pendingIndex = index;
+    pending.add(index);
     try {
       await outletPower(id, index, next);
     } catch (e) {
       console.error("outlet toggle failed", e);
     } finally {
-      pendingIndex = null;
+      pending.delete(index);
     }
   }
 </script>
@@ -28,7 +33,7 @@
         <Switch
           checked={known ?? false}
           onCheckedChange={(next) => setOutlet(i, next)}
-          disabled={pendingIndex === i}
+          disabled={pending.has(i)}
           size="sm"
           ariaLabel={`outlet ${i}`}
         />

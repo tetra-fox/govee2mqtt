@@ -1,7 +1,7 @@
 use crate::service::coordinator::Coordinator;
 use crate::service::device::{Device, DeviceItem};
 use crate::service::info::ServiceInfo;
-use crate::service::state::{CommandLog, StateEvent, StateHandle, Transport};
+use crate::service::state::{CommandLog, RecentFrame, StateEvent, StateHandle, Transport};
 use anyhow::Context;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
@@ -276,6 +276,11 @@ struct DiscoveryItem {
     effective_transports: Vec<Transport>,
     last_seen: LastSeen,
     last_polled: Option<DateTime<Utc>>,
+    /// True when the device is shared into this account rather than owned.
+    /// Mirrored from the undoc device list's `share` flag; explains why
+    /// shared devices show no http_info / http_state / iot_status (platform
+    /// API and direct AWS IoT publishes don't apply to them).
+    shared: bool,
 }
 
 #[derive(Serialize)]
@@ -338,6 +343,7 @@ impl DiscoveryItem {
                 iot_status: d.last_iot_device_status_update,
             },
             last_polled: d.last_polled,
+            shared: d.is_shared(),
         }
     }
 }
@@ -397,9 +403,173 @@ async fn list_discovery(State(state): State<StateHandle>) -> Response {
     Json(items).into_response()
 }
 
+/// Bundle returned by /api/debug/hass. Combines the published discovery
+/// configs (what HA has actually seen from us) with the static surface area of
+/// our MQTT integration (the service-wide topics we own and the command-route
+/// patterns we subscribe to) so the UI's HA tab can act as a debug surface for
+/// the whole integration rather than just a config dump.
+#[derive(Serialize)]
+struct HassDebug {
+    /// Whether the daemon currently has an MQTT broker session up.
+    connected: bool,
+    /// HA-side discovery prefix (`homeassistant` by default), used as the
+    /// `<prefix>/device/<id>/config` topic root.
+    discovery_prefix: String,
+    /// Our base topic (`govee2mqtt` by default), used for every command/state
+    /// topic and as the prefix for HA entity unique ids.
+    base_topic: String,
+    /// Wall-clock metadata for the most recent registration pass, or null if
+    /// we haven't registered yet this session.
+    last_registration: Option<crate::service::state::RegistrationStatus>,
+    /// Service-wide topics the daemon owns (no per-device segment). Power
+    /// users `mosquitto_sub` these to watch bridge health or `mosquitto_pub`
+    /// to trigger one-clicks / cache purges.
+    service_topics: HassServiceTopics,
+    /// The command-topic patterns the MQTT router subscribes to. Each pattern
+    /// is shown with `:param` placeholders rather than concrete ids, since one
+    /// route covers every device.
+    routes: Vec<HassRoute>,
+    /// One entry per published HA device-discovery config: keyed by topic,
+    /// with the device metadata, availability blocks and per-component config
+    /// payloads we actually published.
+    devices: Vec<HassPublishedEntry>,
+}
+
+#[derive(Serialize)]
+struct HassServiceTopics {
+    availability: String,
+    oneclick: String,
+    purge_caches: String,
+}
+
+#[derive(Serialize)]
+struct HassRoute {
+    pattern: String,
+    /// Short note on what arrives on this topic. Hardcoded next to the route
+    /// list so the two stay in sync.
+    purpose: &'static str,
+}
+
+#[derive(Serialize)]
+struct HassPublishedEntry {
+    topic: String,
+    #[serde(flatten)]
+    payload: crate::service::state::PublishedDevice,
+}
+
 async fn list_hass_registration(State(state): State<StateHandle>) -> Response {
     let components = state.get_published_components().await;
-    Json(components).into_response()
+    let topics = state.topics().await;
+    let discovery_prefix = state.get_hass_disco_prefix().await;
+    let base_topic = state.get_base_topic().await;
+    let last_registration = state.get_last_registration().await;
+    let connected = state.get_hass_client().await.is_some();
+
+    // Sort by topic for stable rendering. The published_components map's
+    // iteration order is otherwise hash-randomized.
+    let mut devices: Vec<HassPublishedEntry> = components
+        .into_iter()
+        .map(|(topic, payload)| HassPublishedEntry { topic, payload })
+        .collect();
+    devices.sort_by(|a, b| a.topic.cmp(&b.topic));
+
+    let routes = vec![
+        HassRoute {
+            pattern: format!("{discovery_prefix}/status"),
+            purpose: "HA online/offline birth message; triggers a re-registration pass",
+        },
+        HassRoute {
+            pattern: topics.route_light_command(),
+            purpose: "set state/brightness/color/color-temp/effect on a light entity",
+        },
+        HassRoute {
+            pattern: topics.route_light_segment_command(),
+            purpose: "set brightness/color on a single light segment",
+        },
+        HassRoute {
+            pattern: topics.route_switch_command(),
+            purpose: "toggle a named switch capability (powerSwitch, etc)",
+        },
+        HassRoute {
+            pattern: topics.route_outlet_command(),
+            purpose: "toggle one outlet of a multi-outlet socket (eg H5082)",
+        },
+        HassRoute {
+            pattern: topics.route_h5082_timer_command(),
+            purpose: "set/clear an H5082 recurring timer slot (power-user write path)",
+        },
+        HassRoute {
+            pattern: topics.route_request_platform_data(),
+            purpose: "force a platform-API poll for the device",
+        },
+        HassRoute {
+            pattern: topics.route_number_command(),
+            purpose: "set a numeric work-mode parameter (mode_name/work_mode)",
+        },
+        HassRoute {
+            pattern: topics.route_capability_number_command(),
+            purpose: "set a generic Range capability exposed as a number",
+        },
+        HassRoute {
+            pattern: topics.route_capability_mode_command(),
+            purpose: "set a generic Mode capability exposed as a select",
+        },
+        HassRoute {
+            pattern: topics.route_music_sensitivity_command(),
+            purpose: "set music-sensitivity for the Music: scenes",
+        },
+        HassRoute {
+            pattern: topics.route_music_auto_color_command(),
+            purpose: "toggle auto-color for Music: scenes",
+        },
+        HassRoute {
+            pattern: topics.route_humidifier_set_mode(),
+            purpose: "set humidifier work mode",
+        },
+        HassRoute {
+            pattern: topics.route_humidifier_set_target(),
+            purpose: "set humidifier target humidity",
+        },
+        HassRoute {
+            pattern: topics.route_set_work_mode(),
+            purpose: "generic device work-mode setter",
+        },
+        HassRoute {
+            pattern: topics.route_fan_set_speed(),
+            purpose: "set fan speed",
+        },
+        HassRoute {
+            pattern: topics.route_set_temperature(),
+            purpose: "set target temperature (instance/units in path)",
+        },
+        HassRoute {
+            pattern: topics.route_set_mode_scene(),
+            purpose: "set a mode-style scene",
+        },
+        HassRoute {
+            pattern: topics.oneclick(),
+            purpose: "activate a Govee 'one-click' scene by name (payload is the scene name)",
+        },
+        HassRoute {
+            pattern: topics.purge_caches(),
+            purpose: "drop cached API responses and re-register with HA",
+        },
+    ];
+
+    let bundle = HassDebug {
+        connected,
+        discovery_prefix,
+        base_topic,
+        last_registration,
+        service_topics: HassServiceTopics {
+            availability: topics.availability(),
+            oneclick: topics.oneclick(),
+            purge_caches: topics.purge_caches(),
+        },
+        routes,
+        devices,
+    };
+    Json(bundle).into_response()
 }
 
 /// Bundle returned by /api/debug/info. Pairs the static configuration captured
@@ -513,6 +683,22 @@ async fn device_set_capability(
         .await
         .map_err(generic)?;
     Ok(response_with_code(StatusCode::OK, "ok"))
+}
+
+/// Bundle of retained state the UI fetches on load: the daemon-side frame
+/// ring and every device's command history. Lets a refresh restore the
+/// inspector and per-device history panels without losing what the live ws
+/// missed before connect.
+#[derive(Serialize)]
+struct RecentBundle {
+    frames: Vec<RecentFrame>,
+    histories: std::collections::HashMap<String, Vec<CommandLog>>,
+}
+
+async fn recent_bundle(State(state): State<StateHandle>) -> Result<Response, Response> {
+    let frames = state.get_recent_frames().await;
+    let histories = state.get_all_command_histories().await;
+    Ok(Json(RecentBundle { frames, histories }).into_response())
 }
 
 async fn debug_info(State(state): State<StateHandle>) -> Result<Response, Response> {
@@ -685,6 +871,7 @@ fn build_router(state: StateHandle) -> Router {
             "/api/device/{id}/capability/{instance}",
             post(device_set_capability),
         )
+        .route("/api/recent", get(recent_bundle))
         .route("/api/oneclicks", get(list_one_clicks))
         .route("/api/oneclick/activate/{scene}", get(activate_one_click))
         .route("/api/debug/discovery", get(list_discovery))
