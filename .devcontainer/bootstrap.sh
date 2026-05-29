@@ -33,7 +33,7 @@ DEV="${REPO}/addon-dev"
 # notably .github would otherwise make the Supervisor's recursive
 # build.<yaml|yml|json> scan pick up .github/workflows/build.yml and warn about a
 # deprecated build config.
-SOURCES=(src crates common Cargo.toml Cargo.lock build.rs Dockerfile .dockerignore)
+SOURCES=(src crates common ui Cargo.toml Cargo.lock build.rs Dockerfile .dockerignore)
 
 # (Re)create addon-dev/ with the source bind-mounted in. Run as the --stage-impl
 # re-exec below because mount --bind needs root and the devcontainer runs us as

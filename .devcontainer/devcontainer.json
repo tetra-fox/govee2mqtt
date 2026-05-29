@@ -5,8 +5,14 @@
   "remoteUser": "vscode",
   "appPort": ["8123:8123", "4357:4357"],
   "postStartCommand": "bash .devcontainer/bootstrap.sh",
-  "runArgs": ["-e", "GIT_EDITOR=code --wait", "--privileged"],
-  "workspaceFolder": "/mnt/supervisor/addons/local/${localWorkspaceFolderBasename}",
+  "runArgs": [
+    "-e",
+    "GIT_EDITOR=code --wait",
+    "--privileged",
+    "--dns=1.1.1.1",
+    "--dns=8.8.8.8"
+  ],
+  "workspaceFolder": "/mnt/supervisor/apps/local/${localWorkspaceFolderBasename}",
   "workspaceMount": "source=${localWorkspaceFolder},target=${containerWorkspaceFolder},type=bind,consistency=cached",
   "containerEnv": {
     "WORKSPACE_DIRECTORY": "${containerWorkspaceFolder}"
