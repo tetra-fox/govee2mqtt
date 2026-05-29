@@ -1,17 +1,6 @@
 [workspace]
 members = ["crates/govee-api"]
 
-# release profile is set at the workspace root because cargo ignores
-# [profile.*] in member crates. applies to the govee2mqtt bin, govee-api,
-# and every transitive dep built for release.
-#
-# lto = true: full cross-crate inlining; main runtime and binary-size win.
-# codegen-units = 1: pairs with lto; slower compile, tighter codegen.
-#
-# not set: strip (color-backtrace wants symbols for panic traces, and
-# debug = false is already the release default) and panic = abort (we'd
-# rather a panicking tokio task surface at the JoinHandle than abort the
-# whole daemon).
 [profile.release]
 lto = true
 codegen-units = 1
