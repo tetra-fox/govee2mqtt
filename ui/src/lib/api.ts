@@ -1,3 +1,4 @@
+import { apiPath } from "./base";
 import type {
   DebugInfo,
   DeviceDebug,
@@ -12,7 +13,7 @@ import type {
 // {"code":N,"msg":"..."} per src/service/http.rs.
 
 async function call(path: string): Promise<unknown> {
-  const r = await fetch(path);
+  const r = await fetch(apiPath(path));
   const body = await r.json().catch(() => null);
   if (!r.ok) {
     const msg = body && typeof body === "object" && "msg" in body ? String(body.msg) : r.statusText;
@@ -29,7 +30,7 @@ async function call(path: string): Promise<unknown> {
 }
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
-  const r = await fetch(path, {
+  const r = await fetch(apiPath(path), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

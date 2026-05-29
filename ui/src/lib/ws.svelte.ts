@@ -1,4 +1,5 @@
 import { getRecent } from "./api";
+import { apiPath } from "./base";
 import type { CommandLog, DeviceItem, Frame, StateEvent } from "./types";
 
 // stable client-side ids so {#each} keys don't tear down rows on every update.
@@ -94,7 +95,7 @@ class DeviceStore {
 
   #openSocket() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${proto}//${location.host}/ws`;
+    const url = `${proto}//${location.host}${apiPath("/ws")}`;
     const ws = new WebSocket(url);
     this.#socket = ws;
 

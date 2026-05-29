@@ -6,8 +6,14 @@ import tailwindcss from "@tailwindcss/vite";
 // GOVEE2MQTT_DEV_TARGET if you run it on another port.
 const daemon = process.env.GOVEE2MQTT_DEV_TARGET ?? "http://127.0.0.1:8056";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [tailwindcss(), svelte()],
+  // build with relative asset urls so the bundled index.html works under any
+  // mount path. ha ingress serves the addon at /api/hassio_ingress/<token>/,
+  // so the default base: "/" would make the browser look for /assets/* on
+  // the ha frontend itself and 404. dev server stays at "/" because vite's
+  // hmr client wants an absolute base.
+  base: command === "build" ? "./" : "/",
   server: {
     proxy: {
       "/api": { target: daemon, changeOrigin: true },
@@ -47,4 +53,4 @@ export default defineConfig({
     // print real br/gzip sizes so the build log doubles as a budget check.
     reportCompressedSize: true,
   },
-});
+}));
