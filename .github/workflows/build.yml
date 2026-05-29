@@ -39,14 +39,19 @@ jobs:
     outputs:
       # raw facts build.rs composes the embedded version from: release_tag on a
       # release (v stripped), build_sha otherwise.
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-      build_sha: ${{ steps.meta.outputs.build_sha }}
-      # the tag set applied to both the daemon and add-on manifests: version +
-      # latest on a release, edge otherwise
-      tags: ${{ steps.meta.outputs.tags }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      build_sha: ${{ steps.version.outputs.build_sha }}
+      # tags, labels, annotations derived by docker/metadata-action; tags are
+      # full image:tag strings, annotations target the multiarch index
+      daemon_tags: ${{ steps.daemon_meta.outputs.tags }}
+      daemon_labels: ${{ steps.daemon_meta.outputs.labels }}
+      daemon_annotations: ${{ steps.daemon_meta.outputs.annotations }}
+      addon_tags: ${{ steps.addon_meta.outputs.tags }}
+      addon_labels: ${{ steps.addon_meta.outputs.labels }}
+      addon_annotations: ${{ steps.addon_meta.outputs.annotations }}
     steps:
-      - name: Compute version facts and image tags
-        id: meta
+      - name: Compute version facts for build.rs
+        id: version
         env:
           EVENT: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -56,19 +61,38 @@ jobs:
             # release.yml tags are v<semver>; build.rs wants the bare semver
             release_tag="${RELEASE_TAG#v}"
             build_sha=""
-            tags="${release_tag}"$'\n'"latest"
           else
             release_tag=""
             build_sha="${SHA}"
-            tags="edge"
           fi
           {
             echo "release_tag=${release_tag}"
             echo "build_sha=${build_sha}"
-            echo "tags<<EOF"
-            echo "${tags}"
-            echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Daemon image metadata
+        id: daemon_meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          images: ${{ env.DAEMON_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=edge,enable=${{ github.event_name != 'release' }}
+
+      - name: Addon image metadata
+        id: addon_meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          images: ${{ env.ADDON_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=edge,enable=${{ github.event_name != 'release' }}
 
   # each arch builds on its own native runner (no QEMU) and pushes an untagged
   # image by digest; the manifest job below stitches the digests into one
@@ -110,6 +134,7 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
             GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
             GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
+          labels: ${{ needs.init.outputs.daemon_labels }}
           outputs: type=image,name=${{ env.DAEMON_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=daemon-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=daemon-${{ matrix.arch }}
@@ -153,12 +178,16 @@ jobs:
         working-directory: /tmp/digests
         env:
           IMAGE: ${{ env.DAEMON_IMAGE }}
-          TAGS: ${{ needs.init.outputs.tags }}
+          TAGS: ${{ needs.init.outputs.daemon_tags }}
+          ANNOTATIONS: ${{ needs.init.outputs.daemon_annotations }}
         run: |
           args=()
           while IFS= read -r tag; do
-            [ -n "$tag" ] && args+=( --tag "${IMAGE}:${tag}" )
+            [ -n "$tag" ] && args+=( --tag "$tag" )
           done <<< "$TAGS"
+          while IFS= read -r ann; do
+            [ -n "$ann" ] && args+=( --annotation "$ann" )
+          done <<< "$ANNOTATIONS"
           for digest in *; do
             args+=( "${IMAGE}@sha256:${digest}" )
           done
@@ -200,6 +229,7 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
             GOVEE2MQTT_RELEASE_TAG=${{ needs.init.outputs.release_tag }}
             GOVEE2MQTT_BUILD_SHA=${{ needs.init.outputs.build_sha }}
+          labels: ${{ needs.init.outputs.addon_labels }}
           outputs: type=image,name=${{ env.ADDON_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # the builder stage is identical to the daemon's, so read its cache too
           cache-from: |
@@ -243,12 +273,16 @@ jobs:
         working-directory: /tmp/digests
         env:
           IMAGE: ${{ env.ADDON_IMAGE }}
-          TAGS: ${{ needs.init.outputs.tags }}
+          TAGS: ${{ needs.init.outputs.addon_tags }}
+          ANNOTATIONS: ${{ needs.init.outputs.addon_annotations }}
         run: |
           args=()
           while IFS= read -r tag; do
-            [ -n "$tag" ] && args+=( --tag "${IMAGE}:${tag}" )
+            [ -n "$tag" ] && args+=( --tag "$tag" )
           done <<< "$TAGS"
+          while IFS= read -r ann; do
+            [ -n "$ann" ] && args+=( --annotation "$ann" )
+          done <<< "$ANNOTATIONS"
           for digest in *; do
             args+=( "${IMAGE}@sha256:${digest}" )
           done

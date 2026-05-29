@@ -1,46 +1,22 @@
-# BUILD_ARCH is injected by the home-assistant builder action and the Supervisor
-# native build as amd64 or aarch64; it selects the matching alpine base in the
-# addon stage and the rust musl target in the builder. declared in the global
-# scope so it can be used in the addon FROM line. default keeps a plain
+# BUILD_ARCH is injected by the HA builder action; default keeps plain
 # `docker build` working without the arg.
 ARG BUILD_ARCH=amd64
 
-####################################################################################################
-## ui-builder: produces ui/dist/, baked into the daemon by rust-embed in the rust stage
-####################################################################################################
 FROM node:24-alpine AS ui-builder
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /ui
-# install deps first so an unchanged lockfile keeps the cache warm
 COPY ui/package.json ui/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY ui/ ./
 RUN pnpm build
 
-####################################################################################################
-## Builder: compiles the daemon once (musl, dynamically linked), shared by both targets below
-####################################################################################################
-FROM rust:1-alpine AS builder
+FROM rust:1-alpine AS chef
 
-# aws-lc-sys (rustls crypto provider) builds C and asm via cmake/nasm, and
-# rusqlite (bundled) builds SQLite C with cc. musl-dev provides the C toolchain;
-# clang is needed by aws-lc-sys's bindgen. nasm is for aws-lc's x86 asm.
-# dbus-dev is for btleplug's Linux backend (libdbus-sys links BlueZ over D-Bus).
+# musl-dev + clang for aws-lc-sys (rustls) bindgen and rusqlite cc, nasm for
+# aws-lc x86 asm, dbus-dev for btleplug's BlueZ backend.
 RUN apk add --no-cache musl-dev cmake make perl clang clang-dev nasm pkgconf dbus-dev
+RUN cargo install cargo-chef --locked
 
-# runtime user, copied into the alpine standalone image below
-RUN adduser -D -H -u 1000 -s /sbin/nologin govee \
-    && install -d -o govee -g govee /seed-data
-
-# build.rs composes the embedded version from these. the build context has no
-# .git, so CI passes the release tag (release builds) or the commit sha (edge
-# builds); both default empty so a plain local build reports the Cargo version.
-ARG GOVEE2MQTT_RELEASE_TAG=""
-ARG GOVEE2MQTT_BUILD_SHA=""
-ENV GOVEE2MQTT_RELEASE_TAG=${GOVEE2MQTT_RELEASE_TAG}
-ENV GOVEE2MQTT_BUILD_SHA=${GOVEE2MQTT_BUILD_SHA}
-
-# map the HA build arch to the rust musl target
 ARG BUILD_ARCH
 RUN case "${BUILD_ARCH}" in \
       amd64)   echo "x86_64-unknown-linux-musl"  > /tmp/rust-target ;; \
@@ -50,30 +26,43 @@ RUN case "${BUILD_ARCH}" in \
     && rustup target add "$(cat /tmp/rust-target)"
 
 WORKDIR /src
+
+FROM chef AS planner
 COPY . .
-# bring the built ui in so rust-embed has files to bake into the binary; the
-# rust source is copied with the rest above but ui/dist is dockerignored to
-# keep host build artifacts from leaking into the image.
-COPY --from=ui-builder /ui/dist ./ui/dist
-# musl targets default to a fully static binary, but btleplug links the system
-# dbus C library and Alpine ships no static libdbus. disable crt-static so dbus
-# (plus musl libc and libgcc) links dynamically; the runtime stages install the
-# matching shared libs.
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+
+# runtime user, copied into the standalone image below
+RUN adduser -D -H -u 1000 -s /sbin/nologin govee \
+    && install -d -o govee -g govee /seed-data
+
+# crt-static off because btleplug links libdbus and Alpine has no static
+# libdbus; the runtime stages install the matching shared libs. RUSTFLAGS and
+# --target must match between cook and the final build or cook is wasted.
+COPY --from=planner /src/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
+    target="$(cat /tmp/rust-target)" \
+    && RUSTFLAGS="-C target-feature=-crt-static" \
+       cargo chef cook --release --recipe-path recipe.json --target "${target}"
+
+# declared after cook so a new release tag or sha doesn't bust the dep cache
+ARG GOVEE2MQTT_RELEASE_TAG=""
+ARG GOVEE2MQTT_BUILD_SHA=""
+ENV GOVEE2MQTT_RELEASE_TAG=${GOVEE2MQTT_RELEASE_TAG}
+ENV GOVEE2MQTT_BUILD_SHA=${GOVEE2MQTT_BUILD_SHA}
+
+COPY . .
+COPY --from=ui-builder /ui/dist ./ui/dist
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
     target="$(cat /tmp/rust-target)" \
     && RUSTFLAGS="-C target-feature=-crt-static" \
        cargo build --release --bin govee2mqtt --target "${target}" \
     && cp "target/${target}/release/govee2mqtt" /govee2mqtt
 
-####################################################################################################
-## standalone: minimal alpine image for the docker-compose / plain-docker deployment
-####################################################################################################
 FROM alpine:3.21 AS standalone
 
-# shared libs the dynamically-linked daemon loads at runtime: libdbus-1
-# (btleplug's Linux backend) and libgcc_s (rust stack unwinding). musl libc is
-# already present in the base image.
+# libdbus-1 for btleplug, libgcc_s for rust unwinding
 RUN apk add --no-cache dbus-libs libgcc
 
 COPY --from=builder /etc/passwd /etc/passwd
@@ -85,7 +74,6 @@ COPY --from=builder /govee2mqtt /app/govee2mqtt
 COPY --from=builder --chown=govee:govee /seed-data /data
 
 USER govee:govee
-LABEL org.opencontainers.image.source="https://github.com/tetra-fox/govee2mqtt"
 ENV \
   RUST_BACKTRACE=full \
   PATH=/app:$PATH \
@@ -98,23 +86,11 @@ CMD ["/app/govee2mqtt", \
   "--govee-iot-key=/data/iot.key", \
   "--govee-iot-cert=/data/iot.cert"]
 
-####################################################################################################
-## addon: Home Assistant add-on image, runs the daemon under bashio via run.sh
-####################################################################################################
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.21 AS addon
 
-# shared libs the dynamically-linked daemon loads at runtime: libdbus-1
-# (btleplug's Linux backend) and libgcc_s (rust stack unwinding). musl libc is
-# already present in the base image.
 RUN apk add --no-cache dbus-libs libgcc
 
 COPY common/run.sh /run.sh
 COPY --from=builder /govee2mqtt /app/govee2mqtt
-
-LABEL \
-  org.opencontainers.image.title="Home Assistant Add-on: Govee2MQTT" \
-  org.opencontainers.image.description="Acts as a bridge between Govee devices and Home Assistant, via the Home Assistant MQTT Integration." \
-  org.opencontainers.image.source="https://github.com/tetra-fox/govee2mqtt" \
-  org.opencontainers.image.licenses="MIT"
 
 CMD [ "/run.sh" ]
