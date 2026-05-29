@@ -868,12 +868,27 @@ async fn run_mqtt_loop(
                 let state = state.clone();
                 let router_tx = router_tx.clone();
                 register_task = Some(tokio::spawn(async move {
-                    match build_router_and_register(&client, &state).await {
-                        Ok(router) => {
-                            let _ = router_tx.send(Some(router));
-                        }
-                        Err(err) => {
-                            log::error!("registering with home assistant: {err:#}");
+                    // retry on failure so a transient enumerate/publish error
+                    // doesn't leave the router permanently uninitialized and
+                    // every inbound publish dropped as "before router was
+                    // ready". the parent aborts this task on the next ConnAck,
+                    // so a stale retry can't outlive its connection.
+                    let mut backoff = Duration::from_secs(1);
+                    let max_backoff = Duration::from_secs(60);
+                    loop {
+                        match build_router_and_register(&client, &state).await {
+                            Ok(router) => {
+                                let _ = router_tx.send(Some(router));
+                                return;
+                            }
+                            Err(err) => {
+                                log::error!(
+                                    "registering with home assistant: {err:#}; \
+                                    retrying in {backoff:?}"
+                                );
+                                tokio::time::sleep(backoff).await;
+                                backoff = (backoff * 2).min(max_backoff);
+                            }
                         }
                     }
                 }));

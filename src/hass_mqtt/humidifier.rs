@@ -6,7 +6,7 @@ use crate::hass_mqtt::work_mode::ParsedWorkMode;
 use crate::service::device::Device as ServiceDevice;
 use crate::service::hass::{HassClient, IdParameter};
 use crate::service::state::StateHandle;
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use govee_api::ble::TargetHumidity;
 use govee_api::platform_api::{DeviceParameters, DeviceType, IntegerRange};
@@ -269,13 +269,16 @@ pub async fn mqtt_humidifier_set_target(
     {
         state.device_control(&device, cap, percent).await?;
 
+        let percent_byte = u8::try_from(percent)
+            .with_context(|| format!("humidity target {percent}% out of u8 range"))?;
+
         // We're running in optimistic mode; stash
         // the last set value so that we can report it
         // to hass
         state
             .device_mut(&device.sku, &device.id)
             .await
-            .set_target_humidity(percent as u8);
+            .set_target_humidity(percent_byte);
 
         // For the H7160 at least, setting the humidity
         // will put the device into auto mode and turn
@@ -298,7 +301,9 @@ pub async fn mqtt_humidifier_set_target(
         .as_i64()
         .ok_or_else(|| anyhow::anyhow!("expected workMode to be a number"))?;
 
-    let value = TargetHumidity::from_percent(percent as u8);
+    let percent_byte = u8::try_from(percent)
+        .with_context(|| format!("humidity target {percent}% out of u8 range"))?;
+    let value = TargetHumidity::from_percent(percent_byte);
 
     state
         .humidifier_set_parameter(&device, mode_num, value.into_inner().into())

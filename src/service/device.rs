@@ -630,7 +630,10 @@ impl Device {
                         };
                     }
                     "brightness" => {
-                        brightness = value.value as u8;
+                        // brightness is documented as 0-100 percent; clamp at
+                        // the contract so an out-of-spec API response can't
+                        // silently truncate via the u32 -> u8 cast.
+                        brightness = value.value.min(100) as u8;
                     }
                     "colorTemperatureK" => {
                         kelvin = value.value;

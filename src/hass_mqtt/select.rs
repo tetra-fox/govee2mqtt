@@ -158,13 +158,15 @@ impl EntityInstance for SceneModeSelect {
     ) -> anyhow::Result<()> {
         let Some(device) = device else { return Ok(()) };
 
-        if let Some(device_state) = device.device_state() {
-            client
-                .publish(
-                    &self.select.state_topic,
-                    device_state.scene.as_deref().unwrap_or(""),
-                )
-                .await?;
+        if let Some(device_state) = device.device_state()
+            && let Some(scene) = device_state.scene.as_deref()
+        {
+            // publishing "" when no scene is active would land on a value that
+            // isn't in the options list, so HA renders the select as unknown.
+            // skipping the publish leaves the entity at its last known value
+            // (or unknown until first scene is selected), which is the right
+            // semantic for "no scene is active".
+            client.publish(&self.select.state_topic, scene).await?;
         }
 
         Ok(())

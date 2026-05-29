@@ -90,13 +90,12 @@ impl EntityInstance for DeviceLight {
                     .any(|m| m == "color_temp");
 
                 let light_state = if is_on {
-                    if !has_rgb && !has_color_temp {
+                    let mut value = if !has_rgb && !has_color_temp {
                         // brightness-only light: no color or temperature to report
                         json!({
                             "state": "ON",
                             "color_mode": "brightness",
                             "brightness": device_state.brightness,
-                            "effect": device_state.scene,
                         })
                     } else if device_state.kelvin == 0 {
                         json!({
@@ -108,7 +107,6 @@ impl EntityInstance for DeviceLight {
                                 "b": device_state.color.b,
                             },
                             "brightness": device_state.brightness,
-                            "effect": device_state.scene,
                         })
                     } else {
                         json!({
@@ -116,9 +114,16 @@ impl EntityInstance for DeviceLight {
                             "color_mode": "color_temp",
                             "brightness": device_state.brightness,
                             "color_temp_kelvin": device_state.kelvin,
-                            "effect": device_state.scene,
                         })
+                    };
+                    // HA's MQTT JSON light schema wants effect to be a string
+                    // from effect_list, or the key omitted. A null effect
+                    // renders as 'unknown' in HA, so only include the key when
+                    // a scene is actually active.
+                    if let Some(scene) = &device_state.scene {
+                        value["effect"] = json!(scene);
                     }
+                    value
                 } else {
                     json!({"state":"OFF"})
                 };

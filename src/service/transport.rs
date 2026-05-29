@@ -16,6 +16,7 @@
 
 use crate::service::device::Device;
 use crate::service::state::{StateHandle, Transport};
+use anyhow::Context;
 use govee_api::ble::{
     Base64HexBytes, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
 };
@@ -444,7 +445,7 @@ pub(crate) async fn try_iot_capability(
             .set_aurora_laser_state(blob_state);
         // The device doesn't report these back, so publish our held state to HA
         // ourselves; otherwise the entities stay "unknown".
-        state.notify_of_state_change(&device.id).await.ok();
+        state.notify_of_state_change(&device.id).await?;
         return Ok(true);
     }
 
@@ -456,7 +457,7 @@ pub(crate) async fn try_iot_capability(
             .device_mut(&device.sku, &device.id)
             .await
             .set_auto_off_state(auto_off);
-        state.notify_of_state_change(&device.id).await.ok();
+        state.notify_of_state_change(&device.id).await?;
         return Ok(true);
     }
 
@@ -489,7 +490,7 @@ pub(crate) async fn try_iot_capability(
             .await
             .record_projector_setting(instance, on);
         if recorded {
-            state.notify_of_state_change(&device.id).await.ok();
+            state.notify_of_state_change(&device.id).await?;
         }
     }
     // H5082 countdowns: stamp the just-written preset onto the held
@@ -502,7 +503,7 @@ pub(crate) async fn try_iot_capability(
             .device_mut(&device.sku, &device.id)
             .await
             .record_h5082_countdown(c);
-        state.notify_of_state_change(&device.id).await.ok();
+        state.notify_of_state_change(&device.id).await?;
     }
     Ok(true)
 }
@@ -699,11 +700,16 @@ pub(crate) async fn humidifier_set_parameter(
     work_mode: i64,
     value: i64,
 ) -> anyhow::Result<Transport> {
+    let mode_byte = u8::try_from(work_mode)
+        .with_context(|| format!("work_mode {work_mode} out of u8 range for {device}"))?;
+    let param_byte = u8::try_from(value)
+        .with_context(|| format!("humidifier param {value} out of u8 range for {device}"))?;
+
     if let Ok(command) = Base64HexBytes::encode_for_sku(
         &device.sku,
         &SetHumidifierMode {
-            mode: work_mode as u8,
-            param: value as u8,
+            mode: mode_byte,
+            param: param_byte,
         },
     ) && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info

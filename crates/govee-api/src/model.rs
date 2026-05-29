@@ -160,8 +160,9 @@ impl DeviceParameters {
         match self {
             DeviceParameters::Enum { options } => options
                 .iter()
-                .find(|e| e.name == name && e.value.is_i64())
-                .map(|e| e.value.as_i64().expect("i64") as u32),
+                .find(|e| e.name == name)
+                .and_then(|e| e.value.as_i64())
+                .and_then(|v| u32::try_from(v).ok()),
             _ => None,
         }
     }

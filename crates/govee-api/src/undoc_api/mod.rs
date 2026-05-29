@@ -223,7 +223,9 @@ impl GoveeUndocumentedApi {
             status: u64,
         }
 
-        let ttl = Duration::from_secs(resp.client.token_expire_cycle as u64);
+        // token_expire_cycle is in minutes (see the Govee app's
+        // RefreshTokenConfig.getRefreshTokenCheckCycleMinutes), not seconds.
+        let ttl = Duration::from_secs(resp.client.token_expire_cycle as u64 * 60);
         Ok(CacheComputeResult::WithTtl(resp.client, ttl))
     }
 
@@ -440,7 +442,7 @@ impl GoveeUndocumentedApi {
 
                 let resp: Response = http_response_body(response).await?;
 
-                let ttl_ms = resp.data.expiredAt as u128 - epoch_millis();
+                let ttl_ms = (resp.data.expiredAt as u128).saturating_sub(epoch_millis());
                 let ttl = Duration::from_millis(ttl_ms as u64).min(ONE_DAY);
 
                 Ok(CacheComputeResult::WithTtl(resp.data.token, ttl))
