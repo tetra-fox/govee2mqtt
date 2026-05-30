@@ -4,8 +4,7 @@
   import { store } from "../ws.svelte";
   import { forcePoll, getDeviceDebug } from "../api";
   import { relativeFrom } from "../format";
-  import SourceBadge from "./SourceBadge.svelte";
-  import TransportBadge from "./TransportBadge.svelte";
+  import Badge from "./Badge.svelte";
   import CopyableText from "./CopyableText.svelte";
   import { flash } from "../transitions/flash";
   import PowerControl from "./controls/PowerControl.svelte";
@@ -187,7 +186,7 @@
         {/if}
         {#if device.state}
           <span class="text-zinc-500 dark:text-zinc-400 select-none">source</span>
-          <span><SourceBadge source={device.state.source} /></span>
+          <span><Badge transport={device.state.source} /></span>
           <span class="text-zinc-500 dark:text-zinc-400 select-none">power</span>
           <span class="font-mono text-xs select-none">{device.state.on ? "on" : "off"}</span>
           {#if device.state.brightness > 0}
@@ -313,7 +312,7 @@
                     <td class="px-3 py-1 font-mono">{formatCommand(entry.verb, entry.args)}</td>
                     <td class="px-3 py-1">
                       {#if entry.outcome.kind === "ok"}
-                        <TransportBadge transport={entry.outcome.transport} />
+                        <Badge transport={entry.outcome.transport} size="sm" />
                       {:else}
                         <span
                           class="rounded bg-red-100 px-1.5 py-0.5 font-mono text-[10px] text-red-900 dark:bg-red-900/40 dark:text-red-200"

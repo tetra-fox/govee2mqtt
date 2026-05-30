@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DeviceItem } from "../types";
   import { powerOn, powerOff } from "../api";
-  import SourceBadge from "./SourceBadge.svelte";
+  import Badge from "./Badge.svelte";
   import LastSeen from "./LastSeen.svelte";
   import Switch from "./Switch.svelte";
   import { Users } from "@lucide/svelte";
@@ -93,7 +93,7 @@
 
   <div class="mt-2 flex flex-wrap items-center gap-2">
     {#if device.state}
-      <SourceBadge source={device.state.source} />
+      <Badge transport={device.state.source} />
       <LastSeen updated={device.state.updated} />
       {#if device.state.online === false}
         <span

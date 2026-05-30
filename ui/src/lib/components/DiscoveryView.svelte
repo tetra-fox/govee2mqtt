@@ -3,7 +3,7 @@
   import { listDiscovery } from "../api";
   import { relativeFrom } from "../format";
   import type { DiscoveryItem } from "../types";
-  import TransportBadge from "./TransportBadge.svelte";
+  import Badge from "./Badge.svelte";
   import CopyableText from "./CopyableText.svelte";
   import { Users } from "@lucide/svelte";
 
@@ -158,7 +158,7 @@
                 </span>
               {:else}
                 {#each item.effective_transports as t (t)}
-                  <TransportBadge transport={t} />
+                  <Badge transport={t} size="sm" />
                 {/each}
               {/if}
             </div>

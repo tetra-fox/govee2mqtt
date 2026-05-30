@@ -11,7 +11,7 @@ export type DeviceState = {
   color: Rgb;
   brightness: number;
   scene: string | null;
-  source: string;
+  source: Transport;
   updated: string;
 };
 
@@ -168,7 +168,7 @@ export type HassDebug = {
 
 // mirrors src/service/state.rs Transport. snake_case on the wire matches the
 // rust #[serde(rename_all = "snake_case")] derive.
-export type Transport = "lan" | "ble" | "iot" | "platform" | "iot_nightlight" | "iot_socket";
+export type Transport = "lan" | "ble" | "iot" | "platform";
 
 // mirrors src/service/state.rs CommandOutcome.
 export type CommandOutcome =
