@@ -44,6 +44,16 @@ pub trait FamilyModule: Send + Sync + 'static {
     /// Seed source for held state, as `(bizType, bizKey)`. `None` if the
     /// family does not need common-datas seeding for this SKU.
     fn common_datas_seed(&self, sku: &str, device_id: &str) -> Option<(i32, String)>;
+
+    /// Raw status-read request frames the direct-BLE reader sends to read the
+    /// device's current state (the aa-read burst the app fires on connect). Each
+    /// is a complete 20-byte frame; the device notifies back aa-frames the codec
+    /// decodes. Empty when the family has no local read path for the SKU, which
+    /// is the default.
+    fn status_read_frames(&self, sku: &str) -> Vec<Vec<u8>> {
+        let _ = sku;
+        Vec::new()
+    }
 }
 
 /// All registered family modules. Adding a family is one line here plus the
@@ -84,4 +94,16 @@ pub fn common_datas_seed(sku: &str, device_id: &str) -> Option<(i32, String)> {
         .iter()
         .filter(|f| f.supported_skus().contains(&sku))
         .find_map(|f| f.common_datas_seed(sku, device_id))
+}
+
+/// Status-read request frames for a SKU, across every registered family. Empty
+/// when no family has a local read path for it, so the direct-BLE reader knows
+/// not to hold a link for this device.
+pub fn status_read_frames(sku: &str) -> Vec<Vec<u8>> {
+    FAMILIES
+        .iter()
+        .filter(|f| f.supported_skus().contains(&sku))
+        .map(|f| f.status_read_frames(sku))
+        .find(|frames| !frames.is_empty())
+        .unwrap_or_default()
 }

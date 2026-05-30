@@ -18,6 +18,46 @@ fn lan<E: std::fmt::Display>(context: &str) -> impl FnOnce(E) -> GoveeApiError +
     move |err| GoveeApiError::Lan(format!("{context}: {err}"))
 }
 
+/// Whether a captured LAN frame was sent by us or received from a device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanFrameDirection {
+    Outbound,
+    Inbound,
+}
+
+/// One LAN UDP frame captured for the inspector: the raw JSON on the wire and
+/// the device address it went to or came from.
+#[derive(Clone, Debug)]
+pub struct LanFrame {
+    pub direction: LanFrameDirection,
+    pub ip: IpAddr,
+    pub json: String,
+}
+
+type LanFrameHook = Arc<dyn Fn(LanFrame) + Send + Sync>;
+
+/// Process-global capture hook for LAN frames. The UDP send/recv happens inside
+/// this module (the daemon holds `LanDevice` data structs, not a central client),
+/// so a global hook is how the daemon observes the actual wire JSON for both
+/// directions without routing every call site through one object. Unset in
+/// library/CLI use, so this is a no-op there.
+static FRAME_HOOK: std::sync::OnceLock<LanFrameHook> = std::sync::OnceLock::new();
+
+/// Install the LAN frame capture hook. Idempotent: a second call is ignored.
+pub fn set_lan_frame_hook(hook: LanFrameHook) {
+    let _ = FRAME_HOOK.set(hook);
+}
+
+fn emit_lan_frame(direction: LanFrameDirection, ip: IpAddr, json: &str) {
+    if let Some(hook) = FRAME_HOOK.get() {
+        hook(LanFrame {
+            direction,
+            ip,
+            json: json.to_string(),
+        });
+    }
+}
+
 // <https://app-h5.govee.com/user-manual/wlan-guide>
 
 /// The port on which govee devices listen for scan requests
@@ -230,6 +270,7 @@ impl LanDevice {
         // for the variants we construct here.
         let data = serde_json::to_string(&RequestMessage { msg })
             .expect("Request enum is always serializable");
+        emit_lan_frame(LanFrameDirection::Outbound, self.ip, &data);
         client
             .send_to(data.as_bytes(), (self.ip, CMD_PORT))
             .await
@@ -495,6 +536,12 @@ async fn lan_disco(
         log::trace!(
             "process_packet: addr={addr:?} data={}",
             String::from_utf8_lossy(data)
+        );
+
+        emit_lan_frame(
+            LanFrameDirection::Inbound,
+            addr.ip(),
+            &String::from_utf8_lossy(data),
         );
 
         let mut response: ResponseWrapper = from_json(data)?;

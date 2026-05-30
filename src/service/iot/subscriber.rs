@@ -5,7 +5,7 @@
 
 use crate::service::state::{FrameDirection, FrameTransport, StateHandle};
 use anyhow::Context;
-use govee_api::ble::{Base64HexBytes, GoveeBlePacket, HumidifierAutoMode, NotifyHumidifierMode};
+use govee_api::ble::{Base64HexBytes, GoveeBlePacket};
 use govee_api::http::from_json;
 use govee_api::lan_api::{DeviceColor, DeviceStatus};
 use govee_api::undoc_api::LoginAccountResponse;
@@ -106,6 +106,7 @@ pub(super) async fn run_iot_subscriber(
                         if let Some((sku, device_id)) = packet.sku_and_device() {
                             state.notify_frame(
                                 device_id,
+                                sku,
                                 FrameDirection::In,
                                 FrameTransport::Iot,
                                 payload.to_string(),
@@ -142,60 +143,22 @@ pub(super) async fn run_iot_subscriber(
                                     for cmd in &op.command {
                                         let decoded = cmd.decode_for_sku(sku);
                                         log::trace!("Decoded: {decoded:?} for {sku}");
-                                        match decoded {
-                                            GoveeBlePacket::NotifyHumidifierNightlight(nl) => {
-                                                state.brightness = nl.brightness;
-                                                state.color = DeviceColor {
-                                                    r: nl.r,
-                                                    g: nl.g,
-                                                    b: nl.b,
-                                                };
-                                                device.set_nightlight_state(nl);
-                                            }
-                                            GoveeBlePacket::NotifyHumidifierAutoMode(
-                                                HumidifierAutoMode { target_humidity },
-                                            ) => {
-                                                device.set_target_humidity(
-                                                    target_humidity.as_percent(),
-                                                );
-                                            }
-                                            GoveeBlePacket::NotifyHumidifierMode(
-                                                NotifyHumidifierMode { mode, param },
-                                            ) => {
-                                                device.set_humidifier_work_mode_and_param(
-                                                    mode, param,
-                                                );
-                                            }
-                                            GoveeBlePacket::NotifyAurora(aurora) => {
-                                                device.refine_aurora_from_status(aurora);
-                                            }
-                                            GoveeBlePacket::NotifyLaser(laser) => {
-                                                device.refine_laser_from_status(laser);
-                                            }
-                                            GoveeBlePacket::NotifyCountdown(countdown) => {
-                                                device.record_h5082_countdown(countdown);
-                                            }
-                                            GoveeBlePacket::NotifyTimerCount(_) => {
-                                                // Per-outlet timer count; held state
-                                                // wiring lands with the recurring-timer
-                                                // entities in a follow-up commit.
-                                            }
-                                            GoveeBlePacket::Generic(_) => {
-                                                // Ignore packets that we can't decode
-                                            }
-                                            GoveeBlePacket::SetHumidifierMode(_)
-                                            | GoveeBlePacket::SetHumidifierNightlight(_) => {
-                                                // Ignore packets that are essentially echoing
-                                                // commands sent to the device
-                                            }
-                                            _ => {
-                                                // But warn about the ones we could decode and
-                                                // aren't handling here
-                                                log::warn!(
-                                                    "Taking no action for {decoded:?} for {sku}"
-                                                );
-                                            }
+                                        // The nightlight frame also seeds this
+                                        // device's reported brightness/color (the
+                                        // DeviceStatus we're assembling here), not
+                                        // just the held nightlight state that
+                                        // apply_ble_status folds.
+                                        if let GoveeBlePacket::NotifyHumidifierNightlight(nl) =
+                                            &decoded
+                                        {
+                                            state.brightness = nl.brightness;
+                                            state.color = DeviceColor {
+                                                r: nl.r,
+                                                g: nl.g,
+                                                b: nl.b,
+                                            };
                                         }
+                                        device.apply_ble_status(&decoded);
                                     }
                                 }
 

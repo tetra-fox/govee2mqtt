@@ -1,9 +1,10 @@
 use crate::commands::serve::{POLL_INTERVAL, availability_timeout};
 use crate::service::quirks::{BULB, Quirk, resolve_quirk};
+use crate::service::state::Transport;
 use chrono::{DateTime, Utc};
 use govee_api::ble::{
-    NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, ProjectorSettings, SetAuroraLaser,
-    SetAutoOff,
+    GoveeBlePacket, NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, ProjectorSettings,
+    SetAuroraLaser, SetAutoOff,
 };
 use govee_api::lan_api::{DeviceColor, DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::{
@@ -166,8 +167,8 @@ pub struct DeviceState {
     /// The active effect mode, if known
     pub scene: Option<String>,
 
-    /// Where the information came from
-    pub source: &'static str,
+    /// Which transport the displayed state came from
+    pub source: Transport,
     pub updated: DateTime<Utc>,
 }
 
@@ -409,6 +410,42 @@ impl Device {
         self.set_aurora_laser_state(state);
     }
 
+    /// Fold a decoded BLE status packet into held state, returning true when it
+    /// updated something the caller should publish. Shared by the IoT status
+    /// subscriber (which receives these frames base64-wrapped in op.command) and
+    /// the direct-BLE reader (which receives them as aa notifications): both see
+    /// the same status frames, so the dispatch lives here once. Command echoes
+    /// and frames we can't decode return false.
+    pub fn apply_ble_status(&mut self, decoded: &GoveeBlePacket) -> bool {
+        match decoded {
+            GoveeBlePacket::NotifyHumidifierNightlight(nl) => {
+                self.set_nightlight_state(*nl);
+                true
+            }
+            GoveeBlePacket::NotifyHumidifierAutoMode(m) => {
+                self.set_target_humidity(m.target_humidity.as_percent());
+                true
+            }
+            GoveeBlePacket::NotifyHumidifierMode(m) => {
+                self.set_humidifier_work_mode_and_param(m.mode, m.param);
+                true
+            }
+            GoveeBlePacket::NotifyAurora(aurora) => {
+                self.refine_aurora_from_status(*aurora);
+                true
+            }
+            GoveeBlePacket::NotifyLaser(laser) => {
+                self.refine_laser_from_status(*laser);
+                true
+            }
+            GoveeBlePacket::NotifyCountdown(countdown) => {
+                self.record_h5082_countdown(*countdown);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The held auto-off state, defaulting to disabled if we haven't sent one yet.
     pub fn auto_off_state(&self) -> SetAutoOff {
         self.auto_off_state.unwrap_or_default()
@@ -565,7 +602,7 @@ impl Device {
             color: status.color,
             kelvin: status.color_temperature_kelvin,
             scene: self.active_scene.as_ref().map(|info| info.name.to_string()),
-            source: "AWS IoT API",
+            source: Transport::Iot,
             updated,
         })
     }
@@ -582,7 +619,7 @@ impl Device {
             color: status.color,
             kelvin: status.color_temperature_kelvin,
             scene: self.active_scene.as_ref().map(|info| info.name.to_string()),
-            source: "LAN API",
+            source: Transport::Lan,
             updated,
         })
     }
@@ -655,7 +692,7 @@ impl Device {
             color,
             kelvin,
             scene: self.active_scene.as_ref().map(|info| info.name.to_string()),
-            source: "PLATFORM API",
+            source: Transport::Platform,
             updated,
         })
     }
@@ -1213,7 +1250,7 @@ mod test {
         device.set_http_device_state(http_state_with_power("H6109", &device.id, false));
 
         let state = device.device_state().expect("a state");
-        assert_eq!(state.source, "AWS IoT API");
+        assert_eq!(state.source, Transport::Iot);
         assert!(state.on);
     }
 
@@ -1233,7 +1270,7 @@ mod test {
         device.set_http_device_state(http_state_with_power("H6109", &device.id, false));
 
         let state = device.device_state().expect("a state");
-        assert_eq!(state.source, "PLATFORM API");
+        assert_eq!(state.source, Transport::Platform);
         assert!(!state.on);
     }
 }

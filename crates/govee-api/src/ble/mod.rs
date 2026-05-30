@@ -7,6 +7,7 @@
 //! it from [`codec::PacketManager::new`].
 
 pub mod codec;
+pub mod common;
 pub mod encryption;
 pub mod family;
 pub mod humidifier;
@@ -18,17 +19,35 @@ use once_cell::sync::Lazy;
 
 static MGR: Lazy<codec::PacketManager> = Lazy::new(codec::PacketManager::new);
 
+/// Decode a raw device frame (the 20 bytes as received on the wire, checksum
+/// included) into a typed packet for the given SKU. Returns
+/// [`GoveeBlePacket::Generic`] when no registered codec matches. Used by the
+/// direct-BLE reader to fold inbound aa-status notifications into held state.
+pub fn decode_frame(sku: &str, frame: &[u8]) -> GoveeBlePacket {
+    MGR.decode_for_sku(sku, frame)
+}
+
+/// Annotate a raw frame for the inspector: a one-line summary plus a per-byte
+/// field map, sourced from the codec that decodes it (so field names double as
+/// the inspector's per-byte docs). Structural-only for frames no codec matches.
+pub fn annotate_frame(sku: &str, frame: &[u8]) -> codec::FrameAnnotation {
+    MGR.annotate_for_sku(sku, frame)
+}
+
 // Re-export the public surface flat off `ble::` so callers import
 // `ble::Base64HexBytes` etc. rather than reaching into the family modules. The
 // codec engine types (PacketManager, PacketCodec, ...) stay in `ble::codec`;
 // nothing outside this module uses them directly.
-pub use codec::{Base64HexBytes, GoveeBlePacket};
-pub use family::{common_datas_seed, encode_capability, entity_category, entity_name};
+pub use codec::{Base64HexBytes, FieldNote, FieldRole, FrameAnnotation, GoveeBlePacket};
+pub use common::{NotifyKeepalive, NotifyPower};
+pub use family::{
+    common_datas_seed, encode_capability, entity_category, entity_name, status_read_frames,
+};
 pub use humidifier::{
     HumidifierAutoMode, NotifyHumidifierMode, NotifyHumidifierNightlightParams, SetHumidifierMode,
     SetHumidifierNightlightParams, TargetHumidity,
 };
-pub use light::{SetDevicePower, SetSceneCode};
+pub use light::{SetBrightness, SetDevicePower, SetSceneCode};
 // State-mutation helpers that take H6093-specific structs stay as direct
 // `projector_*` calls in src/; the FamilyModule trait owns only the
 // SKU-agnostic surface.

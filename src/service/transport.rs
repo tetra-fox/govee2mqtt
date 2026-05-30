@@ -18,7 +18,7 @@ use crate::service::device::Device;
 use crate::service::state::{StateHandle, Transport};
 use anyhow::Context;
 use govee_api::ble::{
-    Base64HexBytes, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
+    Base64HexBytes, SetBrightness, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
 };
 use govee_api::lan_api::{DeviceStatus as LanDeviceStatus, LanDevice};
 use govee_api::platform_api::DeviceCapability;
@@ -37,7 +37,7 @@ pub(crate) async fn power_on_generic(
         return Ok(Transport::Lan);
     }
 
-    if power_via_ble(state, device, on).await {
+    if try_ble_command(state, device, &SetDevicePower { on }).await {
         return Ok(Transport::Ble);
     }
 
@@ -61,40 +61,59 @@ pub(crate) async fn power_on_generic(
     anyhow::bail!("Unable to control power state for {device}");
 }
 
-/// Try to set power over direct BLE. Returns true on success; on any failure (no
-/// BLE client, no BLE address, connect/handshake/write error) it logs and returns
-/// false so the caller falls through to the cloud transports. The BLE client is
-/// only present when a Bluetooth adapter was found at startup, so hosts without
-/// one never reach a connect attempt here.
-async fn power_via_ble(state: &StateHandle, device: &Device, on: bool) -> bool {
+/// Try to send one generic-light command over direct BLE. Returns true on
+/// success; on any failure (no BLE client, no BLE address, encode error, or
+/// connect/handshake/write error) it logs and returns false so the caller falls
+/// through to the cloud transports. The BLE client is only present when a
+/// Bluetooth adapter was found at startup, so hosts without one never reach a
+/// connect attempt here.
+///
+/// The command type must have a codec registered under the "Generic:Light"
+/// pseudo-SKU (SetDevicePower, SetBrightness). A wrong-but-accepted frame would
+/// not raise a write error and so would not fall through, so only wire a command
+/// here once its frame bytes are capture-confirmed in
+/// research/api-map/07-frame-reference.md.
+async fn try_ble_command<T: 'static>(state: &StateHandle, device: &Device, command: &T) -> bool {
+    let frame = match Base64HexBytes::encode_for_sku("Generic:Light", command) {
+        Ok(frame) => frame,
+        Err(err) => {
+            log::warn!("BLE encode for {device} failed: {err:#}");
+            return false;
+        }
+    };
+    try_ble_frames(state, device, &[frame.bytes().to_vec()]).await
+}
+
+/// Write raw 20-byte BLE frames to the device over direct BLE, recording each on
+/// the debug surface. Returns true on success; on any failure (no BLE client, no
+/// BLE address, or a connect/handshake/write error) it logs and returns false so
+/// the caller falls through to the cloud transports. The frames are written
+/// verbatim, the V1 session encryption is applied inside BleClient::send_frames;
+/// there is no ptReal wrapper over a direct GATT link.
+async fn try_ble_frames(state: &StateHandle, device: &Device, frames: &[Vec<u8>]) -> bool {
     let Some(ble) = state.get_ble_client().await else {
         return false;
     };
     let Some(addr) = device.ble_address() else {
         return false;
     };
-    // SetDevicePower is registered under the generic light codec.
-    let frame = match Base64HexBytes::encode_for_sku("Generic:Light", &SetDevicePower { on }) {
-        Ok(frame) => frame,
-        Err(err) => {
-            log::warn!("BLE power encode for {device} failed: {err:#}");
-            return false;
-        }
-    };
-    log::debug!("Using BLE to set {device} power state");
-    state.notify_frame(
-        &device.id,
-        crate::service::state::FrameDirection::Out,
-        crate::service::state::FrameTransport::Ble,
-        hex_pretty(frame.bytes()),
-    );
+    log::debug!("Using BLE to send {} frame(s) to {device}", frames.len());
+    for frame in frames {
+        state.notify_frame(
+            &device.id,
+            &device.sku,
+            crate::service::state::FrameDirection::Out,
+            crate::service::state::FrameTransport::Ble,
+            hex_pretty(frame),
+        );
+    }
     // The connection is kept warm and auto-released after an idle period (see
     // BleClient::send_frames), so bursts reuse one session instead of
     // re-handshaking per command.
-    match ble.send_frames(addr, &[frame.bytes().to_vec()]).await {
+    match ble.send_frames(addr, frames).await {
         Ok(()) => true,
         Err(err) => {
-            log::warn!("BLE power for {device} failed ({err:#}); falling through to cloud");
+            log::warn!("BLE send for {device} failed ({err:#}); falling through to cloud");
             false
         }
     }
@@ -116,7 +135,7 @@ fn apply_outlet_command(prior: u8, count: u8, outlet: u8, on: bool) -> u8 {
 
 /// Render a BLE frame as space-separated lowercase hex for the inspector.
 /// One-line, no prefixes; the ui breaks lines on its own.
-fn hex_pretty(bytes: &[u8]) -> String {
+pub(crate) fn hex_pretty(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 3);
     for (i, b) in bytes.iter().enumerate() {
         if i > 0 {
@@ -178,6 +197,10 @@ pub(crate) async fn set_brightness_generic(
         lan_dev.send_brightness(percent).await?;
         poll_lan_api(state, lan_dev, |status| status.brightness == percent).await?;
         return Ok(Transport::Lan);
+    }
+
+    if try_ble_command(state, device, &SetBrightness { percent }).await {
+        return Ok(Transport::Ble);
     }
 
     if device.iot_api_supported()
@@ -354,8 +377,10 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
     // IoT-only capabilities (eg: the H6093 projector's controls) aren't known to
     // the platform API. If this SKU+instance has a ptReal frame encoder, send
     // that; otherwise fall through to the platform API.
-    if try_iot_capability(state, device, &capability.instance, &value).await? {
-        return Ok(Transport::Iot);
+    if let Some(transport) =
+        try_frame_capability(state, device, &capability.instance, &value).await?
+    {
+        return Ok(transport);
     }
 
     if let Some(client) = state.get_platform_client().await
@@ -420,25 +445,26 @@ async fn dispatch_standard_instance(
     }
 }
 
-/// Try to send a control for `instance` as an IoT ptReal frame. Returns
-/// `Ok(true)` if the SKU+instance has a frame encoder and the command was sent,
-/// `Ok(false)` if it isn't a frame-encoded instance (caller falls back to the
-/// platform API). The (sku, instance) -> frames mapping lives entirely in the
-/// `ble` layer's encoder registry, so this dispatch stays device-agnostic.
-pub(crate) async fn try_iot_capability(
+/// Try to send a control for `instance` as a ptReal frame over the device's
+/// best transport. Returns `Ok(Some(transport))` with the wire that carried it
+/// if the SKU+instance has a frame encoder, `Ok(None)` if it isn't a
+/// frame-encoded instance (caller falls back to the platform API). The
+/// (sku, instance) -> frames mapping lives entirely in the `ble` layer's encoder
+/// registry, so this dispatch stays device-agnostic.
+pub(crate) async fn try_frame_capability(
     state: &StateHandle,
     device: &Device,
     instance: &str,
     value: &JsonValue,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<Transport>> {
     // Aurora/stars controls share one write blob, so they read the held state,
     // mutate one field, and re-send the whole frame. The blob carries the whole
     // aurora/laser state, so we must start from the device's current state: if
     // we haven't got it yet, seed it from the app's stored common-datas.
     let mut blob_state = seeded_aurora_laser_state(state, device).await;
     if govee_api::ble::projector_apply_blob_field(instance, value, &mut blob_state) {
-        log::debug!("Using IoT API to set {device} {instance} = {value:?}");
-        send_iot_frame(state, device, &blob_state).await?;
+        log::debug!("Setting {device} {instance} = {value:?} via ptReal frame");
+        let transport = send_frame(state, device, &blob_state).await?;
         state
             .device_mut(&device.sku, &device.id)
             .await
@@ -446,40 +472,31 @@ pub(crate) async fn try_iot_capability(
         // The device doesn't report these back, so publish our held state to HA
         // ourselves; otherwise the entities stay "unknown".
         state.notify_of_state_change(&device.id).await?;
-        return Ok(true);
+        return Ok(Some(transport));
     }
 
     // Auto-off enable/stop-sound/minutes likewise share one frame.
     let mut auto_off = device.auto_off_state();
     if govee_api::ble::projector_apply_auto_off_field(instance, value, &mut auto_off) {
-        send_iot_frame(state, device, &auto_off).await?;
+        let transport = send_frame(state, device, &auto_off).await?;
         state
             .device_mut(&device.sku, &device.id)
             .await
             .set_auto_off_state(auto_off);
         state.notify_of_state_change(&device.id).await?;
-        return Ok(true);
+        return Ok(Some(transport));
     }
 
-    // Standalone IoT-framed capabilities (eg: settings toggles). Routed by
-    // the FamilyModule registry: any family that owns this (sku, instance)
-    // returns the base64 frames; None falls through to the platform API below.
+    // Standalone framed capabilities (eg: settings toggles). Routed by the
+    // FamilyModule registry: any family that owns this (sku, instance) returns
+    // the base64 frames; None falls through to the platform API below.
     let Some(frames) = govee_api::ble::encode_capability(&device.sku, instance, value) else {
-        return Ok(false);
+        return Ok(None);
     };
     let frames = frames?;
 
-    let iot = state
-        .get_iot_client()
-        .await
-        .ok_or_else(|| anyhow::anyhow!("IoT client unavailable for {device} {instance}"))?;
-    let info = device
-        .undoc_device_info
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device} {instance}"))?;
-
-    log::debug!("Using IoT API to set {device} {instance} = {value:?}");
-    iot.send_real(&info.entry, frames).await?;
+    log::debug!("Setting {device} {instance} = {value:?} via ptReal frame");
+    let transport = send_frames(state, device, frames).await?;
 
     // These settings toggles aren't echoed by the device or stored in
     // common-datas, so the only state HA can show is what we just wrote. Record
@@ -505,21 +522,34 @@ pub(crate) async fn try_iot_capability(
             .record_h5082_countdown(c);
         state.notify_of_state_change(&device.id).await?;
     }
-    Ok(true)
+    Ok(Some(transport))
 }
 
-/// Encode a typed command for this SKU and send it over IoT as a ptReal frame.
-/// Used by the controls that share a state-carrying frame (aurora/laser blob,
-/// auto-off): the caller reads held state, mutates one field, sends here, then
-/// writes the mutated state back. Those value bytes aren't fully recoverable
-/// from status frames, so that write-back is what keeps held state correct
-/// between edits.
-async fn send_iot_frame<T: 'static>(
+/// Send already-encoded base64 ptReal frames over the device's best transport,
+/// returning the wire that carried them. LAN first when the device is on the
+/// LAN: the LAN and IoT ptReal payloads carry identical base64 BLE frames, so
+/// this is a pure transport choice. LAN is fire-and-forget UDP with no ack, so
+/// there is no delivery failure to fall back from; a present lan_device commits
+/// us to LAN. Otherwise direct BLE when a BLE client and address are available:
+/// the same frame bytes, written to the GATT char with no ptReal wrapper. IoT
+/// on any BLE failure or when BLE is unavailable.
+async fn send_frames(
     state: &StateHandle,
     device: &Device,
-    value: &T,
-) -> anyhow::Result<()> {
-    let command = Base64HexBytes::encode_for_sku(&device.sku, value)?;
+    frames: Vec<String>,
+) -> anyhow::Result<Transport> {
+    if let Some(lan_dev) = &device.lan_device {
+        log::debug!("Using LAN API to send a ptReal frame to {device}");
+        lan_dev.send_real(frames).await?;
+        return Ok(Transport::Lan);
+    }
+
+    if let Some(raw) = decode_base64_frames(&frames, device)
+        && try_ble_frames(state, device, &raw).await
+    {
+        return Ok(Transport::Ble);
+    }
+
     let iot = state
         .get_iot_client()
         .await
@@ -530,8 +560,39 @@ async fn send_iot_frame<T: 'static>(
         .ok_or_else(|| anyhow::anyhow!("no IoT device metadata for {device}"))?;
 
     log::debug!("Using IoT API to send a ptReal frame to {device}");
-    iot.send_real(&info.entry, command.base64()).await?;
-    Ok(())
+    iot.send_real(&info.entry, frames).await?;
+    Ok(Transport::Iot)
+}
+
+/// Decode the base64 ptReal frames back to the raw 20-byte BLE frames the direct
+/// BLE path writes verbatim. None if any frame is not valid base64, so the caller
+/// skips BLE and uses the cloud transports instead.
+fn decode_base64_frames(frames: &[String], device: &Device) -> Option<Vec<Vec<u8>>> {
+    let mut raw = Vec::with_capacity(frames.len());
+    for frame in frames {
+        match data_encoding::BASE64.decode(frame.as_bytes()) {
+            Ok(bytes) => raw.push(bytes),
+            Err(err) => {
+                log::warn!("BLE frame decode for {device} failed ({err:#}); not using BLE");
+                return None;
+            }
+        }
+    }
+    Some(raw)
+}
+
+/// Encode a typed command for this SKU into ptReal frames and send them. Used by
+/// the controls that share a state-carrying frame (aurora/laser blob, auto-off):
+/// the caller reads held state, mutates one field, sends here, then writes the
+/// mutated state back. Those value bytes aren't fully recoverable from status
+/// frames, so that write-back is what keeps held state correct between edits.
+async fn send_frame<T: 'static>(
+    state: &StateHandle,
+    device: &Device,
+    value: &T,
+) -> anyhow::Result<Transport> {
+    let command = Base64HexBytes::encode_for_sku(&device.sku, value)?;
+    send_frames(state, device, command.base64()).await
 }
 
 /// Fetch the app's stored common-datas for this device, merge it into the held
@@ -647,7 +708,7 @@ pub(crate) async fn socket_turn(
                 .set_socket_outlet_bits(next);
             state.notify_of_state_change(&device.id).await.ok();
         }
-        return Ok(Transport::IotSocket);
+        return Ok(Transport::Iot);
     }
 
     if let Some(client) = state.get_platform_client().await

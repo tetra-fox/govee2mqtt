@@ -15,9 +15,10 @@ use govee_api::platform_api::{
 };
 use govee_api::temperature::{TemperatureScale, TemperatureValue};
 use govee_api::undoc_api::GoveeUndocumentedApi;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast};
 
@@ -38,10 +39,9 @@ pub enum StateEvent {
         device_id: String,
         entry: CommandLog,
     },
-    /// A wire frame went out (or arrived, when inbound paths get instrumented).
-    /// Used by the frames inspector. Outbound-only at present; inbound covers
-    /// the BLE notification stream and IoT subscriber and will be added in a
-    /// follow-up pass.
+    /// A wire frame went out or arrived. Used by the frames inspector. Covers
+    /// both directions: outbound BLE commands/reads/keepalive and IoT publishes,
+    /// inbound BLE notifications and IoT status messages.
     Frame {
         device_id: String,
         direction: FrameDirection,
@@ -49,6 +49,8 @@ pub enum StateEvent {
         ts: DateTime<Utc>,
         /// Hex string for BLE (e.g. "33 01 ff ..."), JSON string for IoT.
         payload: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotation: Option<govee_api::ble::FrameAnnotation>,
     },
 }
 
@@ -59,18 +61,19 @@ pub enum FrameDirection {
     In,
 }
 
-#[derive(Serialize, Clone, Copy, Debug)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameTransport {
     Ble,
     Iot,
+    Lan,
 }
 
 /// Transports the cascade can pick to service a control command. Returned
 /// from each verb so the wrapper can record which transport actually carried
 /// the command for the debug surface; serialized as snake_case strings on
 /// the wire.
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Transport {
     /// Govee LAN API over the device's own ip.
@@ -81,13 +84,6 @@ pub enum Transport {
     Iot,
     /// Govee platform REST API.
     Platform,
-    /// Humidifier nightlight packet routed through IoT, used by the
-    /// HumidifierController in place of the generic light verbs.
-    IotNightlight,
-    /// Multi-outlet socket `turn` packet routed through IoT, used by the
-    /// SocketController. Distinct from `Iot` because the wire packing
-    /// differs and the dispatch path is socket-specific.
-    IotSocket,
 }
 
 /// One control command's outcome as recorded for the debug surface. Captures
@@ -126,8 +122,8 @@ pub const COMMAND_HISTORY_CAP: usize = 30;
 /// the two views align on backfill. Each entry is one frame from `notify_frame`,
 /// regardless of device — frames carry their own device_id. Average payload is
 /// well under 1 KB (BLE frames are 60 chars of hex, IoT envelopes are a few
-/// hundred bytes), so 200 entries is roughly 100-200 KB resident.
-pub const FRAME_HISTORY_CAP: usize = 200;
+/// hundred bytes), so 1000 entries is roughly 0.5-1 MB resident.
+pub const FRAME_HISTORY_CAP: usize = 1000;
 
 /// One entry of the frame ring. Same wire shape as the `Frame` ws event minus
 /// the `type` discriminant; the UI deserializes them into its `Frame` type.
@@ -138,6 +134,19 @@ pub struct RecentFrame {
     pub transport: FrameTransport,
     pub ts: DateTime<Utc>,
     pub payload: String,
+    /// Per-byte decode of a BLE frame for the inspector, from the device's SKU.
+    /// None for IoT frames (the ui decodes their JSON) and for BLE frames whose
+    /// SKU we can't resolve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotation: Option<govee_api::ble::FrameAnnotation>,
+}
+
+/// Parse a space-separated hex frame (the BLE inspector wire format produced by
+/// `hex_pretty`) back into bytes. None if any token isn't valid hex.
+fn parse_hex_frame(hex: &str) -> Option<Vec<u8>> {
+    hex.split_whitespace()
+        .map(|tok| u8::from_str_radix(tok, 16).ok())
+        .collect()
 }
 
 pub struct State {
@@ -292,17 +301,29 @@ impl State {
     pub fn notify_frame(
         &self,
         device_id: &str,
+        sku: &str,
         direction: FrameDirection,
         transport: FrameTransport,
         payload: String,
     ) {
         let ts = Utc::now();
+        // Annotate BLE frames per-byte from the device's SKU, so the inspector
+        // names bytes from the same codec that decodes them. IoT frames are JSON
+        // and the ui decodes those itself.
+        let annotation = match transport {
+            FrameTransport::Ble => {
+                parse_hex_frame(&payload).map(|bytes| govee_api::ble::annotate_frame(sku, &bytes))
+            }
+            // IoT and LAN frames are JSON; the ui decodes those itself.
+            FrameTransport::Iot | FrameTransport::Lan => None,
+        };
         let entry = RecentFrame {
             device_id: device_id.to_string(),
             direction,
             transport,
             ts,
             payload,
+            annotation,
         };
         // Drop into the ring synchronously so a refresh that happens within
         // milliseconds of a frame still sees it. try_lock keeps the wire-send
@@ -323,7 +344,26 @@ impl State {
             transport: entry.transport,
             ts: entry.ts,
             payload: entry.payload,
+            annotation: entry.annotation,
         });
+    }
+
+    /// Record a LAN UDP frame from the lan_api capture hook. Resolves the device
+    /// by its LAN ip and records it as a Lan frame. An ip we don't have a device
+    /// for (e.g. a scan response from a device not yet registered) is dropped,
+    /// since the inspector keys frames by device.
+    pub async fn notify_lan_frame(&self, ip: IpAddr, direction: FrameDirection, json: String) {
+        let resolved = {
+            let devices = self.devices_by_id.lock().await;
+            devices.values().find_map(|d| match d.lan_device.as_ref() {
+                Some(lan) if lan.ip == ip => Some((d.id.clone(), d.sku.clone())),
+                _ => None,
+            })
+        };
+        let Some((device_id, sku)) = resolved else {
+            return;
+        };
+        self.notify_frame(&device_id, &sku, direction, FrameTransport::Lan, json);
     }
 
     /// Read-only copy of the recent-frames ring (oldest first).
@@ -686,15 +726,16 @@ impl State {
         .await
     }
 
-    /// Try to control `instance` as an IoT ptReal frame; returns false if it
-    /// isn't a frame-encoded instance for this SKU (caller falls back).
-    pub async fn try_iot_capability(
+    /// Try to control `instance` as a ptReal frame; returns the transport that
+    /// carried it, or None if it isn't a frame-encoded instance for this SKU
+    /// (caller falls back).
+    pub async fn try_frame_capability(
         self: &Arc<Self>,
         device: &Device,
         instance: &str,
         value: &JsonValue,
-    ) -> anyhow::Result<bool> {
-        crate::service::transport::try_iot_capability(self, device, instance, value).await
+    ) -> anyhow::Result<Option<Transport>> {
+        crate::service::transport::try_frame_capability(self, device, instance, value).await
     }
 
     pub async fn device_light_power_on(

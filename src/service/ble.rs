@@ -12,6 +12,8 @@
 //! connect/timeout cost). Connections are established lazily on first command and
 //! reused; a dropped link is re-established (and re-handshaked) on next use.
 
+use crate::service::state::{FrameDirection, FrameTransport, StateHandle};
+use crate::service::transport::hex_pretty;
 use anyhow::Context;
 use btleplug::api::{
     Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _, ScanFilter,
@@ -24,11 +26,11 @@ use govee_api::ble::encryption::{
     v1_is_confirm_ack, v1_parse_key_reply, v2_build_request, v2_parse_single_reply,
     v2_session_from_reply,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::Mutex;
-use tokio::time::{Duration, sleep, timeout};
+use tokio::time::{Duration, Instant, interval, sleep, timeout};
 use uuid::Uuid;
 
 /// Govee encrypted-control GATT UUIDs (Constants.java) share the base
@@ -52,6 +54,26 @@ const REPLY_TIMEOUT_SECS: u64 = 6;
 /// Idle period after which a pooled connection is dropped, freeing the device for
 /// other BLE centrals. Bursts within this window reuse the warm session.
 const IDLE_DISCONNECT_SECS: u64 = 30;
+/// aa00 keepalive cadence. The app sends it every 3s to hold the link open; the
+/// device echoes it back. Idle past this and the device drops the connection.
+const HEARTBEAT_SECS: u64 = 3;
+/// How often the status reader re-sends the read burst to refresh held state.
+/// The link is held open the whole time, so this is just a re-poll cadence.
+const READ_REFRESH_SECS: u64 = 30;
+/// Delay before a status reader reconnects after the link drops.
+const RECONNECT_DELAY_SECS: u64 = 5;
+/// How often the reader manager re-scans the device set for new BLE devices to
+/// start readers for.
+const READER_RECONCILE_SECS: u64 = 60;
+
+/// The aa00 keepalive frame: `aa` then 18 zero bytes, with the trailing xor
+/// checksum (which is `aa`, the xor of the lead byte and the zero pad).
+const HEARTBEAT_FRAME: [u8; 20] = {
+    let mut frame = [0u8; 20];
+    frame[0] = 0xaa;
+    frame[19] = 0xaa;
+    frame
+};
 
 #[derive(Clone)]
 pub struct BleClient {
@@ -62,6 +84,9 @@ struct BleInner {
     adapter: Adapter,
     /// Established links keyed by uppercased BLE MAC.
     links: Mutex<HashMap<String, Arc<DeviceLink>>>,
+    /// Set once disconnect_all runs at shutdown, so the status readers stop
+    /// re-establishing links we are tearing down.
+    shutting_down: AtomicBool,
 }
 
 struct DeviceLink {
@@ -71,6 +96,10 @@ struct DeviceLink {
     /// Bumped on each command; the idle-release task only disconnects if it is
     /// unchanged after the idle window (i.e. no command arrived since).
     generation: AtomicU64,
+    /// Set while a status reader is holding this link open. The idle-release task
+    /// skips a held link, so the reader's keepalive isn't torn down by a stale
+    /// idle timer armed by an earlier command.
+    held: AtomicBool,
 }
 
 /// Result of a read-only [`BleClient::probe`].
@@ -108,6 +137,7 @@ pub async fn start_ble_client() -> anyhow::Result<Option<BleClient>> {
         inner: Arc::new(BleInner {
             adapter,
             links: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
         }),
     }))
 }
@@ -119,28 +149,13 @@ impl BleClient {
     /// one session but the device is freed once you stop driving it.
     pub async fn send_frames(&self, ble_addr: &str, frames: &[Vec<u8>]) -> anyhow::Result<()> {
         let link = self.get_or_connect(ble_addr).await?;
-        let result = {
-            let mut session = link.session.lock().await;
-            let mut res = Ok(());
-            for frame in frames {
-                let wire = session.encrypt_command(frame);
-                res = link
-                    .peripheral
-                    .write(&link.data_char, &wire, WriteType::WithoutResponse)
-                    .await
-                    .context("writing BLE command frame");
-                if res.is_err() {
-                    break;
-                }
-            }
-            res
-        };
+        let result = write_to_link(&link, frames).await;
         self.arm_idle_disconnect(ble_addr, &link);
         result
     }
 
     /// Schedule a release of the pooled link after the idle window, unless another
-    /// command bumps the generation first.
+    /// command bumps the generation first, or a status reader is holding the link.
     fn arm_idle_disconnect(&self, ble_addr: &str, link: &Arc<DeviceLink>) {
         let generation = link.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let client = self.clone();
@@ -150,7 +165,10 @@ impl BleClient {
             let link = {
                 let mut links = client.inner.links.lock().await;
                 match links.get(&key) {
-                    Some(l) if l.generation.load(Ordering::SeqCst) == generation => {
+                    Some(l)
+                        if l.generation.load(Ordering::SeqCst) == generation
+                            && !l.held.load(Ordering::SeqCst) =>
+                    {
                         links.remove(&key)
                     }
                     _ => None,
@@ -170,6 +188,24 @@ impl BleClient {
         let key = ble_addr.to_uppercase();
         if let Some(link) = self.inner.links.lock().await.remove(&key) {
             let _ = link.peripheral.disconnect().await;
+        }
+    }
+
+    /// Release every pooled link at shutdown, disconnecting each peripheral so
+    /// the device advertises again for other centrals (the phone app) right away
+    /// instead of waiting out BlueZ's link-supervision timeout. Marks the client
+    /// shutting down first so the status readers don't reconnect a link we just
+    /// dropped.
+    pub async fn disconnect_all(&self) {
+        self.inner.shutting_down.store(true, Ordering::SeqCst);
+        let links: Vec<Arc<DeviceLink>> = {
+            let mut map = self.inner.links.lock().await;
+            map.drain().map(|(_, link)| link).collect()
+        };
+        for link in links {
+            if let Err(err) = link.peripheral.disconnect().await {
+                log::debug!("BLE disconnect on shutdown failed: {err:#}");
+            }
         }
     }
 
@@ -270,6 +306,10 @@ impl BleClient {
     }
 
     async fn get_or_connect(&self, ble_addr: &str) -> anyhow::Result<Arc<DeviceLink>> {
+        anyhow::ensure!(
+            !self.inner.shutting_down.load(Ordering::SeqCst),
+            "BLE client is shutting down"
+        );
         let key = ble_addr.to_uppercase();
         // clone the cached link out and drop the lock before awaiting on the
         // connection check, so the map mutex isn't held across an await.
@@ -339,6 +379,7 @@ impl BleClient {
             data_char,
             session: Mutex::new(session),
             generation: AtomicU64::new(0),
+            held: AtomicBool::new(false),
         })
     }
 
@@ -366,6 +407,218 @@ impl BleClient {
         }
         let _ = adapter.stop_scan().await;
         Ok(found)
+    }
+
+    /// Hold a persistent link to one device and stream its state. After the
+    /// handshake it sends the SKU's aa-read status burst, then keeps the link
+    /// open with the aa00 keepalive and re-reads on a slower cadence. Inbound aa
+    /// notifications are decoded for the SKU and folded into held state. Runs
+    /// until the task is dropped, reconnecting after a drop. Holding the link
+    /// blocks other BLE centrals (the phone app) from the device, which is the
+    /// cost of continuous cloud-free state.
+    pub async fn run_status_reader(
+        &self,
+        state: StateHandle,
+        sku: String,
+        device_id: String,
+        ble_addr: String,
+    ) {
+        let read_frames = govee_api::ble::status_read_frames(&sku);
+        if read_frames.is_empty() {
+            return;
+        }
+        loop {
+            if let Err(err) = self
+                .reader_session(&state, &sku, &device_id, &ble_addr, &read_frames)
+                .await
+            {
+                log::warn!("BLE reader for {device_id} ({ble_addr}) ended: {err:#}");
+            }
+            sleep(Duration::from_secs(RECONNECT_DELAY_SECS)).await;
+        }
+    }
+
+    /// One connected session of the status reader: establish (and hold) the link,
+    /// open the notification stream, send the read burst, then loop on inbound
+    /// notifications and the keepalive timer until the link drops or a write
+    /// fails.
+    async fn reader_session(
+        &self,
+        state: &StateHandle,
+        sku: &str,
+        device_id: &str,
+        ble_addr: &str,
+        read_frames: &[Vec<u8>],
+    ) -> anyhow::Result<()> {
+        let link = self.get_or_connect(ble_addr).await?;
+        // Mark the link held so a stale idle timer from an earlier command can't
+        // disconnect it out from under the keepalive.
+        link.held.store(true, Ordering::SeqCst);
+
+        // The device replies to reads and the keepalive as notifications. Subscribe
+        // to the notify and data chars (replies arrive on the notify char) and open
+        // a stream for the link lifetime.
+        let notify_chars: Vec<Characteristic> = link
+            .peripheral
+            .characteristics()
+            .into_iter()
+            .filter(|c| {
+                c.service_uuid == SERVICE_UUID
+                    && (c.uuid == NOTIFY_CHAR_UUID || c.uuid == DATA_CHAR_UUID)
+            })
+            .collect();
+        for c in &notify_chars {
+            link.peripheral
+                .subscribe(c)
+                .await
+                .with_context(|| format!("subscribe to BLE notifications on {}", c.uuid))?;
+        }
+        let mut notifications = link
+            .peripheral
+            .notifications()
+            .await
+            .context("open BLE notification stream")?;
+
+        self.write_recorded(state, sku, device_id, &link, read_frames)
+            .await
+            .context("BLE status read burst")?;
+        let mut last_read = Instant::now();
+
+        let heartbeat = [HEARTBEAT_FRAME.to_vec()];
+        let mut beat = interval(Duration::from_secs(HEARTBEAT_SECS));
+        // interval fires immediately on the first tick; skip it so the first
+        // keepalive is one interval after the burst we just sent.
+        beat.tick().await;
+
+        loop {
+            tokio::select! {
+                notification = notifications.next() => {
+                    let Some(notification) = notification else {
+                        anyhow::bail!("notification stream ended");
+                    };
+                    self.handle_notification(state, sku, device_id, &link, &notification.value)
+                        .await?;
+                }
+                _ = beat.tick() => {
+                    self.write_recorded(state, sku, device_id, &link, &heartbeat)
+                        .await
+                        .context("BLE keepalive")?;
+                    if last_read.elapsed() >= Duration::from_secs(READ_REFRESH_SECS) {
+                        self.write_recorded(state, sku, device_id, &link, read_frames)
+                            .await
+                            .context("BLE status re-read")?;
+                        last_read = Instant::now();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record each outbound frame on the inspector (Out/Ble), then write them to
+    /// the link. The reader's reads and keepalive go out this way so the inspector
+    /// shows the sends, not just the device's echoes.
+    async fn write_recorded(
+        &self,
+        state: &StateHandle,
+        sku: &str,
+        device_id: &str,
+        link: &Arc<DeviceLink>,
+        frames: &[Vec<u8>],
+    ) -> anyhow::Result<()> {
+        for frame in frames {
+            state.notify_frame(
+                device_id,
+                sku,
+                FrameDirection::Out,
+                FrameTransport::Ble,
+                hex_pretty(frame),
+            );
+        }
+        write_to_link(link, frames).await
+    }
+
+    /// Decrypt one inbound notification, decode it for the SKU, fold it into held
+    /// state, and publish if it changed anything. A frame that fails to decrypt or
+    /// decodes to nothing actionable (the keepalive echo, an undecoded frame) is
+    /// recorded on the inspector but changes no state.
+    async fn handle_notification(
+        &self,
+        state: &StateHandle,
+        sku: &str,
+        device_id: &str,
+        link: &Arc<DeviceLink>,
+        raw: &[u8],
+    ) -> anyhow::Result<()> {
+        let frame = {
+            let session = link.session.lock().await;
+            session.decrypt_notification(raw)
+        };
+        let Some(frame) = frame else {
+            log::debug!("BLE notify from {device_id} failed to decrypt: {raw:02x?}");
+            return Ok(());
+        };
+        state.notify_frame(
+            device_id,
+            sku,
+            FrameDirection::In,
+            FrameTransport::Ble,
+            hex_pretty(&frame),
+        );
+        let decoded = govee_api::ble::decode_frame(sku, &frame);
+        let changed = state
+            .device_mut(sku, device_id)
+            .await
+            .apply_ble_status(&decoded);
+        if changed {
+            state.notify_of_state_change(device_id).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Encrypt each frame under the link's session and write it to the data
+/// characteristic. Shared by the command path and the status reader.
+async fn write_to_link(link: &DeviceLink, frames: &[Vec<u8>]) -> anyhow::Result<()> {
+    let mut session = link.session.lock().await;
+    for frame in frames {
+        let wire = session.encrypt_command(frame);
+        link.peripheral
+            .write(&link.data_char, &wire, WriteType::WithoutResponse)
+            .await
+            .context("writing BLE command frame")?;
+    }
+    Ok(())
+}
+
+/// Reconcile status readers against the device set: for each BLE device with a
+/// local read path that doesn't already have a reader, spawn one. Runs forever,
+/// re-scanning periodically so devices discovered after startup get a reader too.
+pub async fn run_reader_manager(state: StateHandle, ble: BleClient) {
+    let mut active: HashSet<String> = HashSet::new();
+    loop {
+        for device in state.devices().await {
+            let Some(addr) = device.ble_address() else {
+                continue;
+            };
+            if govee_api::ble::status_read_frames(&device.sku).is_empty() {
+                continue;
+            }
+            if active.insert(device.id.clone()) {
+                let addr = addr.to_string();
+                log::info!(
+                    "Starting BLE status reader for {id} ({addr})",
+                    id = device.id
+                );
+                let ble = ble.clone();
+                let state = state.clone();
+                let sku = device.sku.clone();
+                let id = device.id.clone();
+                tokio::spawn(async move {
+                    ble.run_status_reader(state, sku, id, addr).await;
+                });
+            }
+        }
+        sleep(Duration::from_secs(READER_RECONCILE_SECS)).await;
     }
 }
 

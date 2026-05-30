@@ -44,6 +44,32 @@ impl FamilyModule for Module {
     fn common_datas_seed(&self, sku: &str, device_id: &str) -> Option<(i32, String)> {
         common_datas_seed(sku, device_id)
     }
+    fn status_read_frames(&self, _sku: &str) -> Vec<Vec<u8>> {
+        status_read_frames()
+    }
+}
+
+/// The aa-read status requests the app fires after the handshake when it opens
+/// the device page (see the h6093 status-read btsnoop). Each is `aa <opcode>`
+/// plus optional parameter bytes, zero-padded to 19 with an xor checksum. The
+/// device notifies back aa-frames byte-identical to the IoT op.command status
+/// frames, which the codec decodes. aa23 takes an `ff` "all color slots"
+/// parameter; the rest take none. Only the state-bearing reads are sent (power,
+/// brightness, controlType, aurora, aurora layer 2, packed color, laser); the
+/// app's version/name/wifi reads (aa14/20/21/06/07, ac, ab) are skipped.
+fn status_read_frames() -> Vec<Vec<u8>> {
+    [
+        vec![0xaa, 0x01],
+        vec![0xaa, 0x04],
+        vec![0xaa, 0x05],
+        vec![0xaa, 0x11],
+        vec![0xaa, 0x12],
+        vec![0xaa, 0x23, 0xff],
+        vec![0xaa, 0x34],
+    ]
+    .into_iter()
+    .map(finish)
+    .collect()
 }
 
 /// Instance names for the H6093's IoT-encoded capabilities. These are the keys
@@ -371,6 +397,11 @@ pub fn state_value(
         instance::FLASHING_SPEED => num(blob.flicker_value),
         instance::AUTO_OFF_ENABLE => on(auto_off.enable),
         instance::AUTO_OFF_STOP_SOUND => on(auto_off.stop_sound),
+        // 0 minutes is the disabled/never-set state. The Number entity's range
+        // floor is 30 (matching the app), so publishing 0 is rejected by HA.
+        // Leave it unknown until a real duration is set; the auto-off enable
+        // toggle carries the on/off state.
+        instance::AUTO_OFF_MINUTES if auto_off.minutes == 0 => return None,
         instance::AUTO_OFF_MINUTES => num(auto_off.minutes),
         _ => return None,
     })
@@ -826,6 +857,78 @@ mod test {
     /// byte-for-byte, including the trailing XOR checksum.
     fn enc<T: 'static>(value: &T) -> Vec<u8> {
         Base64HexBytes::encode_for_sku("H6093", value).unwrap().0.0
+    }
+
+    #[test]
+    fn annotate_aurora_names_bytes_from_codec() {
+        use crate::ble::codec::FieldRole;
+        // the real aa 11 aurora notify (captured)
+        let frame = [
+            0xaa, 0x11, 0x00, 0x2a, 0x0f, 0x0f, 0x01, 0x03, 0x1f, 0x01, 0x00, 0xe9, 0xff, 0x01,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x9a,
+        ];
+        let ann = crate::ble::annotate_frame("H6093", &frame);
+        assert_eq!(ann.summary, "aurora notify");
+        assert_eq!(ann.fields.len(), 20);
+        assert_eq!(ann.fields[0].role, FieldRole::Family);
+        assert_eq!(ann.fields[1].role, FieldRole::Opcode);
+        // data bytes are named from the packet! field list
+        assert_eq!(ann.fields[3].label, "speed");
+        assert_eq!(ann.fields[10].label, "r");
+        assert_eq!(ann.fields[11].label, "g");
+        assert_eq!(ann.fields[12].label, "b");
+        assert_eq!(ann.fields[13].label, "enable");
+        // a named field whose value is 0x00 keeps its name; the spec wins over
+        // the trailing-padding heuristic (on=0x00 at 2, r=0x00 at 10)
+        assert_eq!(ann.fields[2].label, "on");
+        assert_eq!(ann.fields[2].role, FieldRole::Field);
+        assert_eq!(ann.fields[10].role, FieldRole::Field);
+        assert_eq!(ann.fields[18].role, FieldRole::Padding);
+        assert_eq!(ann.fields[19].role, FieldRole::Checksum);
+    }
+
+    #[test]
+    fn annotate_undecoded_keeps_interior_zeros() {
+        use crate::ble::codec::FieldRole;
+        // the real aa 34 laser frame. it doesn't decode (laser packing isn't
+        // pinned), so it gets the structural annotation. the 00s at offsets 5
+        // and 7 sit between non-zero bytes -- field values of 0, not padding.
+        let frame = [
+            0xaa, 0x34, 0xe0, 0x64, 0x20, 0x00, 0x01, 0x00, 0x1e, 0x1e, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0x3b,
+        ];
+        let ann = crate::ble::annotate_frame("H6093", &frame);
+        assert_eq!(ann.fields[5].role, FieldRole::Unknown);
+        assert_eq!(ann.fields[7].role, FieldRole::Unknown);
+        assert_eq!(ann.fields[9].role, FieldRole::Unknown);
+        // only the trailing zero run is padding
+        assert_eq!(ann.fields[10].role, FieldRole::Padding);
+        assert_eq!(ann.fields[18].role, FieldRole::Padding);
+        assert_eq!(ann.fields[19].role, FieldRole::Checksum);
+    }
+
+    #[test]
+    fn status_read_burst_matches_app() {
+        // Request frames captured from the app's status read (h6093 btsnoop):
+        // aa <opcode> [param] zero-padded to 19 with the xor checksum at byte 20.
+        // aa23 carries an ff "all color slots" param; the rest carry none.
+        let frames = status_read_frames();
+        let expect: &[(&[u8], u8)] = &[
+            (&[0xaa, 0x01], 0xab),
+            (&[0xaa, 0x04], 0xae),
+            (&[0xaa, 0x05], 0xaf),
+            (&[0xaa, 0x11], 0xbb),
+            (&[0xaa, 0x12], 0xb8),
+            (&[0xaa, 0x23, 0xff], 0x76),
+            (&[0xaa, 0x34], 0x9e),
+        ];
+        assert_eq!(frames.len(), expect.len());
+        for (frame, (lead, checksum)) in frames.iter().zip(expect) {
+            assert_eq!(frame.len(), 20);
+            assert_eq!(&frame[..lead.len()], *lead);
+            assert!(frame[lead.len()..19].iter().all(|&b| b == 0));
+            assert_eq!(frame[19], *checksum);
+        }
     }
 
     #[test]
@@ -1313,6 +1416,29 @@ mod test {
 
         // record only claims the settings toggles.
         assert!(!settings.record("auroraOn", true));
+    }
+
+    #[test]
+    fn auto_off_minutes_unknown_when_disabled() {
+        use crate::model::DeviceCapabilityKind::Range;
+        let blob = SetAuroraLaser::default();
+        let settings = ProjectorSettings::default();
+
+        // disabled / never set: minutes 0 is below the Number's 30-min floor, so
+        // we leave it unknown rather than publishing a value HA rejects.
+        let off = SetAutoOff::default();
+        assert_eq!(off.minutes, 0);
+        assert_eq!(
+            state_value(instance::AUTO_OFF_MINUTES, &blob, &off, &settings),
+            None
+        );
+
+        // a real duration is published as-is.
+        let on = SetAutoOff::new(true, false, 60);
+        assert_eq!(
+            state_value(instance::AUTO_OFF_MINUTES, &blob, &on, &settings),
+            Some((Range, serde_json::json!({ "value": 60 })))
+        );
     }
 
     #[test]

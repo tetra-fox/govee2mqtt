@@ -77,8 +77,30 @@ pub struct ServeCommand {
     /// Enable direct Bluetooth (BLE) control of owned devices, preferred over the
     /// cloud when a device is in range. Requires a Bluetooth adapter on the host;
     /// if none is found this has no effect and the cloud transports are used.
-    #[arg(long, env = "GOVEE2MQTT_ENABLE_BLE")]
+    /// Accepts true/false, 1/0, yes/no, on/off (also via GOVEE2MQTT_ENABLE_BLE).
+    #[arg(
+        long,
+        env = "GOVEE2MQTT_ENABLE_BLE",
+        num_args = 0..=1,
+        default_value_t = false,
+        default_missing_value = "true",
+        value_parser = parse_loose_bool,
+    )]
     enable_ble: bool,
+}
+
+/// Parse a boolean from the loose set of strings that show up in .env files and
+/// docker/addon configs: true/false, 1/0, yes/no, on/off (case-insensitive).
+/// clap's built-in bool parser only accepts true/false, which trips up anyone
+/// who sets GOVEE2MQTT_ENABLE_BLE=1.
+fn parse_loose_bool(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        other => Err(format!(
+            "expected a boolean (true/false, 1/0, yes/no, on/off), got '{other}'"
+        )),
+    }
 }
 
 async fn poll_single_device(state: &StateHandle, device: &Device) -> anyhow::Result<()> {
@@ -469,6 +491,30 @@ impl ServeCommand {
 
             state.set_lan_client(client.clone()).await;
 
+            // Capture LAN UDP frames for the inspector. The UDP send/recv lives
+            // inside lan_api, so it fires a process-global hook with the raw wire
+            // JSON; we resolve the device by ip and record it. The hook is sync,
+            // so it spawns the async resolve-and-publish.
+            {
+                let hook_state = state.clone();
+                govee_api::lan_api::set_lan_frame_hook(std::sync::Arc::new(move |frame| {
+                    let hook_state = hook_state.clone();
+                    let direction = match frame.direction {
+                        govee_api::lan_api::LanFrameDirection::Outbound => {
+                            crate::service::state::FrameDirection::Out
+                        }
+                        govee_api::lan_api::LanFrameDirection::Inbound => {
+                            crate::service::state::FrameDirection::In
+                        }
+                    };
+                    tokio::spawn(async move {
+                        hook_state
+                            .notify_lan_frame(frame.ip, direction, frame.json)
+                            .await;
+                    });
+                }));
+            }
+
             tokio::spawn(async move {
                 while let Some(lan_device) = scan.recv().await {
                     log::trace!("LAN disco: {lan_device:?}");
@@ -499,7 +545,15 @@ impl ServeCommand {
         // client is never set, so the transport cascade skips BLE.
         if self.enable_ble {
             match crate::service::ble::start_ble_client().await {
-                Ok(Some(client)) => state.set_ble_client(client).await,
+                Ok(Some(client)) => {
+                    state.set_ble_client(client.clone()).await;
+                    // Hold a persistent link to each BLE device with a local read
+                    // path, streaming its state cloud-free (see run_status_reader).
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        crate::service::ble::run_reader_manager(state, client).await;
+                    });
+                }
                 Ok(None) => {}
                 Err(err) => log::warn!("Could not start direct BLE control: {err:#}"),
             }
@@ -568,8 +622,51 @@ impl ServeCommand {
             })
             .await;
 
-        run_http_server(state.clone(), self.http_port)
-            .await
-            .with_context(|| format!("Starting HTTP service on port {}", self.http_port))
+        // Run the HTTP server until it stops or we get a shutdown signal. On a
+        // signal, release the held BLE links before exiting so the devices
+        // advertise again for other centrals (the phone app) immediately,
+        // rather than staying connected until BlueZ's supervision timeout.
+        tokio::select! {
+            res = run_http_server(state.clone(), self.http_port) => {
+                res.with_context(|| format!("Starting HTTP service on port {}", self.http_port))
+            }
+            _ = shutdown_signal() => {
+                if let Some(ble) = state.get_ble_client().await {
+                    log::info!("Shutdown signal received; releasing BLE links");
+                    ble.disconnect_all().await;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Resolve when the process is asked to stop: Ctrl-C (SIGINT) or SIGTERM (how
+/// docker and systemd stop the daemon). Used to run shutdown cleanup before
+/// exiting instead of dying abruptly.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            // can't install the handler: never resolve, leaving Ctrl-C as the
+            // only stop path rather than firing shutdown spuriously.
+            Err(err) => {
+                log::warn!("could not install SIGTERM handler: {err:#}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
     }
 }

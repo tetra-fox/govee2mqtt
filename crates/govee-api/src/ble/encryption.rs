@@ -376,8 +376,10 @@ fn counter_be(n: u32) -> [u8; 4] {
 /// frame into the bytes to write; `decrypt_notification` reverses an inbound frame.
 pub enum Session {
     /// No session encryption: command frames are written to the data
-    /// characteristic verbatim. Used for devices that don't expose the BgcInfo
-    /// characteristic (the classic Govee BLE control path, e.g. H6093).
+    /// characteristic verbatim. Fallback for older unencrypted devices, reached
+    /// only when a device exposes no BgcInfo characteristic and the V1 handshake
+    /// also fails (service/ble.rs connect_and_handshake). Encrypted devices like
+    /// the H6093 negotiate V1 and do not use this path.
     Plaintext,
     V1 {
         session_key: [u8; 16],

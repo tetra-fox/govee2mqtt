@@ -99,6 +99,7 @@ impl IotClient {
             transport: FrameTransport::Iot,
             ts: chrono::Utc::now(),
             payload,
+            annotation: None,
         });
     }
 

@@ -18,6 +18,14 @@ pub(super) fn register(codecs: &mut Vec<PacketCodec>) {
         0x01,
         on,
     ));
+    codecs.push(packet!(
+        &["Generic:Light"],
+        SetBrightness,
+        SetBrightness,
+        0x33,
+        0x04,
+        percent,
+    ));
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -83,9 +91,29 @@ pub struct SetDevicePower {
     pub on: bool,
 }
 
+/// Master brightness as a raw percent, 1-100. byte[2] of the `33 04` frame; the
+/// device takes the same percent the LAN and IoT paths send.
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct SetBrightness {
+    pub percent: u8,
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::ble::Base64HexBytes;
+
+    #[test]
+    fn brightness_command() {
+        // research/api-map/07-frame-reference.md: master brightness is `33 04 [pct]`
+        // with the percent raw (83 -> 0x53), confirmed from h6093-controls3.btsnoop.
+        let frame = Base64HexBytes::encode_for_sku("Generic:Light", &SetBrightness { percent: 83 })
+            .unwrap();
+        let bytes = frame.bytes();
+        assert_eq!(&bytes[0..3], &[0x33, 0x04, 0x53]);
+        // byte[19] is the XOR checksum over the body: 0x33 ^ 0x04 ^ 0x53.
+        assert_eq!(bytes[19], 0x33 ^ 0x04 ^ 0x53);
+    }
 
     #[test]
     fn scene_command() {

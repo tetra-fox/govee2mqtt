@@ -269,7 +269,8 @@ struct DiscoveryItem {
     info_sources: InfoSources,
     /// Transports the cascade could actually reach for this device right now.
     /// Combines the controller-type-specific path (eg sockets always route
-    /// through `IotSocket`) with the generic cascade's runtime eligibility
+    /// through the IoT `socket_turn` path) with the generic cascade's runtime
+    /// eligibility
     /// (LAN if a LAN device was discovered, BLE if an adapter is loaded and
     /// the device has a BLE address, IoT if owned and an IoT client is up,
     /// platform if an http_device_info exists and the quirk doesn't opt out).
@@ -356,12 +357,18 @@ fn effective_transports(d: &Device, avail: &ClientAvail) -> Vec<Transport> {
     match d.device_type() {
         // SocketController short-circuits the cascade and always takes the
         // socket_turn IoT path.
-        DeviceType::Socket => vec![Transport::IotSocket],
-        // HumidifierController tries the nightlight packet first, then falls
-        // through to the generic cascade for the rest.
+        DeviceType::Socket => vec![Transport::Iot],
+        // HumidifierController tries the nightlight (IoT) packet first, then
+        // falls through to the generic cascade for the rest. The nightlight
+        // wire is IoT, which the generic cascade also lists, so dedup while
+        // keeping IoT first to reflect the real preference order.
         DeviceType::Humidifier | DeviceType::Dehumidifier => {
-            let mut out = vec![Transport::IotNightlight];
-            out.extend(generic_cascade(d, avail));
+            let mut out = vec![Transport::Iot];
+            for t in generic_cascade(d, avail) {
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
             out
         }
         _ => generic_cascade(d, avail),

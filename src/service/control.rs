@@ -97,7 +97,7 @@ impl DeviceController for HumidifierController {
         on: bool,
     ) -> anyhow::Result<Transport> {
         if transport::try_set_nightlight(state, device, |p| p.on = on).await? {
-            return Ok(Transport::IotNightlight);
+            return Ok(Transport::Iot);
         }
         transport::light_power_on_generic(state, device, on).await
     }
@@ -114,7 +114,7 @@ impl DeviceController for HumidifierController {
         })
         .await?
         {
-            return Ok(Transport::IotNightlight);
+            return Ok(Transport::Iot);
         }
         transport::set_brightness_generic(state, device, percent).await
     }
@@ -135,7 +135,7 @@ impl DeviceController for HumidifierController {
         })
         .await?
         {
-            return Ok(Transport::IotNightlight);
+            return Ok(Transport::Iot);
         }
         transport::set_color_rgb_generic(state, device, r, g, b).await
     }
@@ -156,7 +156,7 @@ impl DeviceController for SocketController {
         // 15 addresses all outlets, the form the app uses for a single-outlet
         // plug. Shared vs owned transport is handled downstream.
         transport::socket_turn(state, device, 15, on).await?;
-        Ok(Transport::IotSocket)
+        Ok(Transport::Iot)
     }
 }
 

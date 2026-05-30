@@ -578,10 +578,11 @@ async fn mqtt_switch_command(
     if instance == "powerSwitch" {
         state.device_power_on(&device, on).await?;
     } else if state
-        .try_iot_capability(&device, &instance, &serde_json::json!(on))
+        .try_frame_capability(&device, &instance, &serde_json::json!(on))
         .await?
+        .is_some()
     {
-        // sent as an IoT ptReal frame (eg: an H6093 settings toggle)
+        // sent as a ptReal frame (eg: an H6093 settings toggle)
     } else if let Some(client) = state.get_platform_client().await {
         if let Some(http_dev) = &device.http_device_info {
             client.set_toggle_state(http_dev, &instance, on).await?;
