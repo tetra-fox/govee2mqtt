@@ -33,9 +33,7 @@
     <!-- top-line status board -->
     <div class="panel p-4">
       <div class="mb-3 flex items-baseline justify-between">
-        <h3 class="section-heading">
-          runtime
-        </h3>
+        <h3 class="section-heading">runtime</h3>
         <button
           type="button"
           onclick={refresh}
@@ -66,11 +64,7 @@
 
     <!-- active clients -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        clients
-      </h3>
+      <h3 class="mb-3 section-heading">clients</h3>
       <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
         {#each Object.entries(data.clients) as [name, ok] (name)}
           <div class="flex items-center gap-2">
@@ -90,11 +84,7 @@
 
     <!-- govee endpoints + credentials -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        govee
-      </h3>
+      <h3 class="mb-3 section-heading">govee</h3>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
         <span class="field-label">platform endpoint</span>
         <CopyableText value={data.govee.platform_endpoint}>
@@ -122,11 +112,7 @@
 
     <!-- mqtt broker -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        mqtt broker
-      </h3>
+      <h3 class="mb-3 section-heading">mqtt broker</h3>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
         <span class="field-label">host</span>
         <span class="font-mono text-xs">
@@ -157,11 +143,7 @@
 
     <!-- home assistant settings -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        home assistant
-      </h3>
+      <h3 class="mb-3 section-heading">home assistant</h3>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
         <span class="field-label">discovery prefix</span>
         <CopyableText value={data.hass.discovery_prefix}>

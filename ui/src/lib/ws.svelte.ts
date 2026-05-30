@@ -20,7 +20,7 @@ const COMMAND_HISTORY_CAP = 30;
 // rolling buffer of recent frame events for the inspector. matches the
 // daemon's FRAME_HISTORY_CAP so a refresh-hydrated buffer is the same size as
 // what gets retained going forward.
-const FRAME_TAIL_CAP = 200;
+const FRAME_TAIL_CAP = 1000;
 
 class DeviceStore {
   devices = $state<DeviceItem[]>([]);
@@ -172,6 +172,7 @@ class DeviceStore {
         transport: ev.transport,
         ts: ev.ts,
         payload: ev.payload,
+        annotation: ev.annotation,
       };
       const next = [...this.frames, frame];
       if (next.length > FRAME_TAIL_CAP) next.splice(0, next.length - FRAME_TAIL_CAP);
@@ -180,8 +181,12 @@ class DeviceStore {
     this.tick++;
   }
 
-  clearFrames() {
-    this.frames = [];
+  clearFrames(deviceId?: string) {
+    if (deviceId) {
+      this.frames = this.frames.filter((f) => f.device_id !== deviceId);
+    } else {
+      this.frames = [];
+    }
   }
 
   // backfill a device's history from a fetched bundle. call before opening

@@ -100,11 +100,7 @@
 
     <!-- registration status / discovery config -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        registration
-      </h3>
+      <h3 class="mb-3 section-heading">registration</h3>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
         <span class="field-label">hass mqtt client</span>
         <span class="flex items-center gap-1.5 font-mono text-xs">
@@ -161,11 +157,7 @@
 
     <!-- service-wide topics owned by the daemon -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        service topics
-      </h3>
+      <h3 class="mb-3 section-heading">service topics</h3>
       <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         topics the daemon owns at the bridge level. the broker last-will flips availability to
         offline when the daemon dies; one-click and purge-caches are command topics with no
@@ -191,11 +183,7 @@
 
     <!-- subscribed routes -->
     <div class="panel p-4">
-      <h3
-        class="mb-3 section-heading"
-      >
-        subscribed routes
-      </h3>
+      <h3 class="mb-3 section-heading">subscribed routes</h3>
       <p class="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         command-topic patterns the daemon listens on. `:param` segments are bound by the mqtt
         router; one pattern serves every device.
@@ -226,11 +214,7 @@
 
     <!-- published discovery configs -->
     <div class="flex flex-col gap-2">
-      <h3
-        class="section-heading"
-      >
-        published discovery
-      </h3>
+      <h3 class="section-heading">published discovery</h3>
       {#if devices.length === 0}
         <p class="text-sm text-zinc-500 dark:text-zinc-400">
           no published components. the daemon has not registered devices with home assistant in this

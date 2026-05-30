@@ -62,9 +62,7 @@
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <div class="truncate font-medium select-none">{device.name}</div>
-      <div
-        class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs field-label"
-      >
+      <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs field-label">
         <span class="font-mono">{device.sku}</span>
         {#if device.ip}
           <span>·</span>
@@ -90,9 +88,7 @@
       <Badge transport={device.state.source} />
       <LastSeen updated={device.state.updated} />
       {#if device.state.online === false}
-        <span
-          class="pill bg-red-100 text-xs text-red-900 dark:bg-red-900/40 dark:text-red-200"
-        >
+        <span class="pill bg-red-100 text-xs text-red-900 dark:bg-red-900/40 dark:text-red-200">
           offline
         </span>
       {/if}

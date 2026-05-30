@@ -170,9 +170,7 @@
 
 <section class="panel p-4">
   <div class="mb-3 flex items-baseline justify-between">
-    <h3 class="section-heading">
-      all entities
-    </h3>
+    <h3 class="section-heading">all entities</h3>
     <span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">
       {entities.length} exposed to ha
     </span>

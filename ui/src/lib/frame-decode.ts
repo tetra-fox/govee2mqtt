@@ -1,45 +1,47 @@
 // Frame inspection helpers for the wire-frames page. Two transports:
 //
 //   ble  - the 20-byte Govee command frame. byte[0] is the family
-//          (0x33 write / 0xAA read-notify / 0xA3 live blob / 0xE7 handshake),
-//          byte[1] is the subcommand, bytes[2..18] are data, byte[19] is the
-//          XOR of bytes[0..18]. The daemon ships these as a space-separated
-//          lower-hex string (see hex_pretty in govee-api).
+//          (0x33 write / 0xAA read-notify / 0xA3 live blob / 0xE7 handshake /
+//          0xEE device notify), byte[1] is the opcode, bytes[2..18] are data,
+//          byte[19] is the XOR of bytes[0..18]. The daemon ships these as a
+//          space-separated lower-hex string (see hex_pretty in the daemon).
 //
 //   iot  - JSON; the daemon sends the bare `msg` object as published, the
 //          subscriber side delivers the full `{msg: {...}}` envelope. We
 //          accept either by checking both.
 //
-// Opcode names mirror research/api-map/07-frame-reference.md. Update both
-// sides when adding an opcode; the doc is the ground truth and this map is
-// the UI-side index into it.
+// Opcode semantics (what aa12 means on this SKU, the per-byte field names)
+// come from the daemon as a `FrameAnnotation` on each BLE frame, sourced from
+// the same codec that decodes it. This module no longer keeps its own opcode
+// table: that was a second, SKU-blind copy that mislabeled frames. What stays
+// here is the transport-format decode (family byte, checksum, byte grid) used
+// to render frames the daemon didn't annotate (IoT-wrapped frames, or BLE
+// frames whose SKU wasn't resolved).
 
-import type { FrameTransport } from "./types";
+import type { FrameTransport, FieldRole, FrameAnnotation } from "./types";
 
-export type ByteRole = "family" | "subcommand" | "param" | "padding" | "checksum" | "unknown";
+export type ByteRole = FieldRole;
 
 export type ByteAnnotation = {
   offset: number;
   value: number;
   role: ByteRole;
-  /// Short label shown next to the byte in the inspector. Optional; param
-  /// bytes without a confirmed meaning are just labelled by index.
+  /// Short label shown next to the byte. Optional; structural decode only
+  /// names the family, opcode, padding and checksum bytes.
   label?: string;
 };
 
 export type BleDecoded = {
   /// True only when the frame is the full 20 bytes AND the stored XOR
-  /// checksum matches the computed one. Truncated frames report false:
-  /// callers gating on this should treat "couldn't verify" as "not ok".
+  /// checksum matches the computed one. Truncated frames report false.
   ok: boolean;
   bytes: Uint8Array;
-  /// Human-readable summary: family + opcode + parameters when known.
-  /// Falls back to a generic family tag for unknown opcodes.
+  /// Human-readable summary. Structural-only: the family name.
   summary: string;
   /// Short tag for the header badge. Always one line.
   tag: string;
-  family: "write" | "read" | "live-blob" | "handshake" | "unknown";
-  /// Computed XOR checksum vs stored byte[19]. null when frame is shorter
+  family: string;
+  /// Computed XOR checksum vs stored byte[19]. null when the frame is shorter
   /// than 20 bytes (truncated).
   checksum: { stored: number; computed: number; ok: boolean } | null;
   annotations: ByteAnnotation[];
@@ -64,120 +66,23 @@ export type IotDecoded = {
   summary: string;
 };
 
-const BLE_OPCODES: Record<string, { label: string; family: BleDecoded["family"] }> = {
-  // generic 0x33 writes
-  "33 01": { label: "power", family: "write" },
-  "33 04": { label: "brightness", family: "write" },
-  "33 05": { label: "mode / apply", family: "write" },
-  // H6093-specific
-  "33 11": { label: "H6093 aurora config", family: "write" },
-  "33 30": { label: "H6093 settings toggle", family: "write" },
-  "33 31": { label: "H6093 timer A", family: "write" },
-  "33 32": { label: "H6093 timer B", family: "write" },
-  // H5082-specific (research/mitm/H5082-protocol.md)
-  "33 13": { label: "H5082 set timer slot", family: "write" },
-  "33 b0": { label: "H5082 set countdown", family: "write" },
-  "33 b2": { label: "H5082 key probe", family: "write" },
-  "33 b5": { label: "H5082 sync time", family: "write" },
-  // generic reads / notifications
-  "aa 01": { label: "power query", family: "read" },
-  "aa 04": { label: "brightness query", family: "read" },
-  "aa 05": { label: "mode query", family: "read" },
-  "aa 06": { label: "firmware version", family: "read" },
-  "aa 07": { label: "hardware version", family: "read" },
-  "aa 11": { label: "H6093 aurora notify", family: "read" },
-  "aa 12": { label: "H5082 timer count", family: "read" },
-  "aa 13": { label: "H5082 timer slots", family: "read" },
-  "aa 20": { label: "secondary version A", family: "read" },
-  "aa 21": { label: "secondary version B", family: "read" },
-  "aa b0": { label: "H5082 countdown slot", family: "read" },
-  // V1 handshake
-  "e7 01": { label: "V1 session handshake", family: "handshake" },
-  "e7 02": { label: "V1 session confirm", family: "handshake" },
-};
-
-/// H5082 nibble-packed power val (high nibble = outlet selector mask, low
-/// nibble = on-bits within that mask). bit0 = outlet 2, bit1 = outlet 1.
-/// Returns null when the val doesn't look like the packed form so the caller
-/// can fall back to the generic 1/0 interpretation.
-function decodeH5082Power(val: number): string | null {
-  const mask = (val >> 4) & 0x0f;
-  const on = val & 0x0f;
-  if (mask === 0 || (mask & on) !== on) return null;
-  const both = mask === 0b11;
-  const outlet1 = mask === 0b10;
-  const outlet2 = mask === 0b01;
-  const isOn = on === mask;
-  if (both) return isOn ? "master on" : "master off";
-  if (outlet1) return isOn ? "outlet 1 on" : "outlet 1 off";
-  if (outlet2) return isOn ? "outlet 2 on" : "outlet 2 off";
-  return null;
-}
-
-/// H5082 onOff bitmask reply (aa 01 <mask>): bit0 = outlet 2 on, bit1 =
-/// outlet 1 on. Same bit layout as the low nibble of the power write.
-function decodeH5082OnOffMask(mask: number): string {
-  const o1 = (mask & 0b10) !== 0;
-  const o2 = (mask & 0b01) !== 0;
-  if (o1 && o2) return "both on";
-  if (o1) return "outlet 1 on";
-  if (o2) return "outlet 2 on";
-  return "both off";
-}
-
-/// H5082 outlet wire byte (0x01 = outlet 1, 0x00 = outlet 2). Inverse of the
-/// power-write nibble selector. The same encoding is used by 33 b0 / aa b0
-/// (countdowns) and aa 12 / aa 13 (timer reads).
-function decodeH5082Outlet(b: number): string | null {
-  if (b === 0x01) return "outlet 1";
-  if (b === 0x00) return "outlet 2";
-  return null;
-}
-
-/// Per-byte parameter label for a known opcode. Returns undefined when
-/// nothing useful can be said; the caller renders the bare value.
-function paramLabel(opKey: string, bytes: Uint8Array, i: number): string | undefined {
-  switch (opKey) {
-    case "33 01":
-      if (i === 2)
-        return (
-          decodeH5082Power(bytes[2]) ??
-          (bytes[2] === 1 ? "on" : bytes[2] === 0 ? "off" : `val ${bytes[2]}`)
-        );
-      return undefined;
-    case "33 04":
-      if (i === 2) return `brightness ${bytes[2]}%`;
-      return undefined;
-    case "33 b0":
-    case "aa b0":
-      if (i === 2) return decodeH5082Outlet(bytes[2]) ?? undefined;
-      if (i === 3)
-        return bytes[3] === 0x01 ? "fire on" : bytes[3] === 0x00 ? "fire off" : undefined;
-      if (i === 4) return `hh ${bytes[4]}`;
-      if (i === 5) return `mm ${bytes[5]}`;
-      return undefined;
-    case "aa 01":
-      if (i === 2) return decodeH5082OnOffMask(bytes[2]);
-      return undefined;
-    case "aa 12":
-      if (i === 2) return decodeH5082Outlet(bytes[2]) ?? undefined;
-      if (i === 3) return `count ${bytes[3]}`;
-      return undefined;
-    case "33 13":
-      if (i === 2) return decodeH5082Outlet(bytes[2]) ?? undefined;
-      if (i === 3) return `slot ${bytes[3]}`;
-      return undefined;
+/// Human family name for byte 0, matching the daemon's family_label so the two
+/// agree. The high-level frame type the leading byte marks.
+function familyName(byte: number): string {
+  switch (byte) {
+    case 0x33:
+      return "write";
+    case 0xaa:
+      return "read/notify";
+    case 0xa3:
+      return "live blob";
+    case 0xe7:
+      return "handshake";
+    case 0xee:
+      return "device notify";
     default:
-      return undefined;
+      return "family";
   }
-}
-
-function familyOf(byte: number): BleDecoded["family"] {
-  if (byte === 0x33) return "write";
-  if (byte === 0xaa) return "read";
-  if (byte === 0xa3) return "live-blob";
-  if (byte === 0xe7) return "handshake";
-  return "unknown";
 }
 
 function hex2(n: number): string {
@@ -213,15 +118,15 @@ function xorChecksum(bytes: Uint8Array, upto: number): number {
   return acc;
 }
 
-/// Decode a single 20-byte BLE command frame from a space-separated hex
-/// string (the daemon's wire format). Tolerates shorter input.
+/// Structural decode of a 20-byte BLE frame from a space-separated hex string.
+/// Names only the format bytes (family, opcode, padding, checksum); opcode
+/// semantics come from the daemon annotation, not here.
 export function decodeBle(hex: string): BleDecoded {
   return decodeBleBytes(parseHexString(hex));
 }
 
-/// Same as decodeBle but works directly on bytes — used for base64-wrapped
-/// frames pulled out of an IoT envelope, which don't pass through hex.
-/// `checksum.ok` only makes sense when the frame is the full 20 bytes long.
+/// Same as decodeBle but works on bytes — used for base64-wrapped frames pulled
+/// out of an IoT envelope, which don't pass through hex.
 export function decodeBleBytes(bytes: Uint8Array): BleDecoded {
   if (bytes.length === 0) {
     return {
@@ -235,65 +140,55 @@ export function decodeBleBytes(bytes: Uint8Array): BleDecoded {
     };
   }
 
-  const family = familyOf(bytes[0]);
-  const opKey = bytes.length >= 2 ? `${hex2(bytes[0])} ${hex2(bytes[1])}` : null;
-  const known = opKey ? BLE_OPCODES[opKey] : null;
+  const family = familyName(bytes[0]);
+  const full = bytes.length === 20;
+  const bodyEnd = full ? 19 : bytes.length;
+  const checksum = full
+    ? {
+        stored: bytes[19],
+        computed: xorChecksum(bytes, 19),
+        ok: xorChecksum(bytes, 19) === bytes[19],
+      }
+    : null;
 
-  const checksum =
-    bytes.length === 20
-      ? {
-          stored: bytes[19],
-          computed: xorChecksum(bytes, 19),
-          ok: xorChecksum(bytes, 19) === bytes[19],
-        }
-      : null;
+  // last data byte (offset >= 2, before the checksum) that carries a non-zero
+  // value. zeros past it are the trailing pad; a zero before it is a field
+  // value of 0, not padding, so we don't call it padding.
+  let lastNonzero = -1;
+  for (let i = 2; i < bodyEnd; i++) {
+    if (bytes[i] !== 0) lastNonzero = i;
+  }
 
   const annotations: ByteAnnotation[] = [];
   for (let i = 0; i < bytes.length; i++) {
-    let role: ByteRole = "param";
+    let role: ByteRole;
     let label: string | undefined;
     if (i === 0) {
       role = "family";
-      label = `${family} (${hex2(bytes[0])})`;
+      label = family;
     } else if (i === 1) {
-      role = "subcommand";
-      label = known?.label;
-    } else if (i === 19 && bytes.length === 20) {
+      role = "opcode";
+      label = `opcode 0x${hex2(bytes[1])}`;
+    } else if (full && i === 19) {
       role = "checksum";
-      label = `XOR (${checksum?.ok ? "ok" : "BAD"})`;
-    } else if (i >= 2 && i < (bytes.length === 20 ? 19 : bytes.length)) {
-      // parameter bytes: pull whatever the opcode-specific decoder knows.
-      if (opKey) label = paramLabel(opKey, bytes, i);
+      label = "xor checksum";
+    } else if (i > lastNonzero) {
+      // trailing zero run: the frame's zero padding
+      role = "padding";
+      label = "padding";
+    } else {
+      // interior byte we can't name without the codec, including an interior 0
+      role = "unknown";
     }
     annotations.push({ offset: i, value: bytes[i], role, label });
   }
 
-  // tag/summary for the header badge
-  let tag: string;
-  let summary: string;
-  if (known) {
-    tag = `${opKey} · ${known.label}`;
-    summary = known.label;
-  } else if (family === "live-blob") {
-    tag = `a3 · live blob (${bytes.length}B)`;
-    summary = `H6093 full-state blob (${bytes.length} bytes)`;
-  } else if (family === "unknown") {
-    // unrecognized first byte: could be a real unknown opcode, or the bytes
-    // we see are pre-decryption ciphertext for a supportEnc device (V1/V2
-    // frames have no recognizable family byte). Daemon doesn't tell us
-    // which, so the summary mentions both.
-    tag = opKey ? `${opKey}` : `${hex2(bytes[0])}`;
-    summary = "unknown opcode (or pre-decryption ciphertext)";
-  } else {
-    tag = opKey ? `${opKey} · ${family}` : `${hex2(bytes[0])} · ${family}`;
-    summary = `${family} opcode ${opKey ?? hex2(bytes[0])}`;
-  }
-
+  const opTag = bytes.length >= 2 ? `${hex2(bytes[0])} ${hex2(bytes[1])}` : `${hex2(bytes[0])}`;
   return {
     ok: checksum?.ok ?? false,
     bytes,
-    summary,
-    tag,
+    summary: family === "family" ? "unknown frame (or ciphertext)" : `${family} frame`,
+    tag: `${opTag} · ${family}`,
     family,
     checksum,
     annotations,
@@ -376,16 +271,76 @@ export function decodeIot(text: string): IotDecoded {
   return { cmd, tag, sku, device, wrappedFrames, summary };
 }
 
-/// One-line, transport-agnostic summary for the card header. Falls back to
-/// "raw" hex digits or json snippet when nothing more useful is available.
+/// One-line, transport-agnostic summary for the card header. For BLE it prefers
+/// the daemon's per-frame annotation (SKU-correct); without one it falls back to
+/// the structural family tag. For IoT it parses the envelope.
 export function summarizeFrame(
   transport: FrameTransport,
   payload: string,
+  annotation?: FrameAnnotation,
 ): { tag: string; summary: string } {
   if (transport === "ble") {
+    if (annotation) {
+      return { tag: annotation.summary, summary: annotation.summary };
+    }
     const d = decodeBle(payload);
     return { tag: d.tag, summary: d.summary };
   }
   const d = decodeIot(payload);
   return { tag: d.cmd ?? "iot", summary: d.summary };
+}
+
+/// Coarse message kind for the frames-page filter. Derived structurally so it
+/// works without the daemon annotation: BLE frames key off the family byte,
+/// with the aa 00 ping/echo split out as keep-alive; IoT frames split into
+/// command (carries a cmd) vs status notification. Direction is a separate
+/// axis, handled by the frames-view direction filter.
+export type FrameKind =
+  | "keep-alive"
+  | "write"
+  | "read/notify"
+  | "device notify"
+  | "handshake"
+  | "live blob"
+  | "command"
+  | "status"
+  | "unknown";
+
+/// Canonical display order for the kind filter. The view lists only the kinds
+/// actually present in the buffer, in this order.
+export const FRAME_KINDS: FrameKind[] = [
+  "keep-alive",
+  "write",
+  "read/notify",
+  "device notify",
+  "handshake",
+  "live blob",
+  "command",
+  "status",
+  "unknown",
+];
+
+export function frameKind(transport: FrameTransport, payload: string): FrameKind {
+  if (transport === "ble") {
+    const toks = payload.trim().split(/\s+/);
+    const fam = parseInt(toks[0] ?? "", 16);
+    switch (fam) {
+      case 0x33:
+        return "write";
+      case 0xa3:
+        return "live blob";
+      case 0xe7:
+        return "handshake";
+      case 0xee:
+        return "device notify";
+      case 0xaa:
+        return parseInt(toks[1] ?? "", 16) === 0x00 ? "keep-alive" : "read/notify";
+      default:
+        return "unknown";
+    }
+  }
+  const d = decodeIot(payload);
+  if (d.cmd) return "command";
+  if (d.sku && d.device) return "status";
+  return "unknown";
 }

@@ -1,10 +1,10 @@
 <script lang="ts">
   // One frame as a card: tight metadata strip on top, payload below as a
   // full-width region. The header carries a tiny opcode badge derived by the
-  // frame-decode helper, and a chevron toggle opens the FrameInspector for
-  // an annotated byte view (BLE) or extracted-fields chips (IoT). Default
-  // collapsed; expanded state is local to the card so opening one doesn't
-  // open the rest.
+  // frame-decode helper; clicking anywhere on it toggles the FrameInspector
+  // for an annotated byte view (BLE) or extracted-fields chips (IoT), with
+  // the chevron as the open/closed indicator. Default collapsed; expanded
+  // state is local to the card so opening one doesn't open the rest.
 
   import type { KeyedFrame } from "../ws.svelte";
   import { relativeFrom } from "../format";
@@ -32,6 +32,12 @@
 
   let expanded = $state(false);
 
+  // the copy button lives inside the clickable header; stop its events here
+  // so copying the payload doesn't also toggle the decode panel.
+  function stop(e: Event) {
+    e.stopPropagation();
+  }
+
   // canonicalize once per frame: IoT envelopes round-trip through
   // parse+stringify to drop daemon-side whitespace; BLE is the raw hex
   // string already. computed via $derived so the header copy-button, the
@@ -48,7 +54,7 @@
     return frame.payload;
   });
 
-  const summary = $derived(summarizeFrame(frame.transport, payload));
+  const summary = $derived(summarizeFrame(frame.transport, payload, frame.annotation));
 
   // tick a local clock so the relative timestamp ages while the card sits
   // in view, even with no other re-render trigger. matches LastSeen.svelte;
@@ -62,17 +68,25 @@
 
 <article in:flash={{ enabled: flashOnMount }} class="card-surface overflow-hidden">
   <header
-    class="flex items-center justify-between gap-3 border-b border-zinc-100 px-3 py-1.5 text-xs dark:border-zinc-800"
+    role="button"
+    tabindex="0"
+    aria-expanded={expanded}
+    onclick={() => (expanded = !expanded)}
+    onkeydown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        expanded = !expanded;
+      }
+    }}
+    title={expanded ? "collapse decode" : "expand decode"}
+    class="flex cursor-pointer items-center justify-between gap-3 border-b border-zinc-100 px-3 py-1.5 text-xs transition-colors select-none hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/40"
   >
     <div class="flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        onclick={() => (expanded = !expanded)}
-        title={expanded ? "collapse decode" : "expand decode"}
-        class="cursor-pointer rounded text-zinc-400 transition-colors hover:text-zinc-700 dark:text-zinc-500 dark:hover:text-zinc-300"
-      >
-        <ChevronRight class="size-3 transition-transform {expanded ? 'rotate-90' : ''}" />
-      </button>
+      <ChevronRight
+        class="size-3 shrink-0 text-zinc-400 transition-transform dark:text-zinc-500 {expanded
+          ? 'rotate-90'
+          : ''}"
+      />
       <span
         title={frame.ts}
         class="font-mono whitespace-nowrap text-zinc-500 select-none dark:text-zinc-400"
@@ -99,9 +113,11 @@
         <span class="max-w-56 truncate select-none" title={deviceName}>{deviceName}</span>
       {/if}
     </div>
-    <CopyableText value={payload} class="shrink-0">
-      <span class="sr-only">copy payload</span>
-    </CopyableText>
+    <div role="presentation" onclick={stop} onkeydown={stop} onpointerdown={stop} class="shrink-0">
+      <CopyableText value={payload}>
+        <span class="sr-only">copy payload</span>
+      </CopyableText>
+    </div>
   </header>
   <div class="px-3 py-2">
     <PayloadView {payload} transport={frame.transport} />
@@ -110,7 +126,7 @@
     <div
       class="border-t border-zinc-100 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40"
     >
-      <FrameInspector {payload} transport={frame.transport} />
+      <FrameInspector {payload} transport={frame.transport} annotation={frame.annotation} />
     </div>
   {/if}
 </article>

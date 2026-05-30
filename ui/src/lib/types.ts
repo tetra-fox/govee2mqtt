@@ -52,10 +52,37 @@ export type StateEvent =
       transport: FrameTransport;
       ts: string;
       payload: string;
+      annotation?: FrameAnnotation;
     };
 
 export type FrameDirection = "out" | "in";
-export type FrameTransport = "ble" | "iot";
+export type FrameTransport = "ble" | "iot" | "lan";
+
+// per-byte role, matching the daemon's FieldRole (govee-api ble::codec).
+export type FieldRole =
+  | "family"
+  | "opcode"
+  | "field"
+  | "const"
+  | "padding"
+  | "checksum"
+  | "unknown";
+
+// one labelled byte of a BLE frame.
+export type FieldNote = {
+  offset: number;
+  len: number;
+  role: FieldRole;
+  label: string;
+};
+
+// daemon-side decode of a BLE frame: a summary plus the per-byte field map,
+// sourced from the same codec that decodes the frame. Present only on BLE
+// frames whose SKU the daemon could resolve.
+export type FrameAnnotation = {
+  summary: string;
+  fields: FieldNote[];
+};
 
 // client-side shape; the ws event without the type tag, with ts and
 // transport kept for rendering.
@@ -65,6 +92,7 @@ export type Frame = {
   transport: FrameTransport;
   ts: string;
   payload: string;
+  annotation?: FrameAnnotation;
 };
 
 export type OneClick = {

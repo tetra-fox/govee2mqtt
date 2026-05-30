@@ -32,8 +32,6 @@
   const text = $derived(size === "sm" ? "text-[10px]" : "text-xs");
 </script>
 
-<span
-  class="pill inline-flex items-center select-none {text} {tone}"
->
+<span class="pill inline-flex items-center select-none {text} {tone}">
   {label}
 </span>

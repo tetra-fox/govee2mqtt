@@ -77,11 +77,7 @@ body,
 
 body {
   font-family: var(--font-sans);
-  background-color: oklch(0.97 0 0);
-}
-
-:where(.dark) body {
-  background-color: oklch(0.11 0 0);
+  background-color: var(--surface-bg);
 }
 
 /*
@@ -96,6 +92,27 @@ body {
   transition:
     background-color 220ms ease,
     color 220ms ease;
+}
+
+/*
+ * surface fill tokens, snapped onto tailwind's zinc scale. the light/dark
+ * swap is defined once here instead of a background-color override on every
+ * surface utility below. dark is scoped :root:where(.dark) to match :root's
+ * specificity, otherwise the light :root values would win in dark mode.
+ */
+:root {
+  --surface-bg: var(--color-zinc-100);
+  --surface-panel: var(--color-zinc-50);
+  --surface-card: var(--color-white);
+  --surface-chip: var(--color-white);
+}
+
+:root:where(.dark) {
+  --surface-bg: var(--color-zinc-950);
+  /* panel shares card's zinc-900 tier; zinc has no stop between bg and card */
+  --surface-panel: var(--color-zinc-900);
+  --surface-card: var(--color-zinc-900);
+  --surface-chip: var(--color-zinc-800);
 }
 
 /*
@@ -123,7 +140,7 @@ body {
  */
 @utility panel {
   border-radius: var(--radius-xl, 0.75rem);
-  background-color: oklch(0.99 0 0);
+  background-color: var(--surface-panel);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.5),
     0 1px 0 0 oklch(0 0 0 / 0.06),
@@ -131,7 +148,6 @@ body {
 }
 
 :where(.dark) .panel {
-  background-color: oklch(0.15 0.005 240);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.06),
     0 1px 0 0 oklch(0 0 0 / 0.5),
@@ -145,7 +161,7 @@ body {
  */
 @utility card-surface {
   border-radius: var(--radius-lg, 0.625rem);
-  background-color: oklch(1 0 0);
+  background-color: var(--surface-card);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.5),
     0 1px 0 0 oklch(0 0 0 / 0.06),
@@ -154,7 +170,6 @@ body {
 }
 
 :where(.dark) .card-surface {
-  background-color: oklch(0.18 0.005 240);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.08),
     0 1px 0 0 oklch(0 0 0 / 0.5),
@@ -196,7 +211,7 @@ body {
 
 @utility chip {
   border-radius: var(--radius-md, 0.375rem);
-  background-color: oklch(1 0 0);
+  background-color: var(--surface-chip);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.4),
     0 1px 0 0 oklch(0 0 0 / 0.06),
@@ -204,7 +219,6 @@ body {
 }
 
 :where(.dark) .chip {
-  background-color: oklch(0.22 0.005 240);
   box-shadow:
     inset 0 1px 0 0 oklch(1 0 0 / 0.08),
     0 1px 0 0 oklch(0 0 0 / 0.5),
@@ -242,5 +256,33 @@ body {
 
 /* small-caps panel/section heading. margins stay on each caller. */
 @utility section-heading {
-  @apply text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400;
+  @apply text-xs font-semibold tracking-wide text-zinc-500 uppercase select-none dark:text-zinc-400;
+}
+
+/*
+ * open/dismiss animation for bits-ui popover content. keyed off the data-state
+ * attribute bits-ui sets; its presence layer keeps the node mounted until the
+ * close animation finishes, so the dismiss plays instead of popping out. the
+ * single-keyframe form animates to/from the element's own resting style.
+ */
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+}
+@keyframes popover-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(-2px);
+  }
+}
+.popover-anim {
+  transform-origin: top center;
+}
+.popover-anim[data-state="open"] {
+  animation: popover-in 70ms ease-out;
+}
+.popover-anim[data-state="closed"] {
+  animation: popover-out 50ms ease-in;
 }
