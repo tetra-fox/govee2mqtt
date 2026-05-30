@@ -5,6 +5,7 @@
   import { forcePoll, getDeviceDebug } from "../api";
   import { relativeFrom } from "../format";
   import Badge from "./Badge.svelte";
+  import SharedBadge from "./SharedBadge.svelte";
   import CopyableText from "./CopyableText.svelte";
   import { flash } from "../transitions/flash";
   import PowerControl from "./controls/PowerControl.svelte";
@@ -13,7 +14,7 @@
   import ColorControl from "./controls/ColorControl.svelte";
   import SceneControl from "./controls/SceneControl.svelte";
   import SocketOutletControl from "./controls/SocketOutletControl.svelte";
-  import { ArrowLeft, Users } from "@lucide/svelte";
+  import { ArrowLeft } from "@lucide/svelte";
   import Pagination from "./Pagination.svelte";
   import FrameCard from "./FrameCard.svelte";
   import EntitiesPanel from "./EntitiesPanel.svelte";
@@ -154,13 +155,9 @@
         <span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">{device.sku}</span>
       </CopyableText>
       {#if device.shared}
-        <span
-          class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100 select-none"
-          title="shared device: control routes through the govee REST relay, not direct mqtt; the platform API doesn't return state for it so polls are undoc-only"
-        >
-          <Users class="size-3" />
-          shared
-        </span>
+        <SharedBadge
+          detail="the platform API doesn't return state for it so polls are undoc-only"
+        />
       {/if}
     {/if}
   </div>
@@ -170,38 +167,38 @@
   {:else}
     <section class="panel p-3">
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <span class="text-zinc-500 dark:text-zinc-400 select-none">id</span>
+        <span class="field-label">id</span>
         <CopyableText value={device.id}>
           <span class="truncate font-mono text-xs">{device.id}</span>
         </CopyableText>
         {#if device.room}
-          <span class="text-zinc-500 dark:text-zinc-400 select-none">room</span>
+          <span class="field-label">room</span>
           <span class="select-none">{device.room}</span>
         {/if}
         {#if device.ip}
-          <span class="text-zinc-500 dark:text-zinc-400 select-none">ip</span>
+          <span class="field-label">ip</span>
           <CopyableText value={device.ip}>
             <span class="font-mono text-xs">{device.ip}</span>
           </CopyableText>
         {/if}
         {#if device.state}
-          <span class="text-zinc-500 dark:text-zinc-400 select-none">source</span>
+          <span class="field-label">source</span>
           <span><Badge transport={device.state.source} /></span>
-          <span class="text-zinc-500 dark:text-zinc-400 select-none">power</span>
+          <span class="field-label">power</span>
           <span class="font-mono text-xs select-none">{device.state.on ? "on" : "off"}</span>
           {#if device.state.brightness > 0}
-            <span class="text-zinc-500 dark:text-zinc-400 select-none">brightness</span>
+            <span class="field-label">brightness</span>
             <span class="font-mono text-xs select-none">{device.state.brightness}%</span>
           {/if}
           {#if device.state.kelvin > 0}
-            <span class="text-zinc-500 dark:text-zinc-400 select-none">kelvin</span>
+            <span class="field-label">kelvin</span>
             <span class="font-mono text-xs select-none">{device.state.kelvin}K</span>
           {/if}
           {#if device.state.scene}
-            <span class="text-zinc-500 dark:text-zinc-400 select-none">scene</span>
+            <span class="field-label">scene</span>
             <span class="font-mono text-xs select-none">{device.state.scene}</span>
           {/if}
-          <span class="text-zinc-500 dark:text-zinc-400 select-none">last update</span>
+          <span class="field-label">last update</span>
           <span class="font-mono text-xs select-none">{relativeFrom(device.state.updated)}</span>
         {/if}
       </div>
@@ -210,7 +207,7 @@
     {#if hasControls && device.state}
       <section class="panel p-4">
         <h3
-          class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+          class="mb-3 section-heading"
         >
           controls
         </h3>
@@ -263,7 +260,7 @@
       <section>
         <div class="mb-2 flex items-baseline justify-between">
           <h3
-            class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+            class="section-heading"
           >
             command history
           </h3>
@@ -287,7 +284,7 @@
                 <tr>
                   <th class="px-3 py-1.5 text-left font-normal">when</th>
                   <th class="px-3 py-1.5 text-left font-normal">command</th>
-                  <th class="px-3 py-1.5 text-left font-normal">outcome</th>
+                  <th class="px-3 py-1.5 text-left font-normal">transport</th>
                   <th
                     class="px-3 py-1.5 text-right font-normal underline decoration-dotted underline-offset-2"
                     title="wire-send duration on the daemon side. IoT and platform commands fire-and-forget, so this does not include device round-trip. LAN includes the post-send poll loop."
@@ -315,7 +312,7 @@
                         <Badge transport={entry.outcome.transport} size="sm" />
                       {:else}
                         <span
-                          class="rounded bg-red-100 px-1.5 py-0.5 font-mono text-[10px] text-red-900 dark:bg-red-900/40 dark:text-red-200"
+                          class="pill bg-red-100 text-[10px] text-red-900 dark:bg-red-900/40 dark:text-red-200"
                           title={entry.outcome.message}
                         >
                           err: {entry.outcome.message.slice(0, 60)}{entry.outcome.message.length >
@@ -350,7 +347,7 @@
       <section>
         <div class="mb-2 flex items-baseline justify-between">
           <h3
-            class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+            class="section-heading"
           >
             frames
           </h3>

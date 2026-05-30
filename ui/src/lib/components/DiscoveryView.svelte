@@ -4,8 +4,8 @@
   import { relativeFrom } from "../format";
   import type { DiscoveryItem } from "../types";
   import Badge from "./Badge.svelte";
+  import SharedBadge from "./SharedBadge.svelte";
   import CopyableText from "./CopyableText.svelte";
-  import { Users } from "@lucide/svelte";
 
   let items = $state<DiscoveryItem[]>([]);
   let loading = $state(true);
@@ -81,16 +81,10 @@
             </div>
             <div class="flex shrink-0 items-center gap-1.5">
               {#if item.shared}
-                <span
-                  class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100 select-none"
-                  title="shared device: control routes through the govee REST relay, not direct mqtt; explains the empty http_info / http_state / iot_status dots"
-                >
-                  <Users class="size-3" />
-                  shared
-                </span>
+                <SharedBadge detail="explains the empty http_info / http_state / iot_status dots" />
               {/if}
               <span
-                class="select-none rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                class="pill select-none bg-zinc-100 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
               >
                 {item.device_type.replace("devices.types.", "")}
               </span>
@@ -99,29 +93,29 @@
 
           <div class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
             {#if item.quirk}
-              <span class="text-zinc-500 dark:text-zinc-400 select-none">quirk</span>
+              <span class="field-label">quirk</span>
               <CopyableText value={item.quirk}>
                 <span class="font-mono">{item.quirk}</span>
               </CopyableText>
             {/if}
             {#if item.room}
-              <span class="text-zinc-500 dark:text-zinc-400 select-none">room</span>
+              <span class="field-label">room</span>
               <span class="select-none">{item.room}</span>
             {/if}
             {#if item.ip}
-              <span class="text-zinc-500 dark:text-zinc-400 select-none">ip</span>
+              <span class="field-label">ip</span>
               <CopyableText value={item.ip}>
                 <span class="font-mono">{item.ip}</span>
               </CopyableText>
             {/if}
             {#if item.ble_address}
-              <span class="text-zinc-500 dark:text-zinc-400 select-none">ble</span>
+              <span class="field-label">ble</span>
               <CopyableText value={item.ble_address}>
                 <span class="font-mono">{item.ble_address}</span>
               </CopyableText>
             {/if}
             {#if item.last_polled}
-              <span class="text-zinc-500 dark:text-zinc-400 select-none">polled</span>
+              <span class="field-label">polled</span>
               <span class="font-mono select-none">{relativeFrom(item.last_polled)}</span>
             {/if}
           </div>

@@ -101,12 +101,12 @@
     <!-- registration status / discovery config -->
     <div class="panel p-4">
       <h3
-        class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+        class="mb-3 section-heading"
       >
         registration
       </h3>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
-        <span class="text-zinc-500 select-none dark:text-zinc-400">hass mqtt client</span>
+        <span class="field-label">hass mqtt client</span>
         <span class="flex items-center gap-1.5 font-mono text-xs">
           {#if data.connected}
             <CheckCircle2 class="size-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -117,17 +117,17 @@
           {/if}
         </span>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">discovery prefix</span>
+        <span class="field-label">discovery prefix</span>
         <CopyableText value={data.discovery_prefix}>
           <span class="font-mono text-xs">{data.discovery_prefix}</span>
         </CopyableText>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">base topic</span>
+        <span class="field-label">base topic</span>
         <CopyableText value={data.base_topic}>
           <span class="font-mono text-xs">{data.base_topic}</span>
         </CopyableText>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">last full pass</span>
+        <span class="field-label">last full pass</span>
         <span class="font-mono text-xs">
           {#if data.last_registration}
             <span title={data.last_registration.at}>
@@ -138,7 +138,7 @@
           {/if}
         </span>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">published</span>
+        <span class="field-label">published</span>
         <span class="font-mono text-xs">
           {totals.devices} devices{metaEntry ? " + daemon" : ""} · {totals.components} components
         </span>
@@ -162,7 +162,7 @@
     <!-- service-wide topics owned by the daemon -->
     <div class="panel p-4">
       <h3
-        class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+        class="mb-3 section-heading"
       >
         service topics
       </h3>
@@ -172,17 +172,17 @@
         per-device segment.
       </p>
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1.5 text-sm">
-        <span class="text-zinc-500 select-none dark:text-zinc-400">availability</span>
+        <span class="field-label">availability</span>
         <CopyableText value={data.service_topics.availability}>
           <span class="font-mono text-xs break-all">{data.service_topics.availability}</span>
         </CopyableText>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">one-click</span>
+        <span class="field-label">one-click</span>
         <CopyableText value={data.service_topics.oneclick}>
           <span class="font-mono text-xs break-all">{data.service_topics.oneclick}</span>
         </CopyableText>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">purge caches</span>
+        <span class="field-label">purge caches</span>
         <CopyableText value={data.service_topics.purge_caches}>
           <span class="font-mono text-xs break-all">{data.service_topics.purge_caches}</span>
         </CopyableText>
@@ -192,7 +192,7 @@
     <!-- subscribed routes -->
     <div class="panel p-4">
       <h3
-        class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+        class="mb-3 section-heading"
       >
         subscribed routes
       </h3>
@@ -227,7 +227,7 @@
     <!-- published discovery configs -->
     <div class="flex flex-col gap-2">
       <h3
-        class="text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+        class="section-heading"
       >
         published discovery
       </h3>
@@ -278,12 +278,12 @@
     <div class="flex flex-col gap-3 border-t border-zinc-500/15 px-3 py-3">
       <!-- device-level metadata: what HA sees as the "device" panel -->
       <div class="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-xs">
-        <span class="text-zinc-500 select-none dark:text-zinc-400">config topic</span>
+        <span class="field-label">config topic</span>
         <CopyableText value={entry.topic}>
           <span class="font-mono text-[11px] break-all">{entry.topic}</span>
         </CopyableText>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">identifiers</span>
+        <span class="field-label">identifiers</span>
         <span class="flex flex-wrap items-center gap-1">
           {#each entry.device.identifiers as id (id)}
             <CopyableText value={id}>
@@ -293,17 +293,17 @@
         </span>
 
         {#if entry.device.via_device}
-          <span class="text-zinc-500 select-none dark:text-zinc-400">via device</span>
+          <span class="field-label">via device</span>
           <span class="font-mono text-[11px]">{entry.device.via_device}</span>
         {/if}
 
         {#if entry.device.suggested_area}
-          <span class="text-zinc-500 select-none dark:text-zinc-400">suggested area</span>
+          <span class="field-label">suggested area</span>
           <span class="font-mono text-[11px]">{entry.device.suggested_area}</span>
         {/if}
 
         {#if entry.device.sw_version}
-          <span class="text-zinc-500 select-none dark:text-zinc-400">sw / hw</span>
+          <span class="field-label">sw / hw</span>
           <span class="font-mono text-[11px]">
             {entry.device.sw_version}
             {#if entry.device.hw_version}
@@ -312,10 +312,10 @@
           </span>
         {/if}
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">manufacturer</span>
+        <span class="field-label">manufacturer</span>
         <span class="font-mono text-[11px]">{entry.device.manufacturer}</span>
 
-        <span class="text-zinc-500 select-none dark:text-zinc-400">availability</span>
+        <span class="field-label">availability</span>
         <span class="flex flex-col gap-0.5">
           {#each entry.availability as a, i (i)}
             <CopyableText value={a.topic}>

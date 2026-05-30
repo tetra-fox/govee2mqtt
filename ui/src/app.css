@@ -224,3 +224,23 @@ body {
 :where(.dark) .daemon-accent {
   background-color: oklch(0.22 0.04 290);
 }
+
+/*
+ * small pill/tag shape: rounded mono chip. just the shape, so tone, size, and
+ * select-none stay on each caller. same intent as the surface utilities above:
+ * centralize the shape so radius/padding/font don't drift across the badge and
+ * status-pill sites.
+ */
+@utility pill {
+  @apply rounded px-1.5 py-0.5 font-mono;
+}
+
+/* grey, non-selectable key label used in the key/value grids. */
+@utility field-label {
+  @apply text-zinc-500 select-none dark:text-zinc-400;
+}
+
+/* small-caps panel/section heading. margins stay on each caller. */
+@utility section-heading {
+  @apply text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400;
+}

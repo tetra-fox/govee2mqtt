@@ -2,9 +2,9 @@
   import type { DeviceItem } from "../types";
   import { powerOn, powerOff } from "../api";
   import Badge from "./Badge.svelte";
+  import SharedBadge from "./SharedBadge.svelte";
   import LastSeen from "./LastSeen.svelte";
   import Switch from "./Switch.svelte";
-  import { Users } from "@lucide/svelte";
 
   let { device, onOpen }: { device: DeviceItem; onOpen?: (id: string) => void } = $props();
 
@@ -63,7 +63,7 @@
     <div class="min-w-0">
       <div class="truncate font-medium select-none">{device.name}</div>
       <div
-        class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400 select-none"
+        class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs field-label"
       >
         <span class="font-mono">{device.sku}</span>
         {#if device.ip}
@@ -71,13 +71,7 @@
           <span class="font-mono">{device.ip}</span>
         {/if}
         {#if device.shared}
-          <span
-            class="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] text-violet-900 dark:bg-violet-900/40 dark:text-violet-100"
-            title="shared device: control routes through the govee REST relay, not direct mqtt"
-          >
-            <Users class="size-3" />
-            shared
-          </span>
+          <SharedBadge />
         {/if}
       </div>
     </div>
@@ -97,7 +91,7 @@
       <LastSeen updated={device.state.updated} />
       {#if device.state.online === false}
         <span
-          class="rounded bg-red-100 px-1.5 py-0.5 font-mono text-xs text-red-900 dark:bg-red-900/40 dark:text-red-200"
+          class="pill bg-red-100 text-xs text-red-900 dark:bg-red-900/40 dark:text-red-200"
         >
           offline
         </span>

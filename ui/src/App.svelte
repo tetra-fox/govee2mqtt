@@ -144,7 +144,7 @@
                 {#each grouped as group (group.room || "__none")}
                   <section>
                     <h2
-                      class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+                      class="mb-2 section-heading"
                     >
                       {group.room || "unassigned"}
                     </h2>

@@ -33,7 +33,7 @@
 </script>
 
 <span
-  class="inline-flex items-center rounded px-1.5 py-0.5 font-mono select-none {text} {tone}"
+  class="pill inline-flex items-center select-none {text} {tone}"
 >
   {label}
 </span>
