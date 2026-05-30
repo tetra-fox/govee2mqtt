@@ -16,6 +16,7 @@
     decodeIot,
     parseBase64,
     parseHexString,
+    ROLE_BG,
     type BleDecoded,
   } from "../frame-decode";
 
@@ -108,16 +109,6 @@
       view: viewFromStructural(decodeBleBytes(parseBase64(w.b64))),
     }));
   });
-
-  const ROLE_BG: Record<FieldRole, string> = {
-    family: "bg-violet-100 text-violet-900 dark:bg-violet-900/50 dark:text-violet-100",
-    opcode: "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100",
-    field: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-200",
-    const: "bg-zinc-50 text-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-300",
-    padding: "bg-zinc-50 text-zinc-500 dark:bg-zinc-900/40 dark:text-zinc-500 italic",
-    checksum: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100",
-    unknown: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800/40 dark:text-zinc-500",
-  };
 </script>
 
 {#snippet bleView(v: BleView)}
@@ -149,12 +140,12 @@
 
     <div class="overflow-x-auto">
       <table class="w-full text-[11px]">
-        <thead class="text-zinc-500 dark:text-zinc-400">
+        <thead class="text-[10px] tracking-wide text-zinc-400 uppercase dark:text-zinc-500">
           <tr>
-            <th class="pr-3 py-1 text-left font-normal">offset</th>
-            <th class="pr-3 py-1 text-left font-normal">hex</th>
-            <th class="pr-3 py-1 text-left font-normal">role</th>
-            <th class="py-1 text-left font-normal">label</th>
+            <th class="pr-3 py-1 text-left font-medium">offset</th>
+            <th class="pr-3 py-1 text-left font-medium">hex</th>
+            <th class="pr-3 py-1 text-left font-medium">role</th>
+            <th class="py-1 text-left font-medium">label</th>
           </tr>
         </thead>
         <tbody>

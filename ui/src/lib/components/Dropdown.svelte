@@ -28,7 +28,7 @@
   items={items.map((i) => ({ value: i.value, label: i.label }))}
 >
   <Select.Trigger
-    class="chip inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:hover:bg-zinc-800/80 dark:focus-visible:ring-zinc-500 {triggerClass}"
+    class="chip inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none dark:hover:bg-zinc-800/80 {triggerClass}"
   >
     <span>{selectedLabel}</span>
     <ChevronDown class="size-3 text-zinc-500 dark:text-zinc-400" />
@@ -48,7 +48,7 @@
             {#snippet children({ selected })}
               <span class="flex w-3 shrink-0 justify-center">
                 {#if selected}
-                  <Check class="size-3 text-emerald-600 dark:text-emerald-400" />
+                  <Check class="size-3 text-[var(--accent)]" />
                 {/if}
               </span>
               <span>{item.label}</span>

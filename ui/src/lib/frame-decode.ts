@@ -320,6 +320,29 @@ export const FRAME_KINDS: FrameKind[] = [
   "unknown",
 ];
 
+/// Per-byte role styling, shared by the inspector's byte table (filled pills)
+/// and the compact hex grid (text colour only). Kept in one place so the two
+/// views can't drift on which hue means which role.
+export const ROLE_BG: Record<FieldRole, string> = {
+  family: "bg-violet-100 text-violet-900 dark:bg-violet-900/50 dark:text-violet-100",
+  opcode: "bg-sky-100 text-sky-900 dark:bg-sky-900/50 dark:text-sky-100",
+  field: "bg-zinc-100 text-zinc-800 dark:bg-zinc-800/60 dark:text-zinc-200",
+  const: "bg-zinc-50 text-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-300",
+  padding: "bg-zinc-50 text-zinc-500 dark:bg-zinc-900/40 dark:text-zinc-500 italic",
+  checksum: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100",
+  unknown: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800/40 dark:text-zinc-500",
+};
+
+export const ROLE_TEXT: Record<FieldRole, string> = {
+  family: "text-violet-700 dark:text-violet-300",
+  opcode: "text-sky-700 dark:text-sky-300",
+  field: "text-zinc-800 dark:text-zinc-200",
+  const: "text-zinc-500 dark:text-zinc-400",
+  padding: "text-zinc-400 dark:text-zinc-700",
+  checksum: "text-amber-700 dark:text-amber-300",
+  unknown: "text-zinc-600 dark:text-zinc-500",
+};
+
 export function frameKind(transport: FrameTransport, payload: string): FrameKind {
   if (transport === "ble") {
     const toks = payload.trim().split(/\s+/);

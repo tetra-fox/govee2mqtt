@@ -109,13 +109,13 @@
   onpointerup={onPointerUp}
   onpointercancel={onPointerUp}
   onkeydown={onKey}
-  class="toggle-track relative shrink-0 cursor-pointer touch-none rounded-full transition-colors duration-200
+  class="toggle-track relative shrink-0 cursor-pointer touch-none rounded-full transition-colors duration-150
     disabled:cursor-not-allowed disabled:opacity-50
     {s.track}
     {checked ? 'toggle-track-on' : 'toggle-track-off'}"
 >
   <span
-    class="absolute top-0.5 left-0.5 rounded-full bg-white shadow-sm duration-150 ease-out {s.thumb} {thumbTransition}"
+    class="absolute top-0.5 left-0.5 rounded-full bg-white shadow-sm duration-100 ease-out {s.thumb} {thumbTransition}"
     style="transform: translateX({thumbX}px)"
   ></span>
 </button>

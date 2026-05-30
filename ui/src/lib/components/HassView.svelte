@@ -235,7 +235,7 @@
 {#snippet publishedCard(entry: HassPublishedEntry, meta: boolean)}
   <details class="card-surface overflow-hidden {meta ? 'daemon-accent' : ''}">
     <summary
-      class="flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2 text-xs"
+      class="flex cursor-pointer select-none items-center justify-between gap-2 px-3 py-2 text-xs transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
     >
       <span class="flex min-w-0 items-center gap-2">
         <ChevronRight

@@ -7,7 +7,7 @@
   import DeviceDetail from "./lib/components/DeviceDetail.svelte";
   import MacroBar from "./lib/components/MacroBar.svelte";
   import ThemeSwitch from "./lib/components/ThemeSwitch.svelte";
-  import TabBar from "./lib/components/TabBar.svelte";
+  import Segmented from "./lib/components/Segmented.svelte";
   import StatusBadge from "./lib/components/StatusBadge.svelte";
   import DiscoveryView from "./lib/components/DiscoveryView.svelte";
   import HassView from "./lib/components/HassView.svelte";
@@ -109,7 +109,15 @@
     <ThemeSwitch />
   </header>
 
-  <TabBar value={route.view} onChange={(v) => route.go({ view: v })} items={tabs} />
+  <Segmented
+    role="tablist"
+    accent
+    ariaLabel="views"
+    buttonClass="min-w-20"
+    value={route.view}
+    onChange={(v) => route.go({ view: v })}
+    items={tabs}
+  />
 
   <!--
     page transition: each view keyed by name renders inside a positioned
@@ -119,8 +127,8 @@
   <div class="relative">
     {#key screenKey}
       <div
-        in:fly={{ x: slideDir * 24, duration: 200, delay: 110 }}
-        out:fly={{ x: -slideDir * 24, duration: 100 }}
+        in:fly={{ x: slideDir * 24, duration: 130, delay: 70 }}
+        out:fly={{ x: -slideDir * 24, duration: 70 }}
         class="flex flex-col gap-4"
       >
         {#if route.view === "devices"}

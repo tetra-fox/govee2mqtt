@@ -71,7 +71,7 @@
   {/if}
   {#if showToast}
     <span
-      transition:fly={{ y: -8, duration: 240 }}
+      transition:fly={{ y: -8, duration: 160 }}
       class="pointer-events-none absolute -top-7 left-1/2 z-50 -translate-x-1/2 rounded bg-zinc-900 px-2 py-1 text-[10px] font-medium text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"
     >
       copied

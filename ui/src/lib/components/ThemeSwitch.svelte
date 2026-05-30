@@ -16,5 +16,6 @@
   onChange={(v) => theme.set(v)}
   {items}
   ariaLabel="theme"
+  accent
   buttonClass="min-w-12"
 />

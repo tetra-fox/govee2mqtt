@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
   import { store } from "../ws.svelte";
+  import { route } from "../route.svelte";
   import { forcePoll, getDeviceDebug } from "../api";
   import { relativeFrom } from "../format";
   import Badge from "./Badge.svelte";
@@ -26,10 +27,10 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // which section is showing. controls is the landing tab: it's what someone
-  // opening a device almost always wants. details + activity hold the
-  // read-only readouts and diagnostics that used to make the page a long dump.
-  let tab = $state<"controls" | "details" | "activity">("controls");
+  // which section is showing, sourced from the url's third path segment so a
+  // tab is deeplinkable (#/devices/{id}/activity). controls is the default/
+  // landing tab: what someone opening a device almost always wants.
+  const tab = $derived(route.tab ?? "controls");
 
   // current device comes from the live ws store so state changes paint
   // without an extra fetch. history is seeded from the GET on mount and
@@ -196,7 +197,7 @@
   {:else}
     <Segmented
       value={tab}
-      onChange={(v) => (tab = v)}
+      onChange={(v) => route.go({ view: "devices", deviceId, tab: v })}
       items={[
         { value: "controls", label: "controls" },
         { value: "details", label: "details" },
@@ -319,13 +320,13 @@
           {:else}
             <div class="panel overflow-hidden">
               <table class="w-full text-xs">
-                <thead class="bg-zinc-50 text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+                <thead class="text-[10px] tracking-wide text-zinc-400 uppercase dark:text-zinc-500">
                   <tr>
-                    <th class="px-3 py-1.5 text-left font-normal">when</th>
-                    <th class="px-3 py-1.5 text-left font-normal">command</th>
-                    <th class="px-3 py-1.5 text-left font-normal">transport</th>
+                    <th class="px-3 py-1.5 text-left font-medium">when</th>
+                    <th class="px-3 py-1.5 text-left font-medium">command</th>
+                    <th class="px-3 py-1.5 text-left font-medium">transport</th>
                     <th
-                      class="px-3 py-1.5 text-right font-normal underline decoration-dotted underline-offset-2"
+                      class="px-3 py-1.5 text-right font-medium underline decoration-dotted underline-offset-2"
                       title="wire-send duration on the daemon side. IoT and platform commands fire-and-forget, so this does not include device round-trip. LAN includes the post-send poll loop."
                     >
                       wire send
@@ -337,7 +338,7 @@
                     {@const elapsedMs = Date.parse(entry.finished) - Date.parse(entry.started)}
                     <tr
                       in:flash={{ enabled: entry._id > historyFlashThreshold }}
-                      class="border-t border-zinc-200 dark:border-zinc-800"
+                      class="border-t border-zinc-200/70 transition-colors hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900/40"
                     >
                       <td
                         class="px-3 py-1 font-mono text-zinc-500 select-none dark:text-zinc-400"

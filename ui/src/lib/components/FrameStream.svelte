@@ -7,6 +7,7 @@
   import Pagination from "./Pagination.svelte";
   import FrameCard from "./FrameCard.svelte";
   import Segmented from "./Segmented.svelte";
+  import Sparkline from "./Sparkline.svelte";
   import { Pause, Play, ChevronDown, Check } from "@lucide/svelte";
 
   // when deviceId is set the stream is scoped to that device: the source is
@@ -234,6 +235,24 @@
     return { ble, iot, lan, out, in: inn, ratePerMin: recent };
   });
 
+  // per-bucket frame counts over the rate window, for the sparkline. shares
+  // the `now` tick + source with stats, so it shifts as time passes and as
+  // frames arrive or roll off.
+  const SPARK_BUCKETS = 24;
+  const rateBuckets = $derived.by(() => {
+    const windowMs = 60_000;
+    const bucketMs = windowMs / SPARK_BUCKETS;
+    const start = now - windowMs;
+    const buckets = new Array<number>(SPARK_BUCKETS).fill(0);
+    for (const f of source) {
+      const t = Date.parse(f.ts);
+      if (Number.isNaN(t) || t < start) continue;
+      const idx = Math.min(SPARK_BUCKETS - 1, Math.floor((t - start) / bucketMs));
+      buckets[idx]++;
+    }
+    return buckets;
+  });
+
   function clearAll() {
     store.clearFrames(deviceId);
     // if paused, also drop the snapshot so we don't keep showing stale rows.
@@ -282,7 +301,15 @@
        runaway loops, or one-sided traffic without scrolling the list. -->
   <div class="panel grid grid-cols-2 gap-3 px-4 py-3 sm:grid-cols-7">
     {@render statCell("buffered", String(source.length))}
-    {@render statCell("rate", `${stats.ratePerMin}/min`)}
+    <div class="flex flex-col">
+      <span
+        class="text-[10px] uppercase tracking-wide text-zinc-500 select-none dark:text-zinc-400"
+      >
+        rate
+      </span>
+      <span class="font-mono text-sm">{stats.ratePerMin}/min</span>
+      <Sparkline values={rateBuckets} class="mt-1 h-4" />
+    </div>
     {@render statCell("ble", String(stats.ble))}
     {@render statCell("iot", String(stats.iot))}
     {@render statCell("lan", String(stats.lan))}
@@ -327,7 +354,7 @@
         <span class="text-zinc-500 dark:text-zinc-400">device:</span>
         <Popover.Root>
           <Popover.Trigger
-            class="chip inline-flex max-w-44 cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:hover:bg-zinc-800/80 dark:focus-visible:ring-zinc-500"
+            class="chip inline-flex max-w-44 cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none dark:hover:bg-zinc-800/80"
           >
             <span class="truncate">{deviceLabel}</span>
             <ChevronDown class="size-3 shrink-0 text-zinc-500 dark:text-zinc-400" />
@@ -354,7 +381,7 @@
                   >
                     <span class="flex w-3 shrink-0 justify-center">
                       {#if sel}
-                        <Check class="size-3 text-emerald-600 dark:text-emerald-400" />
+                        <Check class="size-3 text-[var(--accent)]" />
                       {/if}
                     </span>
                     <span class="truncate">{name}</span>
@@ -370,7 +397,7 @@
       <span class="text-zinc-500 dark:text-zinc-400">kind:</span>
       <Popover.Root>
         <Popover.Trigger
-          class="chip inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:hover:bg-zinc-800/80 dark:focus-visible:ring-zinc-500"
+          class="chip inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-xs transition-colors hover:bg-white/85 focus:outline-none dark:hover:bg-zinc-800/80"
         >
           <span>{anyPresentHidden ? `${shownKindCount}/${kindOptions.length}` : "all"}</span>
           <ChevronDown class="size-3 text-zinc-500 dark:text-zinc-400" />
@@ -395,7 +422,7 @@
                 >
                   <span class="flex w-3 shrink-0 justify-center">
                     {#if shown}
-                      <Check class="size-3 text-emerald-600 dark:text-emerald-400" />
+                      <Check class="size-3 text-[var(--accent)]" />
                     {/if}
                   </span>
                   <span class={shown ? "" : "text-zinc-400 line-through dark:text-zinc-600"}

@@ -57,7 +57,7 @@
       openDetail();
     }
   }}
-  class="card-surface group cursor-pointer p-3 transition-shadow hover:shadow-md"
+  class="card-surface group cursor-pointer p-3 transition-colors hover:border-zinc-300 dark:hover:border-zinc-700"
 >
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">

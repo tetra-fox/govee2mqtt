@@ -3,6 +3,8 @@
   // hex string the daemon ships via hex_pretty. 16 bytes per row with offset
   // and ASCII gutter.
 
+  import { decodeBle, ROLE_TEXT } from "../frame-decode";
+
   let {
     hex,
     bytesPerRow = 16,
@@ -35,6 +37,12 @@
     return out;
   });
 
+  // per-byte role from the structural decode, so each byte is coloured by what
+  // it is (family / opcode / padding / checksum) rather than even/odd dimming.
+  const roleAt = $derived.by(
+    () => new Map(decodeBle(hex).annotations.map((a) => [a.offset, a.role] as const)),
+  );
+
   function hex2(n: number): string {
     return n.toString(16).padStart(2, "0");
   }
@@ -55,13 +63,7 @@
           <span class="select-none text-zinc-400 dark:text-zinc-600">{hex4(row.offset)}</span>
           <span class="flex gap-1">
             {#each row.bytes as b, bi (bi)}
-              <!-- nibble-alternating dimming on even/odd byte index helps
-                   the eye chunk the row without imposing semantics. -->
-              <span
-                class={bi % 2 === 0
-                  ? "text-zinc-800 dark:text-zinc-200"
-                  : "text-zinc-600 dark:text-zinc-400"}
-              >
+              <span class={ROLE_TEXT[roleAt.get(row.offset + bi) ?? "unknown"]}>
                 {hex2(b)}
               </span>
             {/each}
