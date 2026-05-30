@@ -6,6 +6,7 @@
   import DeviceCard from "./lib/components/DeviceCard.svelte";
   import DeviceDetail from "./lib/components/DeviceDetail.svelte";
   import MacroBar from "./lib/components/MacroBar.svelte";
+  import OverviewBar from "./lib/components/OverviewBar.svelte";
   import ThemeSwitch from "./lib/components/ThemeSwitch.svelte";
   import Segmented from "./lib/components/Segmented.svelte";
   import StatusBadge from "./lib/components/StatusBadge.svelte";
@@ -135,6 +136,8 @@
           {#if route.deviceId}
             <DeviceDetail deviceId={route.deviceId} onBack={() => route.backToGrid()} />
           {:else}
+            <OverviewBar />
+
             <section
               aria-label="macros"
               class="-mx-4 border-y border-zinc-200 bg-zinc-100 px-4 dark:border-zinc-800 dark:bg-zinc-900/50"

@@ -61,21 +61,21 @@
   {:else if items.length === 0 && !loading}
     <p class="text-sm text-zinc-500 dark:text-zinc-400">no devices.</p>
   {:else}
-    <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {#each items as item (item.id)}
-        <div class="card-surface p-3">
+        <div class="card-surface p-4">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
-              <div class="truncate font-medium select-none">{item.name}</div>
-              <div
-                class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400"
-              >
+              <div class="flex min-w-0 items-baseline gap-1.5">
+                <span class="min-w-0 truncate text-base font-semibold select-none">{item.name}</span
+                >
                 <CopyableText value={item.sku}>
-                  <span class="font-mono">{item.sku}</span>
+                  <span class="field-label shrink-0 font-mono text-xs">{item.sku}</span>
                 </CopyableText>
-                <span class="select-none">·</span>
+              </div>
+              <div class="field-label mt-1 flex min-w-0 font-mono text-xs">
                 <CopyableText value={item.id} class="max-w-full">
-                  <span class="truncate font-mono">{item.id}</span>
+                  <span class="truncate">{item.id}</span>
                 </CopyableText>
               </div>
             </div>

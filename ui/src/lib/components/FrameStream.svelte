@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { store, type KeyedFrame } from "../ws.svelte";
   import { summarizeFrame, frameKind, FRAME_KINDS } from "../frame-decode";
+  import { frameRateBuckets } from "../frame-stats";
   import { Popover } from "bits-ui";
   import Pagination from "./Pagination.svelte";
   import FrameCard from "./FrameCard.svelte";
@@ -238,20 +239,7 @@
   // per-bucket frame counts over the rate window, for the sparkline. shares
   // the `now` tick + source with stats, so it shifts as time passes and as
   // frames arrive or roll off.
-  const SPARK_BUCKETS = 24;
-  const rateBuckets = $derived.by(() => {
-    const windowMs = 60_000;
-    const bucketMs = windowMs / SPARK_BUCKETS;
-    const start = now - windowMs;
-    const buckets = new Array<number>(SPARK_BUCKETS).fill(0);
-    for (const f of source) {
-      const t = Date.parse(f.ts);
-      if (Number.isNaN(t) || t < start) continue;
-      const idx = Math.min(SPARK_BUCKETS - 1, Math.floor((t - start) / bucketMs));
-      buckets[idx]++;
-    }
-    return buckets;
-  });
+  const rateBuckets = $derived(frameRateBuckets(source, now));
 
   function clearAll() {
     store.clearFrames(deviceId);

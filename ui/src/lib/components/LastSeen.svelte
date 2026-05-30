@@ -1,7 +1,7 @@
 <script lang="ts">
   import { relativeFrom, isStale } from "../format";
 
-  let { updated }: { updated: string } = $props();
+  let { updated, class: cls = "text-xs" }: { updated: string; class?: string } = $props();
 
   // rerender every 10s without coupling to ws traffic, so a quiet device
   // still shows its time advancing.
@@ -16,7 +16,7 @@
 </script>
 
 <span
-  class="font-mono text-xs select-none {stale
+  class="font-mono select-none {cls} {stale
     ? 'text-amber-700 dark:text-amber-400'
     : 'text-zinc-500 dark:text-zinc-400'}"
   title={updated}
