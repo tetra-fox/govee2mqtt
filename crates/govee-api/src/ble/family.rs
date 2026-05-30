@@ -14,6 +14,17 @@
 use crate::error::ApiResult;
 use serde_json::Value as JsonValue;
 
+/// Environment input for building time-dependent session-init frames (the
+/// H5082's 33 b5 SYNC_TIME). `epoch` is the current unix time; `offset_seconds`
+/// is the local-zone offset from UTC at that moment, DST-aware. The daemon
+/// computes both from its resolved timezone at connection time, so the device's
+/// timers and countdowns fire against the same wall clock the daemon uses.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncClock {
+    pub epoch: u32,
+    pub offset_seconds: i32,
+}
+
 /// One device family's synthesized-control surface. Methods return `None` when
 /// the family does not own the supplied SKU or instance, so the registry can
 /// try the next family or fall through.
@@ -52,6 +63,30 @@ pub trait FamilyModule: Send + Sync + 'static {
     /// is the default.
     fn status_read_frames(&self, sku: &str) -> Vec<Vec<u8>> {
         let _ = sku;
+        Vec::new()
+    }
+
+    /// The frame the direct-BLE reader sends periodically to hold the link open.
+    /// `None` means use the generic aa00 keepalive; a family whose device polls
+    /// differently overrides this (the H5082 reuses its aa01 outlet read).
+    fn keepalive_frame(&self, sku: &str) -> Option<Vec<u8>> {
+        let _ = sku;
+        None
+    }
+
+    /// Frames sent once per connection, right after the handshake, before any
+    /// read or control. The H5082 family sends the SECRET_KEY_CHECK probe (gates
+    /// control writes; `secret` is the per-device base64-decoded secret_code) and
+    /// the SYNC_TIME frame (sets the device's clock so its timers and countdowns
+    /// fire in the daemon's local zone). Empty by default (the projector needs
+    /// neither).
+    fn session_init_frames(
+        &self,
+        sku: &str,
+        clock: SyncClock,
+        secret: Option<[u8; 8]>,
+    ) -> Vec<Vec<u8>> {
+        let _ = (sku, clock, secret);
         Vec::new()
     }
 }
@@ -106,4 +141,37 @@ pub fn status_read_frames(sku: &str) -> Vec<Vec<u8>> {
         .map(|f| f.status_read_frames(sku))
         .find(|frames| !frames.is_empty())
         .unwrap_or_default()
+}
+
+/// The keepalive frame for a SKU, across every registered family. `None` means
+/// the family doesn't override it, so the direct-BLE reader uses its generic
+/// aa00 keepalive.
+pub fn keepalive_frame(sku: &str) -> Option<Vec<u8>> {
+    FAMILIES
+        .iter()
+        .filter(|f| f.supported_skus().contains(&sku))
+        .find_map(|f| f.keepalive_frame(sku))
+}
+
+/// Post-handshake init frames for a SKU, across every registered family. Sent
+/// once per connection before any read or control. Empty when no family needs
+/// them.
+pub fn session_init_frames(sku: &str, clock: SyncClock, secret: Option<[u8; 8]>) -> Vec<Vec<u8>> {
+    FAMILIES
+        .iter()
+        .filter(|f| f.supported_skus().contains(&sku))
+        .map(|f| f.session_init_frames(sku, clock, secret))
+        .find(|frames| !frames.is_empty())
+        .unwrap_or_default()
+}
+
+/// Whether any registered family owns BLE codecs for this SKU, i.e. the daemon
+/// can encode/decode at least one SKU-specific BLE command for it. The transport
+/// reachability check reads this so a device with a BLE address but no codecs
+/// (e.g. an H5083 socket we haven't pinned) isn't reported as BLE-controllable.
+/// Note: the generic power/brightness verbs encode under the "Generic:Light"
+/// pseudo-SKU rather than a family, so a bare BLE light not in any family is not
+/// covered here.
+pub fn sku_has_ble_support(sku: &str) -> bool {
+    FAMILIES.iter().any(|f| f.supported_skus().contains(&sku))
 }

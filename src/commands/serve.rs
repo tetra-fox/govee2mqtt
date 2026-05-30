@@ -207,8 +207,9 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
         // ignore the result: on timeout we poll anyway, accepting the race
         let _ = tokio::time::timeout(Duration::from_secs(10), state.wait_for_iot_ready()).await;
     }
+    let mut shutdown = state.watch_shutdown();
     let mut first_pass = true;
-    loop {
+    while !*shutdown.borrow() {
         // Fan out the per-device polls concurrently, bounded by
         // POLL_CONCURRENCY. The Govee app fires status reads in parallel on
         // launch and we do the same here so a full pass completes in the
@@ -268,8 +269,12 @@ async fn periodic_state_poll(state: StateHandle) -> anyhow::Result<()> {
         }
 
         first_pass = false;
-        sleep(Duration::from_secs(30)).await;
+        tokio::select! {
+            _ = sleep(Duration::from_secs(30)) => {}
+            _ = shutdown.changed() => break,
+        }
     }
+    Ok(())
 }
 
 /// Log the resolved device set once, with per-device API capabilities and
@@ -439,8 +444,12 @@ impl ServeCommand {
             // spawn periodic discovery task
             let state = state.clone();
             tokio::spawn(async move {
+                let mut shutdown = state.watch_shutdown();
                 loop {
-                    sleep(Duration::from_secs(600)).await;
+                    tokio::select! {
+                        _ = sleep(Duration::from_secs(600)) => {}
+                        _ = shutdown.changed() => break,
+                    }
                     if let Err(err) = enumerate_devices_via_platform_api(state.clone(), None).await
                     {
                         log::error!("Error during periodic platform API discovery: {err:#}");
@@ -469,8 +478,12 @@ impl ServeCommand {
             let state = state.clone();
             let args = args.undoc_args.clone();
             tokio::spawn(async move {
+                let mut shutdown = state.watch_shutdown();
                 loop {
-                    sleep(Duration::from_secs(600)).await;
+                    tokio::select! {
+                        _ = sleep(Duration::from_secs(600)) => {}
+                        _ = shutdown.changed() => break,
+                    }
                     if let Err(err) =
                         enumerate_devices_via_undo_api(state.clone(), None, &args).await
                     {
@@ -516,7 +529,15 @@ impl ServeCommand {
             }
 
             tokio::spawn(async move {
-                while let Some(lan_device) = scan.recv().await {
+                let mut shutdown = state.watch_shutdown();
+                loop {
+                    let lan_device = tokio::select! {
+                        recv = scan.recv() => match recv {
+                            Some(d) => d,
+                            None => break,
+                        },
+                        _ = shutdown.changed() => break,
+                    };
                     log::trace!("LAN disco: {lan_device:?}");
                     state
                         .device_mut(&lan_device.sku, &lan_device.device)
@@ -544,7 +565,7 @@ impl ServeCommand {
         // When no adapter is found start_ble_client returns None and the BLE
         // client is never set, so the transport cascade skips BLE.
         if self.enable_ble {
-            match crate::service::ble::start_ble_client().await {
+            match crate::service::ble::start_ble_client(crate::resolve_timezone()).await {
                 Ok(Some(client)) => {
                     state.set_ble_client(client.clone()).await;
                     // Hold a persistent link to each BLE device with a local read
@@ -623,16 +644,19 @@ impl ServeCommand {
             .await;
 
         // Run the HTTP server until it stops or we get a shutdown signal. On a
-        // signal, release the held BLE links before exiting so the devices
-        // advertise again for other centrals (the phone app) immediately,
-        // rather than staying connected until BlueZ's supervision timeout.
+        // signal, trigger the shutdown flag so every background loop (polling,
+        // discovery, BLE readers) stops before we exit, then release the held
+        // BLE links so the devices advertise again for other centrals (the
+        // phone app) immediately, rather than staying connected until BlueZ's
+        // supervision timeout.
         tokio::select! {
             res = run_http_server(state.clone(), self.http_port) => {
                 res.with_context(|| format!("Starting HTTP service on port {}", self.http_port))
             }
             _ = shutdown_signal() => {
+                log::info!("Shutdown signal received; stopping background tasks");
+                state.trigger_shutdown();
                 if let Some(ble) = state.get_ble_client().await {
-                    log::info!("Shutdown signal received; releasing BLE links");
                     ble.disconnect_all().await;
                 }
                 Ok(())

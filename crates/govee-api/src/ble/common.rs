@@ -89,7 +89,7 @@ mod test {
             crate::ble::decode_frame("H6093", &off),
             GoveeBlePacket::NotifyPower(NotifyPower { on: false })
         );
-        let ann = crate::ble::annotate_frame("H6093", &on);
+        let ann = crate::ble::annotate_frame("H6093", &on, false);
         assert_eq!(ann.summary, "power state notify");
         assert_eq!(ann.fields[3].label, "on");
     }
@@ -108,7 +108,7 @@ mod test {
             );
         }
         assert_eq!(
-            crate::ble::annotate_frame("NONEXISTENT", &frame).summary,
+            crate::ble::annotate_frame("NONEXISTENT", &frame, false).summary,
             "keepalive"
         );
     }

@@ -148,12 +148,12 @@ impl PacketManager {
     /// field map. When a codec decodes the frame, its declared layout names the
     /// data bytes; otherwise only the structural bytes (family, checksum, zero
     /// padding) are labelled.
-    pub fn annotate_for_sku(&self, sku: &str, data: &[u8]) -> FrameAnnotation {
+    pub fn annotate_for_sku(&self, sku: &str, data: &[u8], outbound: bool) -> FrameAnnotation {
         let map = self.map_for_sku(sku);
         for codec in map.values() {
             if let Ok(value) = (codec.decode)(data) {
                 return FrameAnnotation {
-                    summary: value.label().to_string(),
+                    summary: value.summary(outbound),
                     fields: annotate_fields(data, &codec.field_specs),
                 };
             }
@@ -361,6 +361,10 @@ pub enum GoveeBlePacket {
     NotifyCountdown(super::socket::NotifyCountdown),
     SetTimerSlot(super::socket::SetTimerSlot),
     NotifyTimerCount(super::socket::NotifyTimerCount),
+    NotifyOutletState(super::socket::NotifyOutletState),
+    SetSocketPower(super::socket::SetSocketPower),
+    CheckSecretKey(super::socket::CheckSecretKey),
+    SyncTime(super::socket::SyncTime),
     NotifyPower(super::common::NotifyPower),
     NotifyKeepalive(super::common::NotifyKeepalive),
 }
@@ -392,8 +396,56 @@ impl GoveeBlePacket {
             Self::NotifyCountdown(_) => "countdown notify",
             Self::SetTimerSlot(_) => "set timer slot",
             Self::NotifyTimerCount(_) => "timer count notify",
+            Self::NotifyOutletState(_) => "outlet state notify",
+            Self::SetSocketPower(_) => "set outlet power",
+            Self::CheckSecretKey(_) => "secret-key check",
+            Self::SyncTime(_) => "sync time",
             Self::NotifyPower(_) => "power state notify",
             Self::NotifyKeepalive(_) => "keepalive",
+        }
+    }
+
+    /// Value-aware one-line summary for the inspector. Decodes the operands for
+    /// frames where the bytes carry meaning a static name would hide (socket power
+    /// and outlet state); everything else falls back to the static [`label`]. The
+    /// outlet number is the wire bit index (bit 1 = the device's outlet 1/left).
+    ///
+    /// `outbound` distinguishes a read REQUEST from the device's reply: an
+    /// outbound aa-frame asks for state (the device replies with it), so its
+    /// "* notify" decode is reframed as "read *". Without this the aa01 keepalive
+    /// poll (`aa 01 00`) reads as "outlet state (all off)" when it is really the
+    /// request that the `aa 01 02` reply answers.
+    pub fn summary(&self, outbound: bool) -> String {
+        if outbound && let Some(subject) = self.label().strip_suffix(" notify") {
+            return format!("read {subject}");
+        }
+        match self {
+            Self::SetSocketPower(s) => {
+                let mask = s.packed >> 4;
+                let on = s.packed & 0x0f;
+                let parts: Vec<String> = (0..4)
+                    .filter(|b| mask & (1 << b) != 0)
+                    .map(|b| {
+                        let state = if on & (1 << b) != 0 { "on" } else { "off" };
+                        format!("outlet{b}={state}")
+                    })
+                    .collect();
+                match parts.is_empty() {
+                    true => self.label().to_string(),
+                    false => format!("set outlet power ({})", parts.join(" ")),
+                }
+            }
+            Self::NotifyOutletState(s) => {
+                let on: Vec<String> = (0..4)
+                    .filter(|b| s.bits & (1 << b) != 0)
+                    .map(|b| format!("outlet{b}"))
+                    .collect();
+                match on.is_empty() {
+                    true => "outlet state (all off)".to_string(),
+                    false => format!("outlet state ({} on)", on.join(",")),
+                }
+            }
+            _ => self.label().to_string(),
         }
     }
 }

@@ -867,7 +867,7 @@ mod test {
             0xaa, 0x11, 0x00, 0x2a, 0x0f, 0x0f, 0x01, 0x03, 0x1f, 0x01, 0x00, 0xe9, 0xff, 0x01,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x9a,
         ];
-        let ann = crate::ble::annotate_frame("H6093", &frame);
+        let ann = crate::ble::annotate_frame("H6093", &frame, false);
         assert_eq!(ann.summary, "aurora notify");
         assert_eq!(ann.fields.len(), 20);
         assert_eq!(ann.fields[0].role, FieldRole::Family);
@@ -897,7 +897,7 @@ mod test {
             0xaa, 0x34, 0xe0, 0x64, 0x20, 0x00, 0x01, 0x00, 0x1e, 0x1e, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0x3b,
         ];
-        let ann = crate::ble::annotate_frame("H6093", &frame);
+        let ann = crate::ble::annotate_frame("H6093", &frame, false);
         assert_eq!(ann.fields[5].role, FieldRole::Unknown);
         assert_eq!(ann.fields[7].role, FieldRole::Unknown);
         assert_eq!(ann.fields[9].role, FieldRole::Unknown);

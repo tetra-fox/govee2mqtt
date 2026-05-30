@@ -39,7 +39,7 @@ impl BleControlCommand {
             _ => anyhow::bail!("provide exactly one of --power or --frame"),
         };
 
-        let Some(client) = start_ble_client().await? else {
+        let Some(client) = start_ble_client(crate::resolve_timezone()).await? else {
             anyhow::bail!("No Bluetooth adapter found");
         };
         println!(
@@ -48,7 +48,11 @@ impl BleControlCommand {
             bytes.len(),
             bytes
         );
-        let result = client.send_frames(&self.ble_address, &[bytes]).await;
+        // No SKU context here, so no family-specific session init runs; this is a
+        // raw one-shot frame sender.
+        let result = client
+            .send_frames(&self.ble_address, "", &[bytes], None)
+            .await;
         // release the device so it advertises again for the next attempt.
         client.disconnect(&self.ble_address).await;
         result?;

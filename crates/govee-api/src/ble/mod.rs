@@ -30,8 +30,10 @@ pub fn decode_frame(sku: &str, frame: &[u8]) -> GoveeBlePacket {
 /// Annotate a raw frame for the inspector: a one-line summary plus a per-byte
 /// field map, sourced from the codec that decodes it (so field names double as
 /// the inspector's per-byte docs). Structural-only for frames no codec matches.
-pub fn annotate_frame(sku: &str, frame: &[u8]) -> codec::FrameAnnotation {
-    MGR.annotate_for_sku(sku, frame)
+/// `outbound` reframes a read request vs the device's reply (see
+/// [`GoveeBlePacket::summary`]).
+pub fn annotate_frame(sku: &str, frame: &[u8], outbound: bool) -> codec::FrameAnnotation {
+    MGR.annotate_for_sku(sku, frame, outbound)
 }
 
 // Re-export the public surface flat off `ble::` so callers import
@@ -41,7 +43,8 @@ pub fn annotate_frame(sku: &str, frame: &[u8]) -> codec::FrameAnnotation {
 pub use codec::{Base64HexBytes, FieldNote, FieldRole, FrameAnnotation, GoveeBlePacket};
 pub use common::{NotifyKeepalive, NotifyPower};
 pub use family::{
-    common_datas_seed, encode_capability, entity_category, entity_name, status_read_frames,
+    SyncClock, common_datas_seed, encode_capability, entity_category, entity_name, keepalive_frame,
+    session_init_frames, sku_has_ble_support, status_read_frames,
 };
 pub use humidifier::{
     HumidifierAutoMode, NotifyHumidifierMode, NotifyHumidifierNightlightParams, SetHumidifierMode,

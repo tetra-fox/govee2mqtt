@@ -469,11 +469,15 @@ fn load_quirks() -> HashMap<String, Quirk> {
         // powerSwitch, but the IoT status packet reports each outlet as one
         // bit of the onOff value, so we can report per-outlet state.
         // <https://github.com/wez/govee2mqtt/issues/65>
-        Quirk::device("H5082", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(2),
+        Quirk::device("H5082", DeviceType::Socket, POWER_SOCKET)
+            .with_socket_outlets(2)
+            .with_iot_api_support(true),
         // Triple smart plug; same per-outlet bitfield situation as H5082.
         // Grouped under homebridge-govee's `switchTriple` bucket
         // (lib/utils/constants.js).
-        Quirk::device("H5160", DeviceType::Socket, POWER_SOCKET).with_socket_outlets(3),
+        Quirk::device("H5160", DeviceType::Socket, POWER_SOCKET)
+            .with_socket_outlets(3)
+            .with_iot_api_support(true),
         // Single Wi-Fi smart plugs/switches. The platform API returns no
         // metadata for these, so without a quirk they map to nothing; with one,
         // they get a synthesized powerSwitch driven over IoT. iot_api_support is
@@ -856,4 +860,27 @@ fn load_quirks() -> HashMap<String, Quirk> {
 
 pub fn resolve_quirk(sku: &str) -> Option<&'static Quirk> {
     QUIRKS.get(sku)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Every smart plug/switch is controlled over IoT (the per-outlet bitfield
+    // lives in the IoT status packet, and the platform per-outlet fallback is
+    // documented as buggy). transport_reachable(Iot) gates on iot_api_supported,
+    // so a socket quirk that forgets the flag would silently drop IoT control
+    // and hide IoT from the effective-transports display. Catch it here.
+    #[test]
+    fn sockets_support_iot() {
+        for quirk in QUIRKS.values() {
+            if matches!(quirk.device_type, DeviceType::Socket) {
+                assert!(
+                    quirk.iot_api_supported,
+                    "socket quirk {} is missing with_iot_api_support(true)",
+                    quirk.sku
+                );
+            }
+        }
+    }
 }

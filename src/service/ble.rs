@@ -20,6 +20,7 @@ use btleplug::api::{
     ValueNotification, WriteType,
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
+use chrono::Offset;
 use futures_util::{Stream, StreamExt};
 use govee_api::ble::encryption::{
     Session, Version, negotiate_version, random_iv_send, v1_build_confirm, v1_build_request,
@@ -75,6 +76,12 @@ const HEARTBEAT_FRAME: [u8; 20] = {
     frame
 };
 
+/// The device context for a connection: a state handle plus the device id.
+/// Used to look up the device's per-device BLE secret for the session-init
+/// frames, and to record those frames on the inspector. `None` for the raw CLI,
+/// which has no state.
+type ConnCtx<'a> = Option<(&'a StateHandle, &'a str)>;
+
 #[derive(Clone)]
 pub struct BleClient {
     inner: Arc<BleInner>,
@@ -87,6 +94,9 @@ struct BleInner {
     /// Set once disconnect_all runs at shutdown, so the status readers stop
     /// re-establishing links we are tearing down.
     shutting_down: AtomicBool,
+    /// Resolved local timezone, used to build the per-connection SYNC_TIME frame
+    /// so a device's timers fire against the same wall clock the daemon uses.
+    tz: chrono_tz::Tz,
 }
 
 struct DeviceLink {
@@ -121,7 +131,7 @@ pub struct ProbeReport {
 /// Probe for a Bluetooth adapter and, if one exists, build a [`BleClient`].
 /// Returns `None` when no adapter is present so the caller leaves BLE out of the
 /// transport cascade.
-pub async fn start_ble_client() -> anyhow::Result<Option<BleClient>> {
+pub async fn start_ble_client(tz: chrono_tz::Tz) -> anyhow::Result<Option<BleClient>> {
     let manager = Manager::new().await.context("creating BLE manager")?;
     let adapters = manager.adapters().await.context("listing BLE adapters")?;
     let Some(adapter) = adapters.into_iter().next() else {
@@ -138,6 +148,7 @@ pub async fn start_ble_client() -> anyhow::Result<Option<BleClient>> {
             adapter,
             links: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
+            tz,
         }),
     }))
 }
@@ -147,8 +158,14 @@ impl BleClient {
     /// (and handshaking) the connection on first use. The connection is kept warm
     /// and dropped after [`IDLE_DISCONNECT_SECS`] of no commands, so a burst reuses
     /// one session but the device is freed once you stop driving it.
-    pub async fn send_frames(&self, ble_addr: &str, frames: &[Vec<u8>]) -> anyhow::Result<()> {
-        let link = self.get_or_connect(ble_addr).await?;
+    pub async fn send_frames(
+        &self,
+        ble_addr: &str,
+        sku: &str,
+        frames: &[Vec<u8>],
+        rec: ConnCtx<'_>,
+    ) -> anyhow::Result<()> {
+        let link = self.get_or_connect(ble_addr, sku, rec).await?;
         let result = write_to_link(&link, frames).await;
         self.arm_idle_disconnect(ble_addr, &link);
         result
@@ -305,7 +322,12 @@ impl BleClient {
         Ok((characteristics, bgc_info))
     }
 
-    async fn get_or_connect(&self, ble_addr: &str) -> anyhow::Result<Arc<DeviceLink>> {
+    async fn get_or_connect(
+        &self,
+        ble_addr: &str,
+        sku: &str,
+        rec: ConnCtx<'_>,
+    ) -> anyhow::Result<Arc<DeviceLink>> {
         anyhow::ensure!(
             !self.inner.shutting_down.load(Ordering::SeqCst),
             "BLE client is shutting down"
@@ -319,16 +341,48 @@ impl BleClient {
         {
             return Ok(link);
         }
-        let link = Arc::new(self.connect_and_handshake(&key).await?);
+        let link = Arc::new(self.connect_and_handshake(&key, sku, rec).await?);
         self.inner.links.lock().await.insert(key, link.clone());
         Ok(link)
     }
 
-    async fn connect_and_handshake(&self, ble_addr_upper: &str) -> anyhow::Result<DeviceLink> {
+    /// Whether the Govee advertisement marks the device as supporting encrypted
+    /// BLE. The broadcast is identified by a company-id high byte of 0x88 and a
+    /// payload starting 0xEC (the marker in BleUtil.parseBleBroadcastPact); the
+    /// company-id low byte carries flags, with bit 6 (0x40) = supportEncryption.
+    /// `None` when no Govee broadcast is in the captured advertisement, so the
+    /// caller keeps its handshake-then-fallback default. Mirrors the advertisement
+    /// half of the app's isEncryptionSupported.
+    fn advertisement_supports_encryption(
+        manufacturer_data: &HashMap<u16, Vec<u8>>,
+    ) -> Option<bool> {
+        manufacturer_data.iter().find_map(|(&company, payload)| {
+            ((company >> 8) == 0x88 && payload.first() == Some(&0xEC))
+                .then_some(company & 0x40 != 0)
+        })
+    }
+
+    async fn connect_and_handshake(
+        &self,
+        ble_addr_upper: &str,
+        sku: &str,
+        rec: ConnCtx<'_>,
+    ) -> anyhow::Result<DeviceLink> {
         let peripheral = self
             .find_peripheral(ble_addr_upper)
             .await?
             .with_context(|| format!("BLE device {ble_addr_upper} not found"))?;
+
+        // Capture the advertisement before connecting; the device stops
+        // advertising once a central is attached, and the Govee broadcast carries
+        // the supportEncryption flag we use to skip the handshake on plaintext fw.
+        let manufacturer_data = peripheral
+            .properties()
+            .await
+            .ok()
+            .flatten()
+            .map(|p| p.manufacturer_data)
+            .unwrap_or_default();
 
         connect_with_retry(&peripheral).await?;
         peripheral
@@ -346,41 +400,101 @@ impl BleClient {
         let data_char =
             find(DATA_CHAR_UUID).context("device missing the BLE data characteristic")?;
         // The device replies to the handshake (and sends status) as notifications.
-        // The captured session shows them on the 2b10 notify char; subscribe to it
-        // and to the data char, and accept replies from either.
+        // The H6093 sends them on 2b10 but its 2b11 is also notify-capable; the
+        // H5082's 2b11 is write-only, so only subscribe to chars that actually
+        // advertise NOTIFY/INDICATE, else the subscribe errors and kills the link.
         let notify_chars: Vec<Characteristic> = [NOTIFY_CHAR_UUID, DATA_CHAR_UUID]
             .iter()
             .filter_map(|u| find(*u))
+            .filter(|c| {
+                c.properties
+                    .intersects(CharPropFlags::NOTIFY | CharPropFlags::INDICATE)
+            })
             .collect();
 
-        // Pick the version: BgcInfo present -> read it (V1/V2); absent -> assume V1
-        // (the app defaults to V1 when a device supports encryption but not V2).
-        let version = match find(BGC_CHAR_UUID) {
-            Some(bgc) => {
-                let info = peripheral.read(&bgc).await.context("read BgcInfo")?;
-                negotiate_version(&info)
-                    .with_context(|| format!("unknown BLE encrypt version {info:?}"))?
+        // The app keys encrypt-vs-plaintext on isEncryptionSupported = the
+        // advertisement supportEncryption flag OR a BgcInfo (2b12) read. When the
+        // advertisement says no encryption and there's no BgcInfo char, the device
+        // is plaintext (older firmware): skip the doomed V1 handshake (and its
+        // timeout) and go straight to plaintext.
+        let has_bgc = find(BGC_CHAR_UUID).is_some();
+        let advertises_encryption = Self::advertisement_supports_encryption(&manufacturer_data);
+        let session = if advertises_encryption == Some(false) && !has_bgc {
+            log::debug!("{ble_addr_upper}: advertisement marks no BLE encryption; using plaintext");
+            Session::Plaintext
+        } else {
+            // BgcInfo present -> read the version (V1/V2); absent -> assume V1.
+            let version = match find(BGC_CHAR_UUID) {
+                Some(bgc) => {
+                    let info = peripheral.read(&bgc).await.context("read BgcInfo")?;
+                    negotiate_version(&info)
+                        .with_context(|| format!("unknown BLE encrypt version {info:?}"))?
+                }
+                None => Version::V1,
+            };
+            // Fall back to plaintext if a no-BgcInfo device fails the handshake
+            // (an old device whose advertisement we couldn't read up front).
+            match handshake(&peripheral, &data_char, &notify_chars, version).await {
+                Ok(session) => session,
+                Err(err) if !has_bgc => {
+                    log::info!("V1 handshake failed ({err:#}); falling back to plaintext frames");
+                    Session::Plaintext
+                }
+                Err(err) => return Err(err),
             }
-            None => Version::V1,
         };
-
-        // Run the session handshake. If it fails on a device with no BgcInfo, the
-        // device is likely an older unencrypted one, so fall back to plaintext.
-        let session = match handshake(&peripheral, &data_char, &notify_chars, version).await {
-            Ok(session) => session,
-            Err(err) if find(BGC_CHAR_UUID).is_none() => {
-                log::info!("V1 handshake failed ({err:#}); falling back to plaintext frames");
-                Session::Plaintext
-            }
-            Err(err) => return Err(err),
-        };
-        Ok(DeviceLink {
+        let link = DeviceLink {
             peripheral,
             data_char,
             session: Mutex::new(session),
             generation: AtomicU64::new(0),
             held: AtomicBool::new(false),
-        })
+        };
+        // Some families need post-handshake init the app always sends: the
+        // H5082's SECRET_KEY_CHECK (gates control writes) and SYNC_TIME (sets the
+        // device clock for its timers). Send it once now, before the link is
+        // pooled, so both the reader and command paths inherit a ready connection.
+        let now = chrono::Utc::now();
+        let clock = govee_api::ble::SyncClock {
+            epoch: now.timestamp() as u32,
+            offset_seconds: now
+                .with_timezone(&self.inner.tz)
+                .offset()
+                .fix()
+                .local_minus_utc(),
+        };
+        // The secret-key check is per-device: base64 of the cloud secret_code,
+        // looked up via the connection's device context. None when we have no
+        // state (the raw CLI) or the device list carried no secret_code, in which
+        // case session_init_frames skips the probe.
+        let secret = match rec {
+            Some((state, device_id)) => state
+                .device_by_id(device_id)
+                .await
+                .and_then(|d| d.ble_secret_code()),
+            None => None,
+        };
+        let init = govee_api::ble::session_init_frames(sku, clock, secret);
+        if !init.is_empty() {
+            // Record on the inspector when we have a state handle (the reader and
+            // command paths do; the raw CLI doesn't), so the secret-key check and
+            // clock sync are visible alongside the control traffic they enable.
+            if let Some((state, device_id)) = rec {
+                for frame in &init {
+                    state.notify_frame(
+                        device_id,
+                        sku,
+                        FrameDirection::Out,
+                        FrameTransport::Ble,
+                        hex_pretty(frame),
+                    );
+                }
+            }
+            write_to_link(&link, &init)
+                .await
+                .context("BLE session init (secret-key check)")?;
+        }
+        Ok(link)
     }
 
     /// Find a peripheral by BLE MAC. Scans in a retry loop because Govee devices
@@ -427,11 +541,33 @@ impl BleClient {
         if read_frames.is_empty() {
             return;
         }
+        // Most devices hold the link with the generic aa00 ping; some poll a
+        // state read instead (the H5082 reuses its aa01 outlet read), so let the
+        // family override it.
+        let keepalive =
+            govee_api::ble::keepalive_frame(&sku).unwrap_or_else(|| HEARTBEAT_FRAME.to_vec());
         loop {
+            if self.inner.shutting_down.load(Ordering::SeqCst) {
+                return;
+            }
             if let Err(err) = self
-                .reader_session(&state, &sku, &device_id, &ble_addr, &read_frames)
+                .reader_session(
+                    &state,
+                    &sku,
+                    &device_id,
+                    &ble_addr,
+                    &read_frames,
+                    &keepalive,
+                )
                 .await
             {
+                // At shutdown disconnect_all drops the link out from under the
+                // reader on purpose, so the keepalive write failing (or the
+                // reconnect hitting the shutting-down guard) is expected, not a
+                // fault. Stop quietly instead of warning and re-looping.
+                if self.inner.shutting_down.load(Ordering::SeqCst) {
+                    return;
+                }
                 log::warn!("BLE reader for {device_id} ({ble_addr}) ended: {err:#}");
             }
             sleep(Duration::from_secs(RECONNECT_DELAY_SECS)).await;
@@ -449,15 +585,19 @@ impl BleClient {
         device_id: &str,
         ble_addr: &str,
         read_frames: &[Vec<u8>],
+        keepalive: &[u8],
     ) -> anyhow::Result<()> {
-        let link = self.get_or_connect(ble_addr).await?;
+        let link = self
+            .get_or_connect(ble_addr, sku, Some((state, device_id)))
+            .await?;
         // Mark the link held so a stale idle timer from an earlier command can't
         // disconnect it out from under the keepalive.
         link.held.store(true, Ordering::SeqCst);
 
         // The device replies to reads and the keepalive as notifications. Subscribe
-        // to the notify and data chars (replies arrive on the notify char) and open
-        // a stream for the link lifetime.
+        // to the Govee-service chars that advertise NOTIFY/INDICATE (the H5082's
+        // 2b11 data char is write-only, so subscribing to it errors), and open a
+        // stream for the link lifetime.
         let notify_chars: Vec<Characteristic> = link
             .peripheral
             .characteristics()
@@ -465,6 +605,8 @@ impl BleClient {
             .filter(|c| {
                 c.service_uuid == SERVICE_UUID
                     && (c.uuid == NOTIFY_CHAR_UUID || c.uuid == DATA_CHAR_UUID)
+                    && c.properties
+                        .intersects(CharPropFlags::NOTIFY | CharPropFlags::INDICATE)
             })
             .collect();
         for c in &notify_chars {
@@ -484,7 +626,7 @@ impl BleClient {
             .context("BLE status read burst")?;
         let mut last_read = Instant::now();
 
-        let heartbeat = [HEARTBEAT_FRAME.to_vec()];
+        let heartbeat = [keepalive.to_vec()];
         let mut beat = interval(Duration::from_secs(HEARTBEAT_SECS));
         // interval fires immediately on the first tick; skip it so the first
         // keepalive is one interval after the burst we just sent.
@@ -594,8 +736,9 @@ async fn write_to_link(link: &DeviceLink, frames: &[Vec<u8>]) -> anyhow::Result<
 /// local read path that doesn't already have a reader, spawn one. Runs forever,
 /// re-scanning periodically so devices discovered after startup get a reader too.
 pub async fn run_reader_manager(state: StateHandle, ble: BleClient) {
+    let mut shutdown = state.watch_shutdown();
     let mut active: HashSet<String> = HashSet::new();
-    loop {
+    while !*shutdown.borrow() {
         for device in state.devices().await {
             let Some(addr) = device.ble_address() else {
                 continue;
@@ -618,7 +761,10 @@ pub async fn run_reader_manager(state: StateHandle, ble: BleClient) {
                 });
             }
         }
-        sleep(Duration::from_secs(READER_RECONCILE_SECS)).await;
+        tokio::select! {
+            _ = sleep(Duration::from_secs(READER_RECONCILE_SECS)) => {}
+            _ = shutdown.changed() => break,
+        }
     }
 }
 
@@ -717,5 +863,33 @@ where
         Ok(Some(n)) => Ok(n.value),
         Ok(None) => anyhow::bail!("BLE notification stream ended during handshake"),
         Err(_) => anyhow::bail!("timed out waiting for BLE device reply"),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn advertisement_encryption_flag() {
+        // Real capture from the old (plaintext) H5082, BLE MAC 98:17:3C:D5:AA:1B:
+        // company 0x8802, payload starts 0xEC. Bit 6 of the company low byte (0x02)
+        // is clear, so supportEncryption is false -> plaintext.
+        let plain = HashMap::from([(0x8802u16, vec![0xec, 0x00, 0x01, 0x01, 0x03])]);
+        assert_eq!(
+            BleClient::advertisement_supports_encryption(&plain),
+            Some(false)
+        );
+
+        // Same Govee broadcast with bit 6 set in the company low byte -> encrypted.
+        let encrypted = HashMap::from([(0x8842u16, vec![0xec, 0x00])]);
+        assert_eq!(
+            BleClient::advertisement_supports_encryption(&encrypted),
+            Some(true)
+        );
+
+        // No Govee broadcast (wrong company high byte, or no 0xEC marker) -> unknown.
+        let other = HashMap::from([(0x004cu16, vec![0x01, 0x02])]);
+        assert_eq!(BleClient::advertisement_supports_encryption(&other), None);
     }
 }

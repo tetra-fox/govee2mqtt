@@ -20,7 +20,7 @@ use serde_json::{Value as JsonValue, json};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast};
+use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard, Notify, Semaphore, broadcast, watch};
 
 /// Events fanned out to subscribers of state.subscribe(). Currently the only
 /// internal consumer is the http /ws handler; mqtt publication stays in its
@@ -84,6 +84,17 @@ pub enum Transport {
     Iot,
     /// Govee platform REST API.
     Platform,
+}
+
+/// Which transport clients are live right now, sampled once so the cascade
+/// reachability check (`Device::transport_reachable`) and the debug display see
+/// a consistent view. BLE/IoT/Platform need their client present; LAN sends go
+/// straight over the device's own UDP socket, so it has no entry here.
+#[derive(Clone, Copy, Debug)]
+pub struct ClientAvail {
+    pub ble: bool,
+    pub iot: bool,
+    pub platform: bool,
 }
 
 /// One control command's outcome as recorded for the debug surface. Captures
@@ -207,11 +218,17 @@ pub struct State {
     /// surfaced by the info endpoint. None until set_service_info runs, which
     /// only happens in the serve subcommand.
     service_info: Mutex<Option<ServiceInfo>>,
+    /// Set true once at shutdown. Every long-running background loop (polling,
+    /// discovery, BLE readers, post-control polls) watches this so a single
+    /// trigger stops all of them before the process exits, instead of each
+    /// loop running until the runtime is torn out from under it.
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl Default for State {
     fn default() -> Self {
         let (events, _) = broadcast::channel(256);
+        let (shutdown_tx, _) = watch::channel(false);
         Self {
             devices_by_id: Default::default(),
             semaphore_by_id: Default::default(),
@@ -232,6 +249,7 @@ impl Default for State {
             command_history: Default::default(),
             frame_history: Default::default(),
             service_info: Default::default(),
+            shutdown_tx,
         }
     }
 }
@@ -310,10 +328,10 @@ impl State {
         // Annotate BLE frames per-byte from the device's SKU, so the inspector
         // names bytes from the same codec that decodes them. IoT frames are JSON
         // and the ui decodes those itself.
+        let outbound = matches!(direction, FrameDirection::Out);
         let annotation = match transport {
-            FrameTransport::Ble => {
-                parse_hex_frame(&payload).map(|bytes| govee_api::ble::annotate_frame(sku, &bytes))
-            }
+            FrameTransport::Ble => parse_hex_frame(&payload)
+                .map(|bytes| govee_api::ble::annotate_frame(sku, &bytes, outbound)),
             // IoT and LAN frames are JSON; the ui decodes those itself.
             FrameTransport::Iot | FrameTransport::Lan => None,
         };
@@ -613,6 +631,25 @@ impl State {
         self.iot_ready.notified().await;
     }
 
+    /// Begin shutdown: every background loop watching this stops at its next
+    /// check. Called once from the serve signal handler before the rest of the
+    /// teardown runs.
+    pub fn trigger_shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
+    /// Whether shutdown has been triggered. Level-triggered, so a task that
+    /// checks after the trigger (or one spawned during teardown) sees it.
+    pub fn is_shutting_down(&self) -> bool {
+        *self.shutdown_tx.borrow()
+    }
+
+    /// A receiver for loops that want to wake on shutdown rather than poll the
+    /// flag: `tokio::select!` on `rx.changed()` alongside the loop's own timer.
+    pub fn watch_shutdown(&self) -> watch::Receiver<bool> {
+        self.shutdown_tx.subscribe()
+    }
+
     pub async fn set_lan_client(&self, client: LanClient) {
         self.lan_client.lock().await.replace(client);
     }
@@ -627,6 +664,16 @@ impl State {
 
     pub async fn get_platform_client(&self) -> Option<GoveeApiClient> {
         self.platform_client.lock().await.clone()
+    }
+
+    /// Snapshot which transport clients are live, for `Device::transport_reachable`.
+    /// Sampled once so a cascade pass (or the debug display) sees a consistent view.
+    pub async fn client_avail(&self) -> ClientAvail {
+        ClientAvail {
+            ble: self.get_ble_client().await.is_some(),
+            iot: self.get_iot_client().await.is_some(),
+            platform: self.get_platform_client().await.is_some(),
+        }
     }
 
     pub async fn set_undoc_client(&self, client: GoveeUndocumentedApi) {

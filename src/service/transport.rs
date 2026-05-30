@@ -17,6 +17,7 @@
 use crate::service::device::Device;
 use crate::service::state::{StateHandle, Transport};
 use anyhow::Context;
+use govee_api::ble::socket::SetSocketPower;
 use govee_api::ble::{
     Base64HexBytes, SetBrightness, SetDevicePower, SetHumidifierMode, SetHumidifierNightlightParams,
 };
@@ -30,18 +31,24 @@ pub(crate) async fn power_on_generic(
     device: &Device,
     on: bool,
 ) -> anyhow::Result<Transport> {
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to set {device} power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
         return Ok(Transport::Lan);
     }
 
-    if try_ble_command(state, device, &SetDevicePower { on }).await {
+    if device.transport_reachable(Transport::Ble, &avail)
+        && try_ble_command(state, device, &SetDevicePower { on }).await
+    {
         return Ok(Transport::Ble);
     }
 
-    if device.iot_api_supported()
+    if device.transport_reachable(Transport::Iot, &avail)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
@@ -50,7 +57,8 @@ pub(crate) async fn power_on_generic(
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to set {device} power state");
@@ -110,7 +118,10 @@ async fn try_ble_frames(state: &StateHandle, device: &Device, frames: &[Vec<u8>]
     // The connection is kept warm and auto-released after an idle period (see
     // BleClient::send_frames), so bursts reuse one session instead of
     // re-handshaking per command.
-    match ble.send_frames(addr, frames).await {
+    match ble
+        .send_frames(addr, &device.sku, frames, Some((state, &device.id)))
+        .await
+    {
         Ok(()) => true,
         Err(err) => {
             log::warn!("BLE send for {device} failed ({err:#}); falling through to cloud");
@@ -160,14 +171,18 @@ pub(crate) async fn light_power_on_generic(
             )
         })?;
 
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to set {device} light power state");
         lan_dev.send_turn(on).await?;
         poll_lan_api(state, lan_dev, |status| status.on == on).await?;
         return Ok(Transport::Lan);
     }
 
-    if device.iot_api_supported()
+    if device.transport_reachable(Transport::Iot, &avail)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
@@ -176,7 +191,8 @@ pub(crate) async fn light_power_on_generic(
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to set {device} light {instance_name} state");
@@ -192,18 +208,24 @@ pub(crate) async fn set_brightness_generic(
     device: &Device,
     percent: u8,
 ) -> anyhow::Result<Transport> {
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to set {device} brightness");
         lan_dev.send_brightness(percent).await?;
         poll_lan_api(state, lan_dev, |status| status.brightness == percent).await?;
         return Ok(Transport::Lan);
     }
 
-    if try_ble_command(state, device, &SetBrightness { percent }).await {
+    if device.transport_reachable(Transport::Ble, &avail)
+        && try_ble_command(state, device, &SetBrightness { percent }).await
+    {
         return Ok(Transport::Ble);
     }
 
-    if device.iot_api_supported()
+    if device.transport_reachable(Transport::Iot, &avail)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
@@ -212,7 +234,8 @@ pub(crate) async fn set_brightness_generic(
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to set {device} brightness");
@@ -227,7 +250,11 @@ pub(crate) async fn set_color_temperature_generic(
     device: &Device,
     kelvin: u32,
 ) -> anyhow::Result<Transport> {
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to set {device} color temperature");
         lan_dev.send_color_temperature_kelvin(kelvin).await?;
         poll_lan_api(state, lan_dev, |status| {
@@ -241,7 +268,7 @@ pub(crate) async fn set_color_temperature_generic(
         return Ok(Transport::Lan);
     }
 
-    if device.iot_api_supported()
+    if device.transport_reachable(Transport::Iot, &avail)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
@@ -250,7 +277,8 @@ pub(crate) async fn set_color_temperature_generic(
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to set {device} color temperature");
@@ -271,7 +299,11 @@ pub(crate) async fn set_color_rgb_generic(
     g: u8,
     b: u8,
 ) -> anyhow::Result<Transport> {
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         let color = govee_api::lan_api::DeviceColor { r, g, b };
         log::debug!("Using LAN API to set {device} color");
         lan_dev.send_color_rgb(color).await?;
@@ -283,7 +315,7 @@ pub(crate) async fn set_color_rgb_generic(
         return Ok(Transport::Lan);
     }
 
-    if device.iot_api_supported()
+    if device.transport_reachable(Transport::Iot, &avail)
         && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
@@ -292,7 +324,8 @@ pub(crate) async fn set_color_rgb_generic(
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to set {device} color");
@@ -315,9 +348,13 @@ pub(crate) async fn device_set_scene(
     scene: &str,
 ) -> anyhow::Result<Transport> {
     // TODO: some plumbing to maintain offline scene controls for preferred-LAN control
-    let avoid_platform_api = device.avoid_platform_api();
+    let avail = state.client_avail().await;
 
-    if !avoid_platform_api
+    // Scenes prefer the platform API, but skip it when the device quirk says to
+    // avoid it -- a scene-specific routing preference layered on top of the
+    // generic platform reachability.
+    if device.transport_reachable(Transport::Platform, &avail)
+        && !device.avoid_platform_api()
         && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
@@ -337,7 +374,9 @@ pub(crate) async fn device_set_scene(
         return Ok(Transport::Platform);
     }
 
-    if let Some(lan_dev) = &device.lan_device {
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to set {device} to scene {scene}");
         lan_dev.set_scene_by_name(scene).await?;
 
@@ -383,7 +422,9 @@ pub(crate) async fn device_control<V: Into<JsonValue>>(
         return Ok(transport);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    let avail = state.client_avail().await;
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(info) = &device.http_device_info
     {
         log::debug!("Using Platform API to send {value:?} control to {device}");
@@ -538,13 +579,18 @@ async fn send_frames(
     device: &Device,
     frames: Vec<String>,
 ) -> anyhow::Result<Transport> {
-    if let Some(lan_dev) = &device.lan_device {
+    let avail = state.client_avail().await;
+
+    if device.transport_reachable(Transport::Lan, &avail)
+        && let Some(lan_dev) = &device.lan_device
+    {
         log::debug!("Using LAN API to send a ptReal frame to {device}");
         lan_dev.send_real(frames).await?;
         return Ok(Transport::Lan);
     }
 
-    if let Some(raw) = decode_base64_frames(&frames, device)
+    if device.transport_reachable(Transport::Ble, &avail)
+        && let Some(raw) = decode_base64_frames(&frames, device)
         && try_ble_frames(state, device, &raw).await
     {
         return Ok(Transport::Ble);
@@ -678,40 +724,51 @@ pub(crate) async fn ensure_projector_state_seeded(state: &StateHandle, device: &
 /// platform API's per-outlet `socketToggleN` capability when no IoT device info
 /// is available. LAN and BLE don't fit here: their power command is
 /// device-wide, not per-outlet.
-///
-/// Note: unlike the generic verbs we do not gate this on `iot_api_supported`.
-/// Per-outlet control is IoT-only by construction (the platform fallback below
-/// is documented as buggy for these SKUs), so a missing IoT-support quirk flag
-/// must not silently route us to the broken fallback.
 pub(crate) async fn socket_turn(
     state: &StateHandle,
     device: &Device,
     outlet: u8,
     on: bool,
 ) -> anyhow::Result<Transport> {
-    if let Some(iot) = state.get_iot_client().await
+    let avail = state.client_avail().await;
+
+    // Prefer BLE when the link is up: per-outlet power is a 33 01 packed frame
+    // the device accepts directly (the IoT path below wraps the same command).
+    // transport_reachable(Ble) is true only for SKUs with the codec (H5082, not
+    // H5083), so the encode below can't fail once we're in here.
+    if device.transport_reachable(Transport::Ble, &avail)
+        && let Some(count) = device.socket_outlet_count()
+    {
+        let mask = if outlet == 15 {
+            (1u8 << count).saturating_sub(1)
+        } else {
+            1u8 << outlet
+        };
+        let command = SetSocketPower::new(mask, if on { mask } else { 0 });
+        if let Ok(frame) = Base64HexBytes::encode_for_sku(&device.sku, &command)
+            && try_ble_frames(state, device, &[frame.bytes().to_vec()]).await
+        {
+            record_socket_outlet_optimistic(state, device, count, outlet, on).await;
+            return Ok(Transport::Ble);
+        }
+    }
+
+    if device.transport_reachable(Transport::Iot, &avail)
+        && let Some(iot) = state.get_iot_client().await
         && let Some(info) = &device.undoc_device_info
     {
         log::debug!("Using IoT API to set {device} outlet {outlet} -> {on}");
         iot.set_socket_power(&info.entry, outlet, on).await?;
-        // optimistically reflect the command in the held outlet bits so the
-        // ui paints the new state before the device's status reply arrives.
-        // the subscriber overwrites this when the response (or any later
-        // status broadcast) lands. only meaningful for multi-outlet sockets;
-        // single-outlet path leaves the bits alone since they aren't read.
+        // optimistically reflect the command in the held outlet bits so the ui
+        // paints the new state before the device's status reply arrives.
         if let Some(count) = device.socket_outlet_count() {
-            let prior = device.socket_outlet_bits.unwrap_or(0);
-            let next = apply_outlet_command(prior, count, outlet, on);
-            state
-                .device_mut(&device.sku, &device.id)
-                .await
-                .set_socket_outlet_bits(next);
-            state.notify_of_state_change(&device.id).await.ok();
+            record_socket_outlet_optimistic(state, device, count, outlet, on).await;
         }
         return Ok(Transport::Iot);
     }
 
-    if let Some(client) = state.get_platform_client().await
+    if device.transport_reachable(Transport::Platform, &avail)
+        && let Some(client) = state.get_platform_client().await
         && let Some(http_dev) = &device.http_device_info
     {
         // The platform API exposes each outlet as its own toggle capability,
@@ -727,6 +784,27 @@ pub(crate) async fn socket_turn(
     }
 
     anyhow::bail!("Unable to control outlet {outlet} for {device}");
+}
+
+/// Optimistically reflect a socket power command in the held outlet bits so the
+/// ui paints the new state before the device's status reply arrives. The BLE
+/// reader's aa01 poll (or the IoT subscriber) overwrites it when the real state
+/// lands. Only meaningful for multi-outlet sockets, which is why the caller
+/// gates this on `socket_outlet_count`.
+async fn record_socket_outlet_optimistic(
+    state: &StateHandle,
+    device: &Device,
+    count: u8,
+    outlet: u8,
+    on: bool,
+) {
+    let prior = device.socket_outlet_bits.unwrap_or(0);
+    let next = apply_outlet_command(prior, count, outlet, on);
+    state
+        .device_mut(&device.sku, &device.id)
+        .await
+        .set_socket_outlet_bits(next);
+    state.notify_of_state_change(&device.id).await.ok();
 }
 
 /// Set a fan's speed via the platform-API workMode capability. `work_mode`
@@ -834,6 +912,12 @@ pub(crate) async fn poll_after_control(state: &StateHandle, id: String) {
     // coherent with the command we just issued
     // right away :-/
     sleep(Duration::from_secs(5)).await;
+
+    // A control issued just before shutdown queues this poll; by the time the
+    // delay elapses we may be tearing down, so don't fire a fresh cloud poll.
+    if state.is_shutting_down() {
+        return;
+    }
 
     log::debug!("Polling {device} to get latest state after control");
     if let Err(err) = state.poll_platform_api(&device).await {

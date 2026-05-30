@@ -13,7 +13,7 @@ pub struct BleProbeCommand {
 
 impl BleProbeCommand {
     pub async fn run(&self, _args: &crate::Args) -> anyhow::Result<()> {
-        let Some(client) = start_ble_client().await? else {
+        let Some(client) = start_ble_client(crate::resolve_timezone()).await? else {
             anyhow::bail!("No Bluetooth adapter found");
         };
 

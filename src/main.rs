@@ -55,15 +55,18 @@ impl Args {
     }
 }
 
-fn setup_logger() {
-    fn resolve_timezone() -> chrono_tz::Tz {
-        std::env::var("TZ")
-            .or_else(|_| iana_time_zone::get_timezone())
-            .ok()
-            .and_then(|name| name.parse().ok())
-            .unwrap_or(chrono_tz::UTC)
-    }
+/// The daemon's local timezone: `$TZ` if set, else the system zone, else UTC.
+/// Used for log timestamps and for the BLE SYNC_TIME frame, so device timers
+/// fire against the same wall clock the daemon reports.
+pub fn resolve_timezone() -> chrono_tz::Tz {
+    std::env::var("TZ")
+        .or_else(|_| iana_time_zone::get_timezone())
+        .ok()
+        .and_then(|name| name.parse().ok())
+        .unwrap_or(chrono_tz::UTC)
+}
 
+fn setup_logger() {
     let tz = resolve_timezone();
     let utc_suffix = if tz == chrono_tz::UTC { "Z" } else { "" };
 

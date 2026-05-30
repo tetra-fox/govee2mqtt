@@ -141,8 +141,9 @@ impl DeviceController for HumidifierController {
     }
 }
 
-/// A Wi-Fi smart plug/switch sends its power as a packed `turn` value through
-/// the IoT API; the rest of the verbs don't apply.
+/// A Wi-Fi smart plug/switch's power is a packed per-outlet `turn` value;
+/// `socket_turn` picks the transport (BLE-first, then IoT, then platform). The
+/// other verbs don't apply.
 struct SocketController;
 
 #[async_trait]
@@ -154,9 +155,9 @@ impl DeviceController for SocketController {
         on: bool,
     ) -> anyhow::Result<Transport> {
         // 15 addresses all outlets, the form the app uses for a single-outlet
-        // plug. Shared vs owned transport is handled downstream.
-        transport::socket_turn(state, device, 15, on).await?;
-        Ok(Transport::Iot)
+        // plug. Return the transport socket_turn actually used so the command
+        // log is truthful instead of always claiming IoT.
+        transport::socket_turn(state, device, 15, on).await
     }
 }
 

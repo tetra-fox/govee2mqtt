@@ -1,6 +1,6 @@
 use crate::commands::serve::{POLL_INTERVAL, availability_timeout};
 use crate::service::quirks::{BULB, Quirk, resolve_quirk};
-use crate::service::state::Transport;
+use crate::service::state::{ClientAvail, Transport};
 use chrono::{DateTime, Utc};
 use govee_api::ble::{
     GoveeBlePacket, NotifyAurora, NotifyHumidifierNightlightParams, NotifyLaser, ProjectorSettings,
@@ -442,6 +442,7 @@ impl Device {
                 self.record_h5082_countdown(*countdown);
                 true
             }
+            GoveeBlePacket::NotifyOutletState(s) => self.set_socket_outlet_bits(s.bits),
             _ => false,
         }
     }
@@ -507,8 +508,13 @@ impl Device {
         self.resolve_quirk().and_then(|q| q.socket_outlet_count)
     }
 
-    pub fn set_socket_outlet_bits(&mut self, bits: u8) {
+    /// Returns whether the bits changed, so a caller (the BLE reader, which
+    /// re-reads outlet state on every keepalive) can skip republishing when the
+    /// state is unchanged.
+    pub fn set_socket_outlet_bits(&mut self, bits: u8) -> bool {
+        let changed = self.socket_outlet_bits != Some(bits);
         self.socket_outlet_bits.replace(bits);
+        changed
     }
 
     /// State of a single outlet on a multi-outlet socket. Outlet `index`
@@ -528,6 +534,26 @@ impl Device {
             .device_settings
             .address
             .as_deref()
+    }
+
+    /// The per-device BLE secret, base64-decoded from the cloud `secret_code`.
+    /// The app writes this as the 33 b2 SECRET_KEY_CHECK probe; supported sockets
+    /// gate control writes on it. Per-device, not a constant. None when the device
+    /// list carried no secret_code or it didn't decode to 8 bytes.
+    pub fn ble_secret_code(&self) -> Option<[u8; 8]> {
+        let code = self
+            .undoc_device_info
+            .as_ref()?
+            .entry
+            .device_ext
+            .device_settings
+            .secret_code
+            .as_ref()?;
+        data_encoding::BASE64
+            .decode(code.as_bytes())
+            .ok()?
+            .try_into()
+            .ok()
     }
 
     /// The user-assigned name for outlet `index` of a multi-outlet socket, as
@@ -1079,6 +1105,34 @@ impl Device {
         }
 
         false
+    }
+
+    /// Whether a transport can currently carry a command to this device, from
+    /// the device's facts and the sampled client availability. This is the one
+    /// definition of "is transport T usable"; the control cascade gates each
+    /// step on it, and the debug `effective_transports` display reads it, so the
+    /// two can't drift. LAN sends go over the device's own UDP socket (no shared
+    /// client), so it only needs `lan_device`; the rest need their client up.
+    ///
+    /// BLE needs an address, an adapter, AND a family that actually has codecs
+    /// for the SKU -- a bare address with no codecs (e.g. an unpinned H5083) is
+    /// not controllable. IoT needs `iot_api_supported`, the quirk flag every
+    /// socket and IoT-driven device sets. `avoid_platform_api` is not checked
+    /// here: the generic verbs use the platform API regardless of it, and only
+    /// the scene verb treats it as a routing preference.
+    pub fn transport_reachable(&self, transport: Transport, avail: &ClientAvail) -> bool {
+        match transport {
+            Transport::Lan => self.lan_device.is_some(),
+            Transport::Ble => {
+                avail.ble
+                    && self.ble_address().is_some()
+                    && govee_api::ble::sku_has_ble_support(&self.sku)
+            }
+            Transport::Iot => {
+                avail.iot && self.undoc_device_info.is_some() && self.iot_api_supported()
+            }
+            Transport::Platform => avail.platform && self.http_device_info.is_some(),
+        }
     }
 
     pub fn supports_rgb(&self) -> bool {

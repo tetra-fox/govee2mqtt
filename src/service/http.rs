@@ -1,7 +1,9 @@
 use crate::service::coordinator::Coordinator;
 use crate::service::device::{Device, DeviceItem};
 use crate::service::info::ServiceInfo;
-use crate::service::state::{CommandLog, RecentFrame, StateEvent, StateHandle, Transport};
+use crate::service::state::{
+    ClientAvail, CommandLog, RecentFrame, StateEvent, StateHandle, Transport,
+};
 use anyhow::Context;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
@@ -11,7 +13,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use govee_api::model::{DeviceCapability, DeviceCapabilityKind, DeviceParameters};
-use govee_api::platform_api::DeviceType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::net::IpAddr;
@@ -304,16 +305,6 @@ struct LastSeen {
     iot_status: Option<DateTime<Utc>>,
 }
 
-/// Snapshot of runtime client availability used to compute effective transports.
-/// Sampled once per /api/debug/discovery call so the cascade evaluation matches
-/// what `transport.rs` would actually find at that moment.
-struct ClientAvail {
-    lan: bool,
-    ble: bool,
-    iot: bool,
-    platform: bool,
-}
-
 impl DiscoveryItem {
     fn from_device(d: &Device, avail: &ClientAvail) -> Self {
         let quirk = d.resolve_quirk();
@@ -349,58 +340,26 @@ impl DiscoveryItem {
     }
 }
 
-/// Mirror the controller and cascade logic from src/service/{control,transport}.rs
-/// to decide which transports could actually accept a command for this device
-/// right now. Read-only: no calls into the cascade, just predicates on the
-/// device's facts and the runtime client availability snapshot.
+/// The transports that could currently carry a command to this device, in
+/// cascade order. Derived from the same `Device::transport_reachable` predicate
+/// the control cascade gates on, so this display can't drift from what the
+/// daemon would actually do. The order is the generic LAN->BLE->IoT->Platform
+/// preference; individual verbs use a subset (e.g. colour has no BLE step) but
+/// the device-level reachability is the same.
 fn effective_transports(d: &Device, avail: &ClientAvail) -> Vec<Transport> {
-    match d.device_type() {
-        // SocketController short-circuits the cascade and always takes the
-        // socket_turn IoT path.
-        DeviceType::Socket => vec![Transport::Iot],
-        // HumidifierController tries the nightlight (IoT) packet first, then
-        // falls through to the generic cascade for the rest. The nightlight
-        // wire is IoT, which the generic cascade also lists, so dedup while
-        // keeping IoT first to reflect the real preference order.
-        DeviceType::Humidifier | DeviceType::Dehumidifier => {
-            let mut out = vec![Transport::Iot];
-            for t in generic_cascade(d, avail) {
-                if !out.contains(&t) {
-                    out.push(t);
-                }
-            }
-            out
-        }
-        _ => generic_cascade(d, avail),
-    }
-}
-
-/// The order the generic cascade would try: LAN, BLE, IoT, platform. Each is
-/// included only when the underlying conditions are met.
-fn generic_cascade(d: &Device, avail: &ClientAvail) -> Vec<Transport> {
-    let mut out = Vec::new();
-    if avail.lan && d.lan_device.is_some() {
-        out.push(Transport::Lan);
-    }
-    if avail.ble && d.ble_address().is_some() {
-        out.push(Transport::Ble);
-    }
-    if avail.iot && d.iot_api_supported() && d.undoc_device_info.is_some() {
-        out.push(Transport::Iot);
-    }
-    if avail.platform && d.http_device_info.is_some() && !d.avoid_platform_api() {
-        out.push(Transport::Platform);
-    }
-    out
+    [
+        Transport::Lan,
+        Transport::Ble,
+        Transport::Iot,
+        Transport::Platform,
+    ]
+    .into_iter()
+    .filter(|t| d.transport_reachable(*t, avail))
+    .collect()
 }
 
 async fn list_discovery(State(state): State<StateHandle>) -> Response {
-    let avail = ClientAvail {
-        lan: state.get_lan_client().await.is_some(),
-        ble: state.get_ble_client().await.is_some(),
-        iot: state.get_iot_client().await.is_some(),
-        platform: state.get_platform_client().await.is_some(),
-    };
+    let avail = state.client_avail().await;
     let mut devices = state.devices().await;
     devices.sort_by_key(|d| (d.room_name().map(|n| n.to_string()), d.name()));
     let items: Vec<DiscoveryItem> = devices
